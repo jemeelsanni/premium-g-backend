@@ -76,12 +76,12 @@ app.get('/health', (req, res) => {
 
 // API routes
 const apiVersion = process.env.API_VERSION || 'v1';
-// app.use(`/api/${apiVersion}/auth`, authRoutes);
-// app.use(`/api/${apiVersion}/users`, authenticateToken, userRoutes);
-// app.use(`/api/${apiVersion}/distribution`, authenticateToken, distributionRoutes);
-// app.use(`/api/${apiVersion}/transport`, authenticateToken, transportRoutes);
-// app.use(`/api/${apiVersion}/warehouse`, authenticateToken, warehouseRoutes);
-// app.use(`/api/${apiVersion}/admin`, authenticateToken, authorizeRole(['SUPER_ADMIN']), adminRoutes);
+app.use(`/api/${apiVersion}/auth`, authRoutes);
+app.use(`/api/${apiVersion}/users`, authenticateToken, userRoutes);
+app.use(`/api/${apiVersion}/distribution`, authenticateToken, distributionRoutes);
+app.use(`/api/${apiVersion}/transport`, authenticateToken, transportRoutes);
+app.use(`/api/${apiVersion}/warehouse`, authenticateToken, warehouseRoutes);
+app.use(`/api/${apiVersion}/admin`, authenticateToken, authorizeRole(['SUPER_ADMIN']), adminRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {
