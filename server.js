@@ -13,10 +13,10 @@ const transportRoutes = require('./routes/transport');
 const warehouseRoutes = require('./routes/warehouse');
 const adminRoutes = require('./routes/admin');
 
-// Import middleware
+// Import middleware - FIXED: destructure errorHandler
 const { authenticateToken, authorizeRole } = require('./middleware/auth');
 const { auditLogger } = require('./middleware/auditLogger');
-const errorHandler = require('./middleware/errorHandler');
+const { errorHandler } = require('./middleware/errorHandler'); // ✅ FIXED: destructure
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -92,7 +92,7 @@ app.use('*', (req, res) => {
   });
 });
 
-// Error handling middleware
+// Error handling middleware - Now properly destructured
 app.use(errorHandler);
 
 // ================================

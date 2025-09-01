@@ -5,6 +5,7 @@ const { PrismaClient } = require('@prisma/client');
 const { asyncHandler, ValidationError, BusinessError, NotFoundError } = require('../middleware/errorHandler');
 const { authorizeModule } = require('../middleware/auth');
 const { logDataChange, getClientIP } = require('../middleware/auditLogger');
+const { validateCuid } = require('../utils/validators'); // ✅ ADDED
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -17,7 +18,7 @@ const prisma = new PrismaClient();
 router.use(authorizeModule('transport'));
 
 // ================================
-// VALIDATION RULES
+// VALIDATION RULES - UPDATED FOR CUID
 // ================================
 
 const createTransportOrderValidation = [
@@ -29,8 +30,7 @@ const createTransportOrderValidation = [
   body('locationId')
     .notEmpty()
     .withMessage('Location ID is required')
-    .isUUID()
-    .withMessage('Invalid location ID format'),
+    .custom(validateCuid('location ID')), // ✅ UPDATED
   body('totalOrderAmount')
     .isDecimal({ decimal_digits: '0,2' })
     .withMessage('Total order amount must be a valid decimal'),
@@ -248,7 +248,7 @@ router.get('/orders', asyncHandler(async (req, res) => {
 // @desc    Get single transport order
 // @access  Private (Transport module access)
 router.get('/orders/:id',
-  param('id').isUUID().withMessage('Invalid order ID'),
+  param('id').custom(validateCuid('order ID')), // ✅ UPDATED
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -299,7 +299,7 @@ router.get('/orders/:id',
 // @desc    Update transport order
 // @access  Private (Own entries or Admin)
 router.put('/orders/:id',
-  param('id').isUUID().withMessage('Invalid order ID'),
+  param('id').custom(validateCuid('order ID')), // ✅ UPDATED
   updateTransportOrderValidation,
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);

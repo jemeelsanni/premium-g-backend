@@ -20,25 +20,24 @@ router.use(authorizeModule('distribution'));
 // VALIDATION RULES
 // ================================
 
+const { validateCuid } = require('../utils/validators');
+
 const createOrderValidation = [
   body('customerId')
     .notEmpty()
     .withMessage('Customer ID is required')
-    .isUUID()
-    .withMessage('Invalid customer ID format'),
+    .custom(validateCuid('customer ID')),
   body('locationId')
     .notEmpty()
     .withMessage('Location ID is required')
-    .isUUID()
-    .withMessage('Invalid location ID format'),
+    .custom(validateCuid('location ID')),
   body('orderItems')
     .isArray({ min: 1 })
     .withMessage('At least one order item is required'),
   body('orderItems.*.productId')
     .notEmpty()
     .withMessage('Product ID is required')
-    .isUUID()
-    .withMessage('Invalid product ID format'),
+    .custom(validateCuid('product ID')),
   body('orderItems.*.pallets')
     .isInt({ min: 0 })
     .withMessage('Pallets must be a non-negative integer'),
@@ -335,7 +334,7 @@ router.get('/orders', asyncHandler(async (req, res) => {
 // @desc    Get single distribution order
 // @access  Private (Distribution module access)
 router.get('/orders/:id',
-  param('id').isUUID().withMessage('Invalid order ID'),
+  param('id').custom(validateCuid('order ID')),
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -385,7 +384,7 @@ router.get('/orders/:id',
 // @desc    Update distribution order
 // @access  Private (Own entries or Admin)
 router.put('/orders/:id',
-  param('id').isUUID().withMessage('Invalid order ID'),
+  param('id').custom(validateCuid('order ID')),
   updateOrderValidation,
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -459,7 +458,7 @@ router.put('/orders/:id',
 // @desc    Create price adjustment for order
 // @access  Private (Admin only)
 router.post('/orders/:id/price-adjustments',
-  param('id').isUUID().withMessage('Invalid order ID'),
+  param('id').custom(validateCuid('order ID')),
   authorizeModule('distribution', 'admin'),
   priceAdjustmentValidation,
   asyncHandler(async (req, res) => {

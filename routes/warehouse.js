@@ -684,7 +684,7 @@ router.get('/analytics/summary', asyncHandler(async (req, res) => {
     prisma.warehouseInventory.findMany({
       where: {
         OR: [
-          { pallets: { lte: prisma.warehouseInventory.fields.reorderLevel } }
+          { packs: { lte: prisma.warehouseInventory.fields.reorderLevel } }
         ]
       },
       include: {
