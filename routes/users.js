@@ -5,12 +5,13 @@ const { PrismaClient } = require('@prisma/client');
 const { asyncHandler, ValidationError, BusinessError, NotFoundError } = require('../middleware/errorHandler');
 const { authorizeRole } = require('../middleware/auth');
 const { getUserActivity } = require('../middleware/auditLogger');
+const { validateCuid } = require('../utils/validators'); // ✅ ADDED
 
 const router = express.Router();
 const prisma = new PrismaClient();
 
 // ================================
-// VALIDATION RULES
+// VALIDATION RULES - UPDATED FOR CUID
 // ================================
 
 const updateUserValidation = [
@@ -102,7 +103,7 @@ router.get('/',
 // @desc    Get single user
 // @access  Private (Admin or own profile)
 router.get('/:id',
-  param('id').isUUID().withMessage('Invalid user ID'),
+  param('id').custom(validateCuid('user ID')), // ✅ UPDATED
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -148,7 +149,7 @@ router.get('/:id',
 // @desc    Update user
 // @access  Private (Super Admin only)
 router.put('/:id',
-  param('id').isUUID().withMessage('Invalid user ID'),
+  param('id').custom(validateCuid('user ID')), // ✅ UPDATED
   authorizeRole(['SUPER_ADMIN']),
   updateUserValidation,
   asyncHandler(async (req, res) => {
@@ -201,7 +202,7 @@ router.put('/:id',
 // @desc    Deactivate user (soft delete)
 // @access  Private (Super Admin only)
 router.delete('/:id',
-  param('id').isUUID().withMessage('Invalid user ID'),
+  param('id').custom(validateCuid('user ID')), // ✅ UPDATED
   authorizeRole(['SUPER_ADMIN']),
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -247,7 +248,7 @@ router.delete('/:id',
 // @desc    Get user activity log
 // @access  Private (Admin or own profile)
 router.get('/:id/activity',
-  param('id').isUUID().withMessage('Invalid user ID'),
+  param('id').custom(validateCuid('user ID')), // ✅ UPDATED
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {

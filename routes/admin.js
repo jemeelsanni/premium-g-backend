@@ -4,12 +4,13 @@ const { PrismaClient } = require('@prisma/client');
 
 const { asyncHandler, ValidationError, BusinessError } = require('../middleware/errorHandler');
 const { getAuditTrail } = require('../middleware/auditLogger');
+const { validateCuid } = require('../utils/validators'); // ✅ ADDED
 
 const router = express.Router();
 const prisma = new PrismaClient();
 
 // ================================
-// VALIDATION RULES
+// VALIDATION RULES - UPDATED FOR CUID
 // ================================
 
 const createProductValidation = [
@@ -257,7 +258,7 @@ router.get('/products', asyncHandler(async (req, res) => {
 // @desc    Update product
 // @access  Private (Super Admin only)
 router.put('/products/:id',
-  param('id').isUUID().withMessage('Invalid product ID'),
+  param('id').custom(validateCuid('product ID')), // ✅ UPDATED
   createProductValidation,
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);

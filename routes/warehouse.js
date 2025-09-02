@@ -5,6 +5,7 @@ const { PrismaClient } = require('@prisma/client');
 const { asyncHandler, ValidationError, BusinessError, NotFoundError } = require('../middleware/errorHandler');
 const { authorizeModule } = require('../middleware/auth');
 const { logDataChange, getClientIP } = require('../middleware/auditLogger');
+const { validateCuid } = require('../utils/validators');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -17,7 +18,7 @@ const prisma = new PrismaClient();
 router.use(authorizeModule('warehouse'));
 
 // ================================
-// VALIDATION RULES
+// VALIDATION RULES - UPDATED FOR CUID
 // ================================
 
 const updateInventoryValidation = [
@@ -47,8 +48,7 @@ const createSaleValidation = [
   body('productId')
     .notEmpty()
     .withMessage('Product ID is required')
-    .isUUID()
-    .withMessage('Invalid product ID format'),
+    .custom(validateCuid('product ID')),
   body('quantity')
     .isInt({ min: 1 })
     .withMessage('Quantity must be a positive integer'),
@@ -238,7 +238,7 @@ router.get('/inventory', asyncHandler(async (req, res) => {
 // @desc    Get single product inventory
 // @access  Private (Warehouse module access)
 router.get('/inventory/:productId',
-  param('productId').isUUID().withMessage('Invalid product ID'),
+  param('productId').custom(validateCuid('product ID')),
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -280,7 +280,7 @@ router.get('/inventory/:productId',
 // @desc    Update inventory levels
 // @access  Private (Warehouse Admin, Warehouse Sales Officer)
 router.put('/inventory/:id',
-  param('id').isUUID().withMessage('Invalid inventory ID'),
+  param('id').custom(validateCuid('inventory ID')),
   authorizeModule('warehouse', 'write'),
   updateInventoryValidation,
   asyncHandler(async (req, res) => {
@@ -489,7 +489,7 @@ router.get('/sales', asyncHandler(async (req, res) => {
 // @desc    Get single warehouse sale
 // @access  Private (Warehouse module access)
 router.get('/sales/:id',
-  param('id').isUUID().withMessage('Invalid sale ID'),
+  param('id').custom(validateCuid('sale ID')),
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -683,9 +683,7 @@ router.get('/analytics/summary', asyncHandler(async (req, res) => {
 
     prisma.warehouseInventory.findMany({
       where: {
-        OR: [
-          { packs: { lte: prisma.warehouseInventory.fields.reorderLevel } }
-        ]
+        packs: { lte: 20 }
       },
       include: {
         product: true
