@@ -13,10 +13,15 @@ const transportRoutes = require('./routes/transport');
 const warehouseRoutes = require('./routes/warehouse');
 const adminRoutes = require('./routes/admin');
 
-// Import middleware - FIXED: destructure errorHandler
+// Import new enhanced routes
+const targetRoutes = require('./routes/targets'); // Target management
+const expenseRoutes = require('./routes/expenses'); // Expense management
+const profitAnalysisRoutes = require('./routes/profit-analysis'); // Profit analysis
+
+// Import middleware
 const { authenticateToken, authorizeRole } = require('./middleware/auth');
 const { auditLogger } = require('./middleware/auditLogger');
-const { errorHandler } = require('./middleware/errorHandler'); // ✅ FIXED: destructure
+const { errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -26,7 +31,9 @@ const PORT = process.env.PORT || 3001;
 // ================================
 
 // Security middleware
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 
 // CORS configuration
 const corsOptions = {
@@ -45,6 +52,10 @@ const limiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    // Skip rate limiting for health checks and auth verification
+    return req.path === '/health' || req.path.includes('/auth/verify-token');
+  }
 });
 app.use('/api/', limiter);
 
@@ -64,67 +75,326 @@ app.use('/api/', auditLogger);
 // ROUTES
 // ================================
 
-// Health check endpoint
+// Health check endpoint with system status
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'OK',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    version: '2.0.0', // Updated version with enhanced features
+    features: {
+      targetManagement: true,
+      expenseTracking: true,
+      profitAnalysis: true,
+      auditLogging: true,
+      roleBasedAccess: true
+    },
+    database: {
+      status: 'connected',
+      provider: 'postgresql'
+    }
   });
 });
 
+// System status endpoint (Admin only)
+app.get('/api/system/status', 
+  authenticateToken, 
+  authorizeRole(['SUPER_ADMIN']),
+  async (req, res) => {
+    try {
+      const { PrismaClient } = require('@prisma/client');
+      const prisma = new PrismaClient();
+      
+      // Test database connection
+      await prisma.$queryRaw`SELECT 1`;
+      
+      const stats = await Promise.all([
+        prisma.user.count(),
+        prisma.distributionOrder.count(),
+        prisma.transportOrder.count(),
+        prisma.expense.count(),
+        prisma.auditLog.count({
+          where: {
+            createdAt: {
+              gte: new Date(Date.now() - 24 * 60 * 60 * 1000) // Last 24 hours
+            }
+          }
+        })
+      ]);
+
+      await prisma.$disconnect();
+
+      res.json({
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        system: {
+          uptime: process.uptime(),
+          memory: process.memoryUsage(),
+          version: process.version
+        },
+        database: {
+          status: 'connected',
+          recordCounts: {
+            users: stats[0],
+            distributionOrders: stats[1],
+            transportOrders: stats[2],
+            expenses: stats[3],
+            recentAuditLogs: stats[4]
+          }
+        }
+      });
+    } catch (error) {
+      res.status(500).json({
+        status: 'unhealthy',
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+);
+
 // API routes
 const apiVersion = process.env.API_VERSION || 'v1';
+
+// Authentication routes (public)
 app.use(`/api/${apiVersion}/auth`, authRoutes);
+
+// Protected routes (require authentication)
 app.use(`/api/${apiVersion}/users`, authenticateToken, userRoutes);
 app.use(`/api/${apiVersion}/distribution`, authenticateToken, distributionRoutes);
 app.use(`/api/${apiVersion}/transport`, authenticateToken, transportRoutes);
 app.use(`/api/${apiVersion}/warehouse`, authenticateToken, warehouseRoutes);
+
+// Enhanced routes (new features)
+app.use(`/api/${apiVersion}/targets`, authenticateToken, targetRoutes);
+app.use(`/api/${apiVersion}/expenses`, authenticateToken, expenseRoutes);
+app.use(`/api/${apiVersion}/analytics/profit`, authenticateToken, profitAnalysisRoutes);
+
+// Admin routes (Super Admin only)
 app.use(`/api/${apiVersion}/admin`, authenticateToken, authorizeRole(['SUPER_ADMIN']), adminRoutes);
+
+// API documentation endpoint
+app.get(`/api/${apiVersion}/docs`, (req, res) => {
+  res.json({
+    title: 'Premium G Enterprise Management System API',
+    version: '2.0.0',
+    description: 'Comprehensive enterprise management system for distribution, transport, and warehouse operations',
+    endpoints: {
+      authentication: {
+        'POST /auth/login': 'User authentication',
+        'POST /auth/logout': 'User logout',
+        'POST /auth/register': 'Register new user (Admin only)',
+        'POST /auth/change-password': 'Change user password',
+        'GET /auth/profile': 'Get user profile',
+        'GET /auth/sessions': 'Get user sessions',
+        'POST /auth/verify-token': 'Verify JWT token'
+      },
+      distribution: {
+        'GET /distribution/orders': 'Get distribution orders',
+        'POST /distribution/orders': 'Create distribution order',
+        'GET /distribution/orders/:id': 'Get specific order',
+        'PUT /distribution/orders/:id': 'Update order',
+        'POST /distribution/orders/:id/price-adjustments': 'Create price adjustment',
+        'GET /distribution/analytics/summary': 'Get distribution analytics'
+      },
+      transport: {
+        'GET /transport/orders': 'Get transport orders',
+        'POST /transport/orders': 'Create transport order',
+        'GET /transport/orders/:id': 'Get specific transport order',
+        'PUT /transport/orders/:id': 'Update transport order',
+        'PUT /transport/orders/:id/expenses': 'Update truck expenses',
+        'GET /transport/analytics/profit-analysis': 'Get transport profit analysis'
+      },
+      warehouse: {
+        'GET /warehouse/inventory': 'Get inventory',
+        'PUT /warehouse/inventory/:id': 'Update inventory',
+        'GET /warehouse/sales': 'Get warehouse sales',
+        'POST /warehouse/sales': 'Create warehouse sale',
+        'GET /warehouse/cash-flow': 'Get cash flow entries',
+        'POST /warehouse/cash-flow': 'Create cash flow entry',
+        'GET /warehouse/analytics/summary': 'Get warehouse analytics'
+      },
+      targets: {
+        'GET /targets': 'Get distribution targets',
+        'POST /targets': 'Set monthly target (Admin)',
+        'GET /targets/current': 'Get current month target',
+        'GET /performance/weekly': 'Get weekly performance',
+        'PUT /performance/weekly/:id': 'Update weekly performance (Admin)',
+        'GET /performance/dashboard': 'Get performance dashboard',
+        'POST /performance/recalculate': 'Recalculate performance (Admin)'
+      },
+      expenses: {
+        'GET /expenses': 'Get expenses',
+        'POST /expenses': 'Create expense',
+        'GET /expenses/:id': 'Get specific expense',
+        'PUT /expenses/:id': 'Update expense',
+        'POST /expenses/:id/approve': 'Approve/reject expense (Admin)',
+        'DELETE /expenses/:id': 'Delete expense',
+        'POST /expenses/bulk-approve': 'Bulk approve expenses (Admin)',
+        'GET /expenses/analytics/summary': 'Get expense analytics (Admin)'
+      },
+      profitAnalysis: {
+        'GET /analytics/profit/order/:orderId': 'Get order profit analysis',
+        'GET /analytics/profit/monthly': 'Get monthly profit analysis (Admin)',
+        'GET /analytics/profit/yearly': 'Get yearly profit analysis (Admin)',
+        'GET /analytics/profit/location/:locationId': 'Get location profit analysis (Admin)',
+        'GET /analytics/profit/customer/:customerId': 'Get customer profit analysis (Admin)',
+        'GET /analytics/profit/dashboard': 'Get profit dashboard (Admin)',
+        'POST /analytics/profit/recalculate': 'Recalculate profit analysis (Super Admin)'
+      },
+      admin: {
+        'GET /admin/dashboard': 'Get admin dashboard',
+        'GET /admin/products': 'Get products',
+        'POST /admin/products': 'Create product',
+        'GET /admin/customers': 'Get customers',
+        'POST /admin/customers': 'Create customer',
+        'GET /admin/locations': 'Get locations',
+        'POST /admin/locations': 'Create location',
+        'GET /admin/audit-trail': 'Get audit trail',
+        'GET /admin/system-config': 'Get system configuration',
+        'PUT /admin/system-config/:key': 'Update system configuration',
+        'GET /admin/reports/consolidated': 'Get consolidated business report',
+        'GET /admin/reports/performance': 'Get performance report'
+      },
+      users: {
+        'GET /users': 'Get users (Admin)',
+        'GET /users/:id': 'Get specific user',
+        'PUT /users/:id': 'Update user (Super Admin)',
+        'DELETE /users/:id': 'Deactivate user (Super Admin)',
+        'GET /users/:id/activity': 'Get user activity',
+        'GET /users/stats/summary': 'Get user statistics (Admin)'
+      }
+    },
+    authentication: {
+      type: 'JWT Bearer Token',
+      header: 'Authorization: Bearer <token>',
+      loginEndpoint: `/api/${apiVersion}/auth/login`
+    },
+    roles: {
+      'SUPER_ADMIN': 'Full system access',
+      'DISTRIBUTION_ADMIN': 'Distribution module admin access',
+      'TRANSPORT_ADMIN': 'Transport module admin access',
+      'WAREHOUSE_ADMIN': 'Warehouse module admin access',
+      'DISTRIBUTION_SALES_REP': 'Distribution sales operations',
+      'WAREHOUSE_SALES_OFFICER': 'Warehouse sales operations',
+      'CASHIER': 'Cash flow operations',
+      'TRANSPORT_STAFF': 'Transport operations'
+    },
+    features: {
+      'Target Management': 'Set and track monthly/weekly distribution targets',
+      'Expense Tracking': 'Comprehensive expense management with approval workflows',
+      'Profit Analysis': 'Detailed profit/loss calculations and analytics',
+      'Audit Logging': 'Complete activity tracking and audit trails',
+      'Role-Based Access': 'Granular permissions based on user roles',
+      'Real-time Analytics': 'Live dashboards and performance metrics',
+      'Location-based Pricing': 'Dynamic pricing based on delivery location',
+      'Multi-level Reporting': 'Order, customer, location, and period-based reports'
+    }
+  });
+});
 
 // 404 handler
 app.use('*', (req, res) => {
   res.status(404).json({
     error: 'Endpoint not found',
     message: `Cannot ${req.method} ${req.originalUrl}`,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    suggestion: `Visit /api/${apiVersion}/docs for available endpoints`
   });
 });
 
-// Error handling middleware - Now properly destructured
+// Error handling middleware
 app.use(errorHandler);
 
 // ================================
-// SERVER STARTUP
+// SERVER STARTUP & GRACEFUL SHUTDOWN
 // ================================
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully...');
-  server.close(() => {
-    console.log('Process terminated');
-    process.exit(0);
+// Graceful shutdown handlers
+const shutdown = (signal) => {
+  console.log(`\n${signal} received, shutting down gracefully...`);
+  
+  server.close((err) => {
+    if (err) {
+      console.error('Error during server shutdown:', err);
+      process.exit(1);
+    }
+    
+    console.log('Server closed successfully');
+    
+    // Close database connections
+    const { PrismaClient } = require('@prisma/client');
+    const prisma = new PrismaClient();
+    
+    prisma.$disconnect()
+      .then(() => {
+        console.log('Database connections closed');
+        process.exit(0);
+      })
+      .catch((err) => {
+        console.error('Error closing database connections:', err);
+        process.exit(1);
+      });
   });
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  process.exit(1);
 });
 
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully...');
-  server.close(() => {
-    console.log('Process terminated');
-    process.exit(0);
-  });
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
 });
 
 // Start server
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`
-🚀 Premium G Enterprise System Server
+🚀 Premium G Enterprise Management System v2.0
+===============================================
 📡 Server running on port ${PORT}
 🌍 Environment: ${process.env.NODE_ENV || 'development'}
 📋 API Version: ${apiVersion}
+📚 Documentation: http://localhost:${PORT}/api/${apiVersion}/docs
+🏥 Health Check: http://localhost:${PORT}/health
 ⏰ Started at: ${new Date().toISOString()}
+
+✨ Enhanced Features:
+   📊 Target & Performance Tracking
+   💰 Comprehensive Expense Management  
+   📈 Advanced Profit Analysis
+   🔍 Detailed Audit Logging
+   🎯 Role-Based Access Control
+   📋 Real-time Analytics Dashboard
+
+🔐 Default Admin Credentials:
+   Username: superadmin
+   Password: SuperAdmin123!
+   
+⚠️  IMPORTANT: Change default passwords in production!
+===============================================
   `);
+
+  // Test database connection on startup
+  (async () => {
+    try {
+      const { PrismaClient } = require('@prisma/client');
+      const prisma = new PrismaClient();
+      await prisma.$queryRaw`SELECT 1`;
+      console.log('✅ Database connection successful');
+      await prisma.$disconnect();
+    } catch (error) {
+      console.error('❌ Database connection failed:', error.message);
+    }
+  })();
 });
 
+// Export app for testing
 module.exports = app;

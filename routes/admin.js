@@ -10,6 +10,74 @@ const router = express.Router();
 const prisma = new PrismaClient();
 
 // ================================
+// UTILITY FUNCTIONS
+// ================================
+
+/**
+ * Recursively converts BigInt values to Numbers in an object or array
+ * @param {*} obj - The object/array to convert
+ * @returns {*} - The converted object/array
+ */
+// Add this utility function at the top of routes/admin.js, after the imports
+
+// ================================
+// UTILITY FUNCTIONS
+// ================================
+
+/**
+ * Recursively converts BigInt and Prisma Decimal values to Numbers in an object or array
+ * @param {*} obj - The object/array to convert
+ * @returns {*} - The converted object/array
+ */
+const convertBigIntToNumber = (obj) => {
+  if (obj === null || obj === undefined) {
+    return obj;
+  }
+  
+  if (typeof obj === 'bigint') {
+    return Number(obj);
+  }
+  
+  // Handle Prisma Decimal objects (format: {s: 1, e: 4, d: [49940]})
+  if (obj && typeof obj === 'object' && obj.s !== undefined && obj.e !== undefined && obj.d !== undefined) {
+    // Convert Prisma Decimal to number
+    const sign = obj.s;
+    const digits = obj.d;
+    const exponent = obj.e;
+    
+    if (digits && digits.length > 0) {
+      let numStr = digits.join('');
+      let result = parseFloat(numStr);
+      
+      // Apply exponent adjustment
+      if (exponent !== digits.length) {
+        result = result * Math.pow(10, exponent - digits.length);
+      }
+      
+      return sign === -1 ? -result : result;
+    }
+    return 0;
+  }
+  
+  if (Array.isArray(obj)) {
+    return obj.map(convertBigIntToNumber);
+  }
+  
+  if (typeof obj === 'object') {
+    const converted = {};
+    for (const key in obj) {
+      if (obj.hasOwnProperty(key)) {
+        converted[key] = convertBigIntToNumber(obj[key]);
+      }
+    }
+    return converted;
+  }
+  
+  return obj;
+};
+
+
+// ================================
 // VALIDATION RULES - UPDATED FOR CUID
 // ================================
 
@@ -640,12 +708,12 @@ router.get('/reports/performance', asyncHandler(async (req, res) => {
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - parseInt(days));
 
-  // Daily revenue trend
-  const dailyRevenue = await prisma.$queryRaw`
+  // Daily revenue trend - FIXED: Cast to NUMERIC to avoid Decimal objects
+  const dailyRevenueRaw = await prisma.$queryRaw`
     SELECT 
       DATE(created_at) as date,
       'distribution' as source,
-      SUM(final_amount) as revenue
+      SUM(final_amount)::numeric as revenue
     FROM distribution_orders 
     WHERE created_at >= ${startDate} AND created_at <= ${endDate}
     GROUP BY DATE(created_at)
@@ -655,7 +723,7 @@ router.get('/reports/performance', asyncHandler(async (req, res) => {
     SELECT 
       DATE(created_at) as date,
       'transport' as source,
-      SUM(service_charge) as revenue
+      SUM(service_charge)::numeric as revenue
     FROM transport_orders 
     WHERE created_at >= ${startDate} AND created_at <= ${endDate}
     GROUP BY DATE(created_at)
@@ -665,7 +733,7 @@ router.get('/reports/performance', asyncHandler(async (req, res) => {
     SELECT 
       DATE(created_at) as date,
       'warehouse' as source,
-      SUM(total_amount) as revenue
+      SUM(total_amount)::numeric as revenue
     FROM warehouse_sales 
     WHERE created_at >= ${startDate} AND created_at <= ${endDate}
     GROUP BY DATE(created_at)
@@ -673,21 +741,27 @@ router.get('/reports/performance', asyncHandler(async (req, res) => {
     ORDER BY date DESC
   `;
 
-  // Top performing products (by revenue)
-  const topProducts = await prisma.$queryRaw`
+  // Convert BigInt values to numbers using utility function
+  const dailyRevenue = convertBigIntToNumber(dailyRevenueRaw);
+
+  // Top performing products - FIXED: Cast to NUMERIC to avoid Decimal objects
+  const topProductsRaw = await prisma.$queryRaw`
     SELECT 
       p.name,
       p.product_no,
-      SUM(doi.amount) as total_revenue,
+      SUM(doi.amount)::numeric as total_revenue,
       COUNT(doi.id) as order_count
     FROM distribution_order_items doi
     JOIN products p ON doi.product_id = p.id
-    JOIN distribution_orders do ON doi.order_id = do.id
-    WHERE do.created_at >= ${startDate} AND do.created_at <= ${endDate}
+    JOIN distribution_orders dist_ord ON doi.order_id = dist_ord.id
+    WHERE dist_ord.created_at >= ${startDate} AND dist_ord.created_at <= ${endDate}
     GROUP BY p.id, p.name, p.product_no
     ORDER BY total_revenue DESC
     LIMIT 10
   `;
+
+  // Convert BigInt values to numbers using utility function
+  const topProducts = convertBigIntToNumber(topProductsRaw);
 
   // Monthly comparison
   const currentMonthStart = new Date();
