@@ -14,27 +14,31 @@ async function main() {
     console.log('🧹 Clearing existing data...');
     
     try {
-      // Clear in correct order due to foreign key constraints
-      await prisma.auditLog.deleteMany().catch(() => console.log('AuditLog table not found, skipping...'));
-      await prisma.userSession.deleteMany().catch(() => console.log('UserSession table not found, skipping...'));
-      await prisma.priceAdjustment.deleteMany().catch(() => console.log('PriceAdjustment table not found, skipping...'));
-      await prisma.distributionOrderItem.deleteMany().catch(() => console.log('DistributionOrderItem table not found, skipping...'));
-      await prisma.distributionOrder.deleteMany().catch(() => console.log('DistributionOrder table not found, skipping...'));
-      await prisma.transportOrder.deleteMany().catch(() => console.log('TransportOrder table not found, skipping...'));
-      await prisma.warehouseSale.deleteMany().catch(() => console.log('WarehouseSale table not found, skipping...'));
-      await prisma.cashFlow.deleteMany().catch(() => console.log('CashFlow table not found, skipping...'));
-      await prisma.warehouseInventory.deleteMany().catch(() => console.log('WarehouseInventory table not found, skipping...'));
-      await prisma.palletPricing.deleteMany().catch(() => console.log('PalletPricing table not found, skipping...'));
-      await prisma.truckCapacity.deleteMany().catch(() => console.log('TruckCapacity table not found, skipping...'));
-      await prisma.product.deleteMany().catch(() => console.log('Product table not found, skipping...'));
-      await prisma.customer.deleteMany().catch(() => console.log('Customer table not found, skipping...'));
-      await prisma.location.deleteMany().catch(() => console.log('Location table not found, skipping...'));
-      await prisma.user.deleteMany().catch(() => console.log('User table not found, skipping...'));
-      await prisma.systemConfig.deleteMany().catch(() => console.log('SystemConfig table not found, skipping...'));
+      await prisma.kPIMetrics.deleteMany();
+      await prisma.profitAnalysis.deleteMany();
+      await prisma.expense.deleteMany();
+      await prisma.auditLog.deleteMany();
+      await prisma.userSession.deleteMany();
+      await prisma.priceAdjustment.deleteMany();
+      await prisma.distributionOrderItem.deleteMany();
+      await prisma.distributionOrder.deleteMany();
+      await prisma.transportOrder.deleteMany();
+      await prisma.warehouseSale.deleteMany();
+      await prisma.cashFlow.deleteMany();
+      await prisma.warehouseInventory.deleteMany();
+      await prisma.palletPricing.deleteMany();
+      await prisma.truckCapacity.deleteMany();
+      await prisma.weeklyPerformance.deleteMany();
+      await prisma.distributionTarget.deleteMany();
+      await prisma.product.deleteMany();
+      await prisma.customer.deleteMany();
+      await prisma.location.deleteMany();
+      await prisma.user.deleteMany();
+      await prisma.systemConfig.deleteMany();
       
-      console.log('✅ Existing data cleared (or tables were empty)');
+      console.log('✅ Existing data cleared');
     } catch (error) {
-      console.log('⚠️ Some tables might not exist yet, continuing with seeding...');
+      console.log('⚠️ Some tables might not exist yet, continuing...');
     }
   }
 
@@ -44,7 +48,6 @@ async function main() {
 
   console.log('⚙️ Creating system configurations...');
 
-  // First create a system user for configurations
   const systemUserId = 'system-config-user';
 
   const configs = [
@@ -61,12 +64,19 @@ async function main() {
       updatedBy: systemUserId
     },
     {
+      key: 'DEFAULT_FUEL_PRICE',
+      value: 850.00,
+      description: 'Default fuel price per liter (Naira)',
+      updatedBy: systemUserId
+    },
+    {
       key: 'COMPANY_SETTINGS',
       value: {
         name: 'Premium G Enterprise',
         address: 'Lagos, Nigeria',
         phone: '+234-xxx-xxxx',
-        email: 'info@premiumg.com'
+        email: 'info@premiumg.com',
+        taxId: 'TIN-XXXXXXXX'
       },
       description: 'Company information settings',
       updatedBy: systemUserId
@@ -74,10 +84,10 @@ async function main() {
   ];
 
   for (const config of configs) {
-    await prisma.systemConfig.create({
-      data: config
-    });
+    await prisma.systemConfig.create({ data: config });
   }
+
+  console.log(`✅ Created ${configs.length} system configurations`);
 
   // ================================
   // CREATE USERS
@@ -131,13 +141,25 @@ async function main() {
     },
     {
       username: 'cashier_1',
-      email: 'cashier@premiumg.com',
+      email: 'cashier1@premiumg.com',
       password: 'Cashier123!',
       role: 'CASHIER'
     },
     {
-      username: 'transport_staff',
-      email: 'transport.staff@premiumg.com',
+      username: 'cashier_2',
+      email: 'cashier2@premiumg.com',
+      password: 'Cashier123!',
+      role: 'CASHIER'
+    },
+    {
+      username: 'transport_staff_1',
+      email: 'transport1@premiumg.com',
+      password: 'TransStaff123!',
+      role: 'TRANSPORT_STAFF'
+    },
+    {
+      username: 'transport_staff_2',
+      email: 'transport2@premiumg.com',
       password: 'TransStaff123!',
       role: 'TRANSPORT_STAFF'
     }
@@ -146,14 +168,13 @@ async function main() {
   const createdUsers = {};
 
   for (const userData of users) {
-    const passwordHash = await bcrypt.hash(userData.password, saltRounds);
+    const hashedPassword = await bcrypt.hash(userData.password, saltRounds);
     const user = await prisma.user.create({
       data: {
         username: userData.username,
         email: userData.email,
-        passwordHash,
-        role: userData.role,
-        isActive: true
+        passwordHash: hashedPassword,
+        role: userData.role
       }
     });
     createdUsers[userData.username] = user;
@@ -164,47 +185,57 @@ async function main() {
   // CREATE LOCATIONS
   // ================================
 
-  console.log('📍 Creating delivery locations...');
+  console.log('📍 Creating locations...');
 
   const locations = [
     {
       name: 'Lagos Central',
-      address: 'Victoria Island, Lagos State',
-      fuelAdjustment: 0.00 // No adjustment for central location
+      address: 'Central Business District, Lagos',
+      fuelAdjustment: 0,
+      driverWagesPerTrip: 5000.00,
+      deliveryNotes: 'City center - Heavy traffic expected during rush hours'
     },
     {
-      name: 'Ibadan',
-      address: 'Ibadan, Oyo State',
-      fuelAdjustment: 5.00 // 5% fuel adjustment
+      name: 'Ikeja',
+      address: 'Ikeja Industrial Area, Lagos',
+      fuelAdjustment: 2.50,
+      driverWagesPerTrip: 6000.00,
+      deliveryNotes: 'Industrial zone - Allow extra time for loading'
     },
     {
-      name: 'Abuja',
-      address: 'Central Business District, Abuja',
-      fuelAdjustment: 8.00 // 8% fuel adjustment
+      name: 'Victoria Island',
+      address: 'Victoria Island, Lagos',
+      fuelAdjustment: 1.50,
+      driverWagesPerTrip: 7000.00,
+      deliveryNotes: 'Premium location - Professional delivery required'
     },
     {
-      name: 'Port Harcourt',
-      address: 'Port Harcourt, Rivers State',
-      fuelAdjustment: 7.00 // 7% fuel adjustment
+      name: 'Lekki',
+      address: 'Lekki Phase 1, Lagos',
+      fuelAdjustment: 3.00,
+      driverWagesPerTrip: 7500.00,
+      deliveryNotes: 'Residential area - Coordinate delivery time with customer'
     },
     {
-      name: 'Kano',
-      address: 'Kano, Kano State',
-      fuelAdjustment: 12.00 // 12% fuel adjustment
+      name: 'Surulere',
+      address: 'Surulere, Lagos',
+      fuelAdjustment: 1.00,
+      driverWagesPerTrip: 5500.00,
+      deliveryNotes: 'Mixed commercial/residential area'
     },
     {
-      name: 'Benin City',
-      address: 'Benin City, Edo State',
-      fuelAdjustment: 6.00 // 6% fuel adjustment
+      name: 'Ikorodu',
+      address: 'Ikorodu, Lagos',
+      fuelAdjustment: 5.00,
+      driverWagesPerTrip: 9000.00,
+      deliveryNotes: 'Long distance - Requires full tank and early departure'
     }
   ];
 
   const createdLocations = {};
 
   for (const locationData of locations) {
-    const location = await prisma.location.create({
-      data: locationData
-    });
+    const location = await prisma.location.create({ data: locationData });
     createdLocations[locationData.name] = location;
     console.log(`✅ Created location: ${locationData.name}`);
   }
@@ -220,168 +251,137 @@ async function main() {
       name: 'ABC Supermarket Ltd',
       email: 'orders@abcsupermarket.com',
       phone: '+234-801-234-5678',
-      address: '123 Market Street, Lagos'
+      address: 'Plot 45, Commercial Avenue, Ikeja'
     },
     {
       name: 'XYZ Trading Company',
-      email: 'procurement@xyztrading.com',
+      email: 'purchasing@xyztrading.com',
       phone: '+234-802-345-6789',
-      address: '45 Commercial Avenue, Ibadan'
+      address: 'Suite 12, Business Complex, Victoria Island'
     },
     {
-      name: 'Premium Retailers',
-      email: 'orders@premiumretailers.com',
+      name: 'QuickMart Stores',
+      email: 'supply@quickmart.ng',
       phone: '+234-803-456-7890',
-      address: '78 Business District, Abuja'
+      address: '78 Shopping Street, Lekki'
     },
     {
-      name: 'Metro Foods Ltd',
-      email: 'supply@metrofoods.com',
+      name: 'MegaStore Nigeria',
+      email: 'procurement@megastore.ng',
       phone: '+234-804-567-8901',
-      address: '90 Industrial Layout, Port Harcourt'
+      address: 'Block A, Retail Park, Surulere'
     },
     {
-      name: 'Northern Distributors',
-      email: 'orders@northerndist.com',
+      name: 'Fresh Foods Limited',
+      email: 'orders@freshfoods.com',
       phone: '+234-805-678-9012',
-      address: '12 Trade Centre, Kano'
+      address: 'Industrial Estate, Ikorodu'
+    },
+    {
+      name: 'Downtown Mart',
+      email: 'supplies@downtownmart.ng',
+      phone: '+234-806-789-0123',
+      address: '23 Market Road, Lagos Central'
     }
   ];
 
   const createdCustomers = {};
 
   for (const customerData of customers) {
-    const customer = await prisma.customer.create({
-      data: customerData
-    });
+    const customer = await prisma.customer.create({ data: customerData });
     createdCustomers[customerData.name] = customer;
     console.log(`✅ Created customer: ${customerData.name}`);
   }
 
   // ================================
-  // CREATE PRODUCTS (Rite Foods Ltd products)
+  // CREATE PRODUCTS
   // ================================
 
-  console.log('📦 Creating Rite Foods products...');
+  console.log('📦 Creating products...');
 
   const products = [
     {
       productNo: 'RF001',
-      name: 'Rite Foods Bigi Cola - 50cl',
-      description: 'Premium cola drink 50cl bottles',
-      packsPerPallet: 24,
-      pricePerPack: 120.00
+      name: 'Premium Rice 50kg',
+      description: 'High quality long grain rice - 50kg bag',
+      packsPerPallet: 20,
+      pricePerPack: 250.00,
+      costPerPack: 180.00
     },
     {
       productNo: 'RF002',
-      name: 'Rite Foods Bigi Cola - 35cl',
-      description: 'Premium cola drink 35cl bottles',
-      packsPerPallet: 36,
-      pricePerPack: 100.00
+      name: 'Premium Rice 25kg',
+      description: 'High quality long grain rice - 25kg bag',
+      packsPerPallet: 40,
+      pricePerPack: 130.00,
+      costPerPack: 95.00
     },
-     {
+    {
       productNo: 'RF003',
-      name: 'Rite Foods Bigi Lemon - 50cl',
-      description: 'Premium cola drink 50cl bottles',
-      packsPerPallet: 24,
-      pricePerPack: 120.00
+      name: 'Standard Rice 50kg',
+      description: 'Standard quality rice - 50kg bag',
+      packsPerPallet: 20,
+      pricePerPack: 220.00,
+      costPerPack: 160.00
     },
     {
       productNo: 'RF004',
-      name: 'Rite Foods Bigi Lemon - 35cl',
-      description: 'Premium cola drink 35cl bottles',
-      packsPerPallet: 36,
-      pricePerPack: 100.00
+      name: 'Premium Beans 5kg',
+      description: 'Premium quality beans - 5kg pack',
+      packsPerPallet: 100,
+      pricePerPack: 120.00,
+      costPerPack: 85.00
     },
-     {
+    {
       productNo: 'RF005',
-      name: 'Rite Foods Bigi Chapman - 50cl',
-      description: 'Premium cola drink 50cl bottles',
-      packsPerPallet: 24,
-      pricePerPack: 120.00
+      name: 'Premium Garri 10kg',
+      description: 'Premium quality garri - 10kg bag',
+      packsPerPallet: 60,
+      pricePerPack: 80.00,
+      costPerPack: 55.00
     },
     {
       productNo: 'RF006',
-      name: 'Rite Foods Bigi Chapman - 35cl',
-      description: 'Premium cola drink 35cl bottles',
-      packsPerPallet: 36,
-      pricePerPack: 100.00
-    },
-     {
-      productNo: 'RF007',
-      name: 'Rite Foods Bigi Guava - 50cl',
-      description: 'Premium cola drink 50cl bottles',
-      packsPerPallet: 24,
-      pricePerPack: 120.00
-    },
-    {
-      productNo: 'RF008',
-      name: 'Rite Foods Bigi Guava - 35cl',
-      description: 'Premium cola drink 35cl bottles',
-      packsPerPallet: 36,
-      pricePerPack: 100.00
-    },
-    {
-      productNo: 'RF009',
-      name: 'Rite Foods Bigi Water - 50cl',
-      description: 'Premium cola drink 35cl bottles',
-      packsPerPallet: 36,
-      pricePerPack: 100.00
-    },
-    {
-      productNo: 'RF010',
-      name: 'Rite Foods Fearless Energy Drink',
-      description: 'Premium energy drink 25cl cans',
-      packsPerPallet: 24,
-      pricePerPack: 180.00
+      name: 'Premium Flour 50kg',
+      description: 'Premium wheat flour - 50kg bag',
+      packsPerPallet: 25,
+      pricePerPack: 280.00,
+      costPerPack: 200.00
     }
   ];
 
   const createdProducts = {};
 
   for (const productData of products) {
-    const product = await prisma.product.create({
-      data: productData
-    });
+    const product = await prisma.product.create({ data: productData });
     createdProducts[productData.productNo] = product;
-    console.log(`✅ Created product: ${productData.name} (${productData.productNo})`);
+    console.log(`✅ Created product: ${productData.productNo} - ${productData.name}`);
   }
 
   // ================================
-  // CREATE PALLET PRICING (Location-specific)
+  // CREATE PALLET PRICING
   // ================================
 
-  console.log('💰 Creating location-specific pricing...');
+  console.log('💰 Creating pallet pricing...');
 
-  const locationPricing = [
-    // Ibadan pricing (5% fuel adjustment already in location)
-    {
-      productId: createdProducts['RF001'].id,
-      locationId: createdLocations['Ibadan'].id,
-      pricePerPack: 260.00,
-      fuelAdjustment: 0.00 // Already included in price
-    },
-    // Abuja pricing (8% fuel adjustment already in location)  
-    {
-      productId: createdProducts['RF001'].id,
-      locationId: createdLocations['Abuja'].id,
-      pricePerPack: 270.00,
-      fuelAdjustment: 0.00
-    },
-    // Kano pricing (12% fuel adjustment already in location)
-    {
-      productId: createdProducts['RF001'].id,
-      locationId: createdLocations['Kano'].id,
-      pricePerPack: 280.00,
-      fuelAdjustment: 0.00
+  for (const [productNo, product] of Object.entries(createdProducts)) {
+    for (const [locationName, location] of Object.entries(createdLocations)) {
+      const basePrice = product.pricePerPack;
+      const fuelAdjustment = location.fuelAdjustment;
+      const adjustedPrice = parseFloat(basePrice) + parseFloat(fuelAdjustment);
+
+      await prisma.palletPricing.create({
+        data: {
+          productId: product.id,
+          locationId: location.id,
+          pricePerPack: adjustedPrice,
+          fuelAdjustment: fuelAdjustment
+        }
+      });
     }
-  ];
-
-  for (const pricingData of locationPricing) {
-    await prisma.palletPricing.create({
-      data: pricingData
-    });
   }
+
+  console.log('✅ Created pallet pricing for all product-location combinations');
 
   // ================================
   // CREATE TRUCK CAPACITY RECORDS
@@ -394,7 +394,10 @@ async function main() {
     { truckId: 'PG-002', maxPallets: 12, currentLoad: 0 },
     { truckId: 'PG-003', maxPallets: 12, currentLoad: 0 },
     { truckId: 'PG-004', maxPallets: 12, currentLoad: 0 },
-    { truckId: 'PG-005', maxPallets: 12, currentLoad: 0 }
+    { truckId: 'PG-005', maxPallets: 12, currentLoad: 0 },
+    { truckId: 'PG-006', maxPallets: 12, currentLoad: 0 },
+    { truckId: 'PG-007', maxPallets: 10, currentLoad: 0 }, // Smaller truck
+    { truckId: 'PG-008', maxPallets: 10, currentLoad: 0 }  // Smaller truck
   ];
 
   const createdTrucks = {};
@@ -420,16 +423,59 @@ async function main() {
     await prisma.warehouseInventory.create({
       data: {
         productId: product.id,
-        packs: Math.floor(Math.random() * 200) + 50,  // 50-249 packs
-        units: Math.floor(Math.random() * 500) + 100, // 100-599 units
-        reorderLevel: 20, // Reorder when below 20 packs
-        maxStockLevel: 500,
+        packs: Math.floor(Math.random() * 300) + 100,  // 100-399 packs
+        units: Math.floor(Math.random() * 800) + 200,  // 200-999 units
+        reorderLevel: 50,
+        maxStockLevel: 800,
         location: 'Main Warehouse'
       }
     });
   }
 
   console.log(`✅ Created inventory for ${Object.keys(createdProducts).length} products`);
+
+  // ================================
+  // CREATE DISTRIBUTION TARGETS
+  // ================================
+
+  console.log('🎯 Creating distribution targets...');
+
+  const currentDate = new Date();
+  const currentYear = currentDate.getFullYear();
+  const currentMonth = currentDate.getMonth() + 1;
+
+  const distributionTarget = await prisma.distributionTarget.create({
+    data: {
+      year: currentYear,
+      month: currentMonth,
+      totalPacksTarget: 140000,
+      weeklyTargets: [35000, 35000, 35000, 35000]
+    }
+  });
+
+  // Create weekly performance records
+  const weekStartDates = [
+    new Date(currentYear, currentMonth - 1, 1),
+    new Date(currentYear, currentMonth - 1, 8),
+    new Date(currentYear, currentMonth - 1, 15),
+    new Date(currentYear, currentMonth - 1, 22)
+  ];
+
+  for (let i = 0; i < 4; i++) {
+    await prisma.weeklyPerformance.create({
+      data: {
+        targetId: distributionTarget.id,
+        weekNumber: i + 1,
+        targetPacks: 35000,
+        actualPacks: Math.floor(Math.random() * 15000) + 25000, // 25k-40k
+        percentageAchieved: 0, // Will be calculated
+        weekStartDate: weekStartDates[i],
+        weekEndDate: new Date(weekStartDates[i].getTime() + 6 * 24 * 60 * 60 * 1000)
+      }
+    });
+  }
+
+  console.log('✅ Created distribution targets and weekly performance records');
 
   // ================================
   // CREATE SAMPLE DISTRIBUTION ORDERS
@@ -440,215 +486,222 @@ async function main() {
   const sampleOrders = [
     {
       customerId: createdCustomers['ABC Supermarket Ltd'].id,
-      locationId: createdLocations['Lagos Central'].id,
+      locationId: createdLocations['Ikeja'].id,
       createdBy: createdUsers['sales_rep_1'].id,
       status: 'DELIVERED',
       transporterCompany: 'Premium G Transport',
       driverNumber: 'DRV001',
-      remark: 'Regular weekly order',
+      remark: 'Regular weekly order - Priority customer',
       orderItems: [
         {
           productId: createdProducts['RF001'].id,
-          pallets: 2,
-          packs: 10
+          pallets: 3,
+          packs: 60,
+          amount: 15000.00
         },
         {
           productId: createdProducts['RF004'].id,
-          pallets: 1,
-          packs: 5
+          pallets: 2,
+          packs: 200,
+          amount: 24000.00
         }
       ]
     },
     {
       customerId: createdCustomers['XYZ Trading Company'].id,
-      locationId: createdLocations['Ibadan'].id,
+      locationId: createdLocations['Victoria Island'].id,
       createdBy: createdUsers['sales_rep_2'].id,
       status: 'IN_TRANSIT',
       transporterCompany: 'Premium G Transport',
       driverNumber: 'DRV002',
-      remark: 'Monthly bulk order',
+      remark: 'Express delivery requested',
       orderItems: [
         {
           productId: createdProducts['RF002'].id,
-          pallets: 3,
-          packs: 0
+          pallets: 4,
+          packs: 160,
+          amount: 20800.00
         },
         {
           productId: createdProducts['RF006'].id,
           pallets: 2,
-          packs: 12
+          packs: 50,
+          amount: 14000.00
         }
       ]
     },
     {
-      customerId: createdCustomers['Premium Retailers'].id,
-      locationId: createdLocations['Abuja'].id,
+      customerId: createdCustomers['QuickMart Stores'].id,
+      locationId: createdLocations['Lekki'].id,
       createdBy: createdUsers['sales_rep_1'].id,
-      status: 'PENDING',
-      remark: 'New product trial order',
+      status: 'CONFIRMED',
+      transporterCompany: 'Premium G Transport',
+      driverNumber: 'DRV003',
+      remark: 'New customer - First order',
       orderItems: [
         {
           productId: createdProducts['RF003'].id,
-          pallets: 1,
-          packs: 24
+          pallets: 5,
+          packs: 100,
+          amount: 22000.00
         }
       ]
     }
   ];
 
+  const createdOrders = [];
+
   for (const orderData of sampleOrders) {
-    // Calculate totals
-    let totalPallets = 0;
-    let totalPacks = 0;
-    let totalAmount = 0;
-    const calculatedItems = [];
+    const { orderItems, ...orderInfo } = orderData;
+    
+    const totalPallets = orderItems.reduce((sum, item) => sum + item.pallets, 0);
+    const totalPacks = orderItems.reduce((sum, item) => sum + item.packs, 0);
+    const totalAmount = orderItems.reduce((sum, item) => sum + parseFloat(item.amount), 0);
 
-    for (const item of orderData.orderItems) {
-      const product = await prisma.product.findUnique({
-        where: { id: item.productId }
-      });
-
-      const palletPacks = item.pallets * product.packsPerPallet;
-      const itemTotalPacks = palletPacks + item.packs;
-      const itemAmount = itemTotalPacks * product.pricePerPack;
-
-      calculatedItems.push({
-        productId: item.productId,
-        pallets: item.pallets,
-        packs: item.packs,
-        amount: itemAmount
-      });
-
-      totalPallets += item.pallets;
-      totalPacks += itemTotalPacks;
-      totalAmount += itemAmount;
-    }
-
-    // Create order
-    await prisma.distributionOrder.create({
+    const order = await prisma.distributionOrder.create({
       data: {
-        customerId: orderData.customerId,
-        locationId: orderData.locationId,
+        ...orderInfo,
         totalPallets,
         totalPacks,
         originalAmount: totalAmount,
         finalAmount: totalAmount,
-        balance: 0,
-        status: orderData.status,
-        transporterCompany: orderData.transporterCompany,
-        driverNumber: orderData.driverNumber,
-        remark: orderData.remark,
-        createdBy: orderData.createdBy,
-        orderItems: {
-          create: calculatedItems
-        }
+        balance: 0
       }
     });
+
+    for (const item of orderItems) {
+      await prisma.distributionOrderItem.create({
+        data: {
+          orderId: order.id,
+          productId: item.productId,
+          pallets: item.pallets,
+          packs: item.packs,
+          amount: item.amount
+        }
+      });
+    }
+
+    createdOrders.push(order);
+    console.log(`✅ Created distribution order for ${orderInfo.customerId}`);
   }
 
-  console.log(`✅ Created ${sampleOrders.length} sample distribution orders`);
-
   // ================================
-  // CREATE SAMPLE TRANSPORT ORDERS
+  // CREATE TRANSPORT ORDERS
   // ================================
 
-  console.log('🚛 Creating sample transport orders...');
+  console.log('🚛 Creating transport orders...');
 
-  const sampleTransportOrders = [
-    {
-      orderNumber: 'TO-2025-001',
-      invoiceNumber: 'INV-2025-001',
-      locationId: createdLocations['Lagos Central'].id,
-      truckId: 'PG-001',
-      totalOrderAmount: 15000.00,
-      fuelRequired: 45.5,
-      fuelPricePerLiter: 650.00,
-      driverDetails: 'John Adebayo - DRV001',
-      deliveryStatus: 'DELIVERED',
-      createdBy: createdUsers['transport_staff'].id
-    },
-    {
-      orderNumber: 'TO-2025-002', 
-      invoiceNumber: 'INV-2025-002',
-      locationId: createdLocations['Ibadan'].id,
-      truckId: 'PG-002',
-      totalOrderAmount: 28000.00,
-      fuelRequired: 85.0,
-      fuelPricePerLiter: 650.00,
-      driverDetails: 'Moses Ibrahim - DRV002',
-      deliveryStatus: 'IN_TRANSIT',
-      createdBy: createdUsers['transport_staff'].id
-    }
-  ];
-
-  for (const transportData of sampleTransportOrders) {
-    const totalFuelCost = transportData.fuelRequired * transportData.fuelPricePerLiter;
-    const serviceCharge = transportData.totalOrderAmount * 0.10; // 10%
-
+  for (const order of createdOrders.slice(0, 2)) { // First 2 orders
+    const location = createdLocations['Ikeja']; // Get the actual location
+    const fuelRequired = 45.00;
+    const fuelPrice = 850.00;
+    const totalFuelCost = fuelRequired * fuelPrice;
+    const serviceCharge = parseFloat(order.finalAmount) * 0.10;
+    const driverWages = location.driverWagesPerTrip;
+    const totalExpenses = totalFuelCost + serviceCharge + driverWages;
+    const grossProfit = parseFloat(order.finalAmount) - totalExpenses;
+    const profitMarginPercent = (grossProfit / parseFloat(order.finalAmount)) * 100;
+    
     await prisma.transportOrder.create({
       data: {
-        ...transportData,
+        distributionOrderId: order.id,
+        orderNumber: `TO-2025-${String(createdOrders.indexOf(order) + 1).padStart(4, '0')}`,
+        invoiceNumber: `INV-2025-${String(createdOrders.indexOf(order) + 1).padStart(4, '0')}`,
+        locationId: order.locationId,
+        truckId: Object.values(createdTrucks)[createdOrders.indexOf(order)].truckId,
+        totalOrderAmount: order.finalAmount,
+        fuelRequired,
+        fuelPricePerLiter: fuelPrice,
         totalFuelCost,
-        serviceCharge,
-        truckExpenses: 2500.00, // Sample truck expenses
-        driverSalary: 8000.00   // Sample driver salary
+        serviceChargeExpense: serviceCharge,
+        driverWages,
+        truckExpenses: 0,
+        totalExpenses,
+        grossProfit,
+        netProfit: grossProfit,
+        profitMargin: Math.min(Math.max(profitMarginPercent, -999.99), 999.99), // Clamp to valid range
+        deliveryStatus: order.status === 'DELIVERED' ? 'DELIVERED' : 'IN_TRANSIT',
+        deliveryDate: order.status === 'DELIVERED' ? new Date() : null,
+        createdBy: order.createdBy
       }
     });
   }
 
-  console.log(`✅ Created ${sampleTransportOrders.length} sample transport orders`);
+  console.log(`✅ Created transport orders`);
 
   // ================================
-  // CREATE SAMPLE WAREHOUSE SALES
+  // CREATE WAREHOUSE SALES
   // ================================
 
-  console.log('🏪 Creating sample warehouse sales...');
+  console.log('🏪 Creating warehouse sales...');
 
-  const sampleSales = [
+  const warehouseSales = [
     {
       productId: createdProducts['RF001'].id,
-      quantity: 5,
+      quantity: 10,
       unitType: 'PACKS',
       unitPrice: 250.00,
+      costPerUnit: 180.00, // Cost from product
       paymentMethod: 'CASH',
-      customerName: 'Walk-in Customer',
+      customerName: 'Walk-in Customer 1',
+      customerPhone: '+234-901-111-1111',
       receiptNumber: 'WH-2025-001',
       salesOfficer: createdUsers['warehouse_officer'].id
     },
     {
       productId: createdProducts['RF004'].id,
-      quantity: 24,
+      quantity: 50,
       unitType: 'UNITS',
       unitPrice: 120.00,
+      costPerUnit: 85.00, // Cost from product
       paymentMethod: 'BANK_TRANSFER',
-      customerName: 'Local Retailer',
-      customerPhone: '+234-xxx-xxx-xxxx',
+      customerName: 'Local Retailer ABC',
+      customerPhone: '+234-902-222-2222',
       receiptNumber: 'WH-2025-002',
+      salesOfficer: createdUsers['warehouse_officer'].id
+    },
+    {
+      productId: createdProducts['RF005'].id,
+      quantity: 25,
+      unitType: 'PACKS',
+      unitPrice: 80.00,
+      costPerUnit: 55.00, // Cost from product
+      paymentMethod: 'CARD', // Changed from POS to CARD
+      customerName: 'Walk-in Customer 2',
+      receiptNumber: 'WH-2025-003',
       salesOfficer: createdUsers['warehouse_officer'].id
     }
   ];
 
-  for (const saleData of sampleSales) {
+  for (const saleData of warehouseSales) {
+    const totalAmount = saleData.quantity * saleData.unitPrice;
+    const totalCost = saleData.quantity * saleData.costPerUnit;
+    const grossProfit = totalAmount - totalCost;
+    const profitMargin = totalAmount > 0 ? (grossProfit / totalAmount) * 100 : 0;
+    
     await prisma.warehouseSale.create({
       data: {
         ...saleData,
-        totalAmount: saleData.quantity * saleData.unitPrice
+        totalAmount,
+        totalCost,
+        grossProfit,
+        profitMargin: Math.min(Math.max(profitMargin, -999.99), 999.99) // Clamp to valid range
       }
     });
   }
 
-  console.log(`✅ Created ${sampleSales.length} sample warehouse sales`);
+  console.log(`✅ Created ${warehouseSales.length} warehouse sales`);
 
   // ================================
-  // CREATE SAMPLE CASH FLOW ENTRIES
+  // CREATE CASH FLOW ENTRIES
   // ================================
 
-  console.log('💰 Creating sample cash flow entries...');
+  console.log('💰 Creating cash flow entries...');
 
-  const sampleCashFlow = [
+  const cashFlowEntries = [
     {
       transactionType: 'CASH_IN',
-      amount: 1250.00,
+      amount: 2500.00,
       paymentMethod: 'CASH',
       description: 'Warehouse sale - Receipt WH-2025-001',
       referenceNumber: 'WH-2025-001',
@@ -656,28 +709,113 @@ async function main() {
     },
     {
       transactionType: 'CASH_IN',
-      amount: 240.00,
+      amount: 6000.00,
       paymentMethod: 'BANK_TRANSFER',
-      description: 'Warehouse sale - Receipt WH-2025-002', 
+      description: 'Warehouse sale - Receipt WH-2025-002',
       referenceNumber: 'WH-2025-002',
       cashier: createdUsers['cashier_1'].id
     },
     {
+      transactionType: 'CASH_IN',
+      amount: 2000.00,
+      paymentMethod: 'CARD', // Changed from POS to CARD
+      description: 'Warehouse sale - Receipt WH-2025-003',
+      referenceNumber: 'WH-2025-003',
+      cashier: createdUsers['cashier_2'].id
+    },
+    {
       transactionType: 'CASH_OUT',
-      amount: 500.00,
+      amount: 1500.00,
       paymentMethod: 'CASH',
       description: 'Office supplies purchase',
       cashier: createdUsers['cashier_1'].id
+    },
+    {
+      transactionType: 'CASH_OUT',
+      amount: 5000.00,
+      paymentMethod: 'BANK_TRANSFER',
+      description: 'Utility bills payment',
+      referenceNumber: 'UTIL-2025-001',
+      cashier: createdUsers['cashier_2'].id
     }
   ];
 
-  for (const cashFlowData of sampleCashFlow) {
-    await prisma.cashFlow.create({
-      data: cashFlowData
-    });
+  for (const cashFlow of cashFlowEntries) {
+    await prisma.cashFlow.create({ data: cashFlow });
   }
 
-  console.log(`✅ Created ${sampleCashFlow.length} sample cash flow entries`);
+  console.log(`✅ Created ${cashFlowEntries.length} cash flow entries`);
+
+  // ================================
+  // CREATE EXPENSES
+  // ================================
+
+  console.log('💸 Creating expense records...');
+
+  const expenses = [
+    {
+      expenseType: 'FUEL_COST',
+      category: 'FUEL',
+      amount: 38250.00,
+      description: 'Fuel purchase for truck PG-001',
+      referenceId: createdTrucks['PG-001'].truckId,
+      expenseDate: new Date(),
+      truckId: createdTrucks['PG-001'].truckId,
+      status: 'APPROVED',
+      approvedBy: createdUsers['transport_admin'].id,
+      approvedAt: new Date(),
+      createdBy: createdUsers['transport_staff_1'].id
+    },
+    {
+      expenseType: 'TRUCK_EXPENSE',
+      category: 'MAINTENANCE',
+      amount: 25000.00,
+      description: 'Routine maintenance - Truck PG-002',
+      referenceId: createdTrucks['PG-002'].truckId,
+      expenseDate: new Date(),
+      truckId: createdTrucks['PG-002'].truckId,
+      status: 'PENDING',
+      createdBy: createdUsers['transport_staff_2'].id,
+      receiptNumber: 'MAINT-2025-001'
+    },
+    {
+      expenseType: 'OPERATIONAL',
+      category: 'DRIVER_WAGES',
+      amount: 50000.00,
+      description: 'Weekly driver wages payment',
+      expenseDate: new Date(),
+      status: 'APPROVED',
+      approvedBy: createdUsers['transport_admin'].id,
+      approvedAt: new Date(),
+      createdBy: createdUsers['transport_admin'].id
+    },
+    {
+      expenseType: 'WAREHOUSE_EXPENSE',
+      category: 'OFFICE_SUPPLIES',
+      amount: 15000.00,
+      description: 'Office supplies and stationery',
+      expenseDate: new Date(),
+      status: 'APPROVED',
+      approvedBy: createdUsers['warehouse_admin'].id,
+      approvedAt: new Date(),
+      createdBy: createdUsers['warehouse_officer'].id
+    },
+    {
+      expenseType: 'DISTRIBUTION_EXPENSE',
+      category: 'MARKETING',
+      amount: 30000.00,
+      description: 'Marketing materials for distribution team',
+      expenseDate: new Date(),
+      status: 'PENDING',
+      createdBy: createdUsers['dist_admin'].id
+    }
+  ];
+
+  for (const expense of expenses) {
+    await prisma.expense.create({ data: expense });
+  }
+
+  console.log(`✅ Created ${expenses.length} expense records`);
 
   // ================================
   // FINAL SUMMARY
@@ -686,34 +824,71 @@ async function main() {
   console.log('\n🎉 Database seeding completed successfully!');
   console.log('\n📊 SEEDING SUMMARY:');
   console.log('===================');
+  console.log(`⚙️  System Configs: ${configs.length}`);
   console.log(`👥 Users: ${users.length}`);
   console.log(`📍 Locations: ${locations.length}`);
   console.log(`🏢 Customers: ${customers.length}`);
   console.log(`📦 Products: ${products.length}`);
   console.log(`🚚 Trucks: ${trucks.length}`);
-  console.log(`📋 Distribution Orders: ${sampleOrders.length}`);
-  console.log(`🚛 Transport Orders: ${sampleTransportOrders.length}`);
-  console.log(`🏪 Warehouse Sales: ${sampleSales.length}`);
-  console.log(`💰 Cash Flow Entries: ${sampleCashFlow.length}`);
+  console.log(`🎯 Distribution Targets: 1 (with 4 weekly performance records)`);
+  console.log(`📋 Distribution Orders: ${createdOrders.length}`);
+  console.log(`🚛 Transport Orders: 2`);
+  console.log(`🏪 Warehouse Sales: ${warehouseSales.length}`);
+  console.log(`💰 Cash Flow Entries: ${cashFlowEntries.length}`);
+  console.log(`💸 Expenses: ${expenses.length}`);
+  console.log(`📦 Warehouse Inventory: ${Object.keys(createdProducts).length} products`);
 
   console.log('\n🔑 DEFAULT LOGIN CREDENTIALS:');
   console.log('=============================');
-  console.log('Super Admin: superadmin / SuperAdmin123!');
-  console.log('Distribution Admin: dist_admin / DistAdmin123!');
-  console.log('Transport Admin: transport_admin / TransAdmin123!');
-  console.log('Warehouse Admin: warehouse_admin / WareAdmin123!');
-  console.log('Sales Rep 1: sales_rep_1 / SalesRep123!');
-  console.log('Sales Rep 2: sales_rep_2 / SalesRep123!');
-  console.log('Warehouse Officer: warehouse_officer / WareOfficer123!');
-  console.log('Cashier: cashier_1 / Cashier123!');
-  console.log('Transport Staff: transport_staff / TransStaff123!');
-
-  console.log('\n⚠️  IMPORTANT: Change all default passwords in production!');
+  console.log('Super Admin:');
+  console.log('  Username: superadmin');
+  console.log('  Password: SuperAdmin123!');
+  console.log('');
+  console.log('Distribution Admin:');
+  console.log('  Username: dist_admin');
+  console.log('  Password: DistAdmin123!');
+  console.log('');
+  console.log('Transport Admin:');
+  console.log('  Username: transport_admin');
+  console.log('  Password: TransAdmin123!');
+  console.log('');
+  console.log('Warehouse Admin:');
+  console.log('  Username: warehouse_admin');
+  console.log('  Password: WareAdmin123!');
+  console.log('');
+  console.log('Sales Representative:');
+  console.log('  Username: sales_rep_1');
+  console.log('  Password: SalesRep123!');
+  console.log('');
+  console.log('Warehouse Officer:');
+  console.log('  Username: warehouse_officer');
+  console.log('  Password: WareOfficer123!');
+  console.log('');
+  console.log('Cashier:');
+  console.log('  Username: cashier_1');
+  console.log('  Password: Cashier123!');
+  console.log('');
+  console.log('Transport Staff:');
+  console.log('  Username: transport_staff_1');
+  console.log('  Password: TransStaff123!');
+  
+  console.log('\n📝 NOTES:');
+  console.log('=========');
+  console.log('✓ All passwords follow the pattern: [Role]123!');
+  console.log('✓ Sample data includes realistic business scenarios');
+  console.log('✓ Inventory levels are randomized but within reasonable ranges');
+  console.log('✓ Distribution targets set to 140,000 packs/month (35k/week)');
+  console.log('✓ Pricing includes location-based fuel adjustments');
+  console.log('✓ Transport orders include profit calculations');
+  console.log('✓ Expense records demonstrate approval workflow');
+  console.log('');
+  console.log('🚀 Ready to run: npm run seed');
+  console.log('🌐 Then start server: npm run dev');
 }
 
 main()
-  .catch((e) => {
-    console.error('❌ Seeding failed:', e);
+  .catch((error) => {
+    console.error('❌ Error during seeding:', error);
     process.exit(1);
   })
   .finally(async () => {
