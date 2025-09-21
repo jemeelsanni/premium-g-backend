@@ -1,8 +1,8 @@
 const express = require('express');
-const { query, param, validationResult } = require('express-validator');
+const { query, param, body, validationResult } = require('express-validator');
 const { PrismaClient } = require('@prisma/client');
 
-const { asyncHandler, ValidationError, NotFoundError } = require('../middleware/errorHandler');
+const { asyncHandler, ValidationError, NotFoundError, BusinessError } = require('../middleware/errorHandler');
 const { authorizeRole } = require('../middleware/auth');
 const { validateCuid } = require('../utils/validators');
 
@@ -10,11 +10,10 @@ const router = express.Router();
 const prisma = new PrismaClient();
 
 // ================================
-// UTILITY FUNCTIONS
+// COMPREHENSIVE PROFIT CALCULATION
 // ================================
 
 const calculateOrderProfitability = async (orderId) => {
-  // Get distribution order with all related data
   const order = await prisma.distributionOrder.findUnique({
     where: { id: orderId },
     include: {
@@ -24,13 +23,14 @@ const calculateOrderProfitability = async (orderId) => {
         }
       },
       transportOrder: true,
-      location: true
+      location: true,
+      customer: true
     }
   });
 
   if (!order) return null;
 
-  // Calculate cost of goods sold (COGS)
+  // Calculate COGS for distribution
   let totalCOGS = 0;
   for (const item of order.orderItems) {
     const itemPacks = (item.pallets * item.product.packsPerPallet) + item.packs;
@@ -45,9 +45,11 @@ const calculateOrderProfitability = async (orderId) => {
     }
   });
 
-  const totalExpenses = expenses.reduce((sum, expense) => sum + parseFloat(expense.amount), 0);
+  const operationalExpenses = expenses.reduce((sum, expense) => 
+    sum + parseFloat(expense.amount), 0
+  );
 
-  // Calculate transport costs if available
+  // Transport costs (if linked)
   let transportCosts = 0;
   if (order.transportOrder) {
     transportCosts = parseFloat(order.transportOrder.totalExpenses || 0);
@@ -55,7 +57,7 @@ const calculateOrderProfitability = async (orderId) => {
 
   // Calculate profit metrics
   const totalRevenue = parseFloat(order.finalAmount);
-  const totalCosts = totalCOGS + totalExpenses + transportCosts;
+  const totalCosts = totalCOGS + operationalExpenses + transportCosts;
   const grossProfit = totalRevenue - totalCOGS;
   const netProfit = totalRevenue - totalCosts;
   const profitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
@@ -64,7 +66,7 @@ const calculateOrderProfitability = async (orderId) => {
     orderId,
     totalRevenue,
     costOfGoodsSold: totalCOGS,
-    operationalExpenses: totalExpenses,
+    operationalExpenses,
     transportCosts,
     totalCosts,
     grossProfit,
@@ -80,7 +82,7 @@ const calculateOrderProfitability = async (orderId) => {
 };
 
 const generatePeriodAnalysis = async (period, startDate, endDate) => {
-  // Get all relevant data for the period
+  // Get all data for the period
   const [
     distributionOrders,
     transportOrders,
@@ -95,14 +97,17 @@ const generatePeriodAnalysis = async (period, startDate, endDate) => {
       include: {
         orderItems: {
           include: { product: true }
-        }
+        },
+        transportOrder: true
       }
     }),
     
+    // Get standalone transport orders (not linked to distribution)
     prisma.transportOrder.findMany({
       where: {
         createdAt: { gte: startDate, lte: endDate },
-        deliveryStatus: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] }
+        deliveryStatus: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] },
+        distributionOrderId: null
       }
     }),
     
@@ -120,43 +125,72 @@ const generatePeriodAnalysis = async (period, startDate, endDate) => {
     })
   ]);
 
-  // Calculate distribution revenue and COGS
+  // 1. DISTRIBUTION REVENUE & COGS
   let distributionRevenue = 0;
-  let totalCOGS = 0;
+  let distributionCOGS = 0;
   
   for (const order of distributionOrders) {
     distributionRevenue += parseFloat(order.finalAmount);
     
     for (const item of order.orderItems) {
       const itemPacks = (item.pallets * item.product.packsPerPallet) + item.packs;
-      totalCOGS += itemPacks * parseFloat(item.product.costPerPack || 0);
+      distributionCOGS += itemPacks * parseFloat(item.product.costPerPack || 0);
     }
   }
 
-  // Calculate transport revenue (this should be net profit from transport)
-  const transportRevenue = transportOrders.reduce((sum, order) => 
-    sum + parseFloat(order.netProfit || 0), 0
-  );
+  // 2. TRANSPORT REVENUE (Gross revenue from standalone transport)
+  let transportGrossRevenue = 0;
+  let transportExpenses = 0;
+  
+  for (const order of transportOrders) {
+    transportGrossRevenue += parseFloat(order.totalOrderAmount);
+    transportExpenses += parseFloat(order.totalExpenses);
+  }
+  
+  // Transport revenue from distribution-linked orders
+  let linkedTransportRevenue = 0;
+  let linkedTransportExpenses = 0;
+  
+  for (const order of distributionOrders) {
+    if (order.transportOrder) {
+      linkedTransportRevenue += parseFloat(order.transportOrder.totalOrderAmount);
+      linkedTransportExpenses += parseFloat(order.transportOrder.totalExpenses);
+    }
+  }
 
-  // Calculate warehouse revenue
-  const warehouseRevenue = warehouseSales.reduce((sum, sale) => 
-    sum + parseFloat(sale.totalAmount), 0
-  );
+  const totalTransportRevenue = transportGrossRevenue + linkedTransportRevenue;
+  const totalTransportExpenses = transportExpenses + linkedTransportExpenses;
 
-  // Calculate total expenses by category
-  const expenseBreakdown = expenses.reduce((acc, expense) => {
+  // 3. WAREHOUSE REVENUE & COGS
+  let warehouseRevenue = 0;
+  let warehouseCOGS = 0;
+  
+  for (const sale of warehouseSales) {
+    warehouseRevenue += parseFloat(sale.totalAmount);
+    warehouseCOGS += parseFloat(sale.totalCost || 0);
+  }
+
+  // 4. OPERATIONAL EXPENSES (excluding transport-related)
+  const expenseBreakdown = {};
+  let operationalExpenses = 0;
+
+  for (const expense of expenses) {
     const category = expense.category;
-    acc[category] = (acc[category] || 0) + parseFloat(expense.amount);
-    return acc;
-  }, {});
+    const amount = parseFloat(expense.amount);
+    
+    expenseBreakdown[category] = (expenseBreakdown[category] || 0) + amount;
+    
+    // Exclude transport-specific expenses (already counted)
+    if (!['FUEL', 'DRIVER_WAGES', 'SERVICE_CHARGES'].includes(category)) {
+      operationalExpenses += amount;
+    }
+  }
 
-  const totalExpenses = expenses.reduce((sum, expense) => 
-    sum + parseFloat(expense.amount), 0
-  );
-
-  // Calculate final metrics
-  const totalRevenue = distributionRevenue + transportRevenue + warehouseRevenue;
-  const totalCosts = totalCOGS + totalExpenses;
+  // 5. CONSOLIDATED CALCULATIONS
+  const totalRevenue = distributionRevenue + totalTransportRevenue + warehouseRevenue;
+  const totalCOGS = distributionCOGS + warehouseCOGS;
+  const totalCosts = totalCOGS + totalTransportExpenses + operationalExpenses;
+  
   const grossProfit = totalRevenue - totalCOGS;
   const netProfit = totalRevenue - totalCosts;
   const profitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
@@ -167,13 +201,16 @@ const generatePeriodAnalysis = async (period, startDate, endDate) => {
     endDate,
     revenue: {
       distribution: distributionRevenue,
-      transport: transportRevenue,
+      transport: totalTransportRevenue,
       warehouse: warehouseRevenue,
       total: totalRevenue
     },
     costs: {
       costOfGoodsSold: totalCOGS,
-      operationalExpenses: totalExpenses,
+      distributionCOGS,
+      warehouseCOGS,
+      transportExpenses: totalTransportExpenses,
+      operationalExpenses,
       total: totalCosts,
       breakdown: expenseBreakdown
     },
@@ -184,7 +221,7 @@ const generatePeriodAnalysis = async (period, startDate, endDate) => {
     },
     orderMetrics: {
       distributionOrders: distributionOrders.length,
-      transportOrders: transportOrders.length,
+      transportTrips: transportOrders.length + distributionOrders.filter(o => o.transportOrder).length,
       warehouseSales: warehouseSales.length
     }
   };
@@ -207,7 +244,6 @@ router.get('/order/:orderId',
 
     const { orderId } = req.params;
 
-    // Check if user has access to this order
     const order = await prisma.distributionOrder.findUnique({
       where: { id: orderId },
       include: { createdByUser: { select: { id: true } } }
@@ -226,13 +262,126 @@ router.get('/order/:orderId',
 
     const profitAnalysis = await calculateOrderProfitability(orderId);
 
-    if (!profitAnalysis) {
-      throw new NotFoundError('Order not found or invalid');
-    }
-
     res.json({
       success: true,
       data: { profitAnalysis }
+    });
+  })
+);
+
+// @route   GET /api/v1/analytics/profit/dashboard
+// @desc    Get comprehensive profit dashboard
+// @access  Private (Admin)
+router.get('/dashboard',
+  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'TRANSPORT_ADMIN', 'WAREHOUSE_ADMIN']),
+  asyncHandler(async (req, res) => {
+    const { days = 30 } = req.query;
+    
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - parseInt(days));
+
+    // Current period analysis
+    const currentAnalysis = await generatePeriodAnalysis('current', startDate, endDate);
+
+    // Previous period for comparison
+    const prevEndDate = new Date(startDate);
+    const prevStartDate = new Date(prevEndDate);
+    prevStartDate.setDate(prevStartDate.getDate() - parseInt(days));
+    
+    const previousAnalysis = await generatePeriodAnalysis('previous', prevStartDate, prevEndDate);
+
+    // Calculate growth metrics
+    const revenueGrowth = previousAnalysis.revenue.total > 0 ?
+      ((currentAnalysis.revenue.total - previousAnalysis.revenue.total) / previousAnalysis.revenue.total) * 100 : 0;
+
+    const profitGrowth = Math.abs(previousAnalysis.profit.net) > 0 ?
+      ((currentAnalysis.profit.net - previousAnalysis.profit.net) / Math.abs(previousAnalysis.profit.net)) * 100 : 0;
+
+    // Get top performers
+    const [topLocations, topCustomers] = await Promise.all([
+      prisma.$queryRaw`
+        SELECT 
+          l.id,
+          l.name,
+          COUNT(DISTINCT do.id) + COUNT(DISTINCT t.id) as total_orders,
+          COALESCE(SUM(do.final_amount), 0) + COALESCE(SUM(t.total_order_amount), 0) as total_revenue
+        FROM locations l
+        LEFT JOIN distribution_orders do ON l.id = do.location_id 
+          AND do.created_at >= ${startDate} 
+          AND do.created_at <= ${endDate}
+        LEFT JOIN transport_orders t ON l.id = t.location_id 
+          AND t.created_at >= ${startDate} 
+          AND t.created_at <= ${endDate}
+          AND t.distribution_order_id IS NULL
+        GROUP BY l.id, l.name
+        ORDER BY total_revenue DESC
+        LIMIT 5
+      `,
+
+      prisma.$queryRaw`
+        SELECT 
+          c.id,
+          c.name,
+          COUNT(do.id) as order_count,
+          SUM(do.final_amount) as total_revenue
+        FROM customers c
+        JOIN distribution_orders do ON c.id = do.customer_id
+        WHERE do.created_at >= ${startDate}
+          AND do.created_at <= ${endDate}
+        GROUP BY c.id, c.name
+        ORDER BY total_revenue DESC
+        LIMIT 5
+      `
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        period: { days, startDate, endDate },
+        currentPeriod: currentAnalysis,
+        previousPeriod: previousAnalysis,
+        growth: {
+          revenue: parseFloat(revenueGrowth.toFixed(2)),
+          profit: parseFloat(profitGrowth.toFixed(2)),
+          marginChange: currentAnalysis.profit.margin - previousAnalysis.profit.margin
+        },
+        kpis: {
+          revenuePerDay: currentAnalysis.revenue.total / days,
+          profitPerDay: currentAnalysis.profit.net / days,
+          avgRevenuePerOrder: currentAnalysis.orderMetrics.distributionOrders > 0 ?
+            currentAnalysis.revenue.distribution / currentAnalysis.orderMetrics.distributionOrders : 0,
+          costRatio: currentAnalysis.revenue.total > 0 ?
+            (currentAnalysis.costs.total / currentAnalysis.revenue.total) * 100 : 0
+        },
+        topPerformers: {
+          locations: topLocations,
+          customers: topCustomers
+        },
+        revenueBreakdown: {
+          distribution: {
+            amount: currentAnalysis.revenue.distribution,
+            percentage: currentAnalysis.revenue.total > 0 ? 
+              (currentAnalysis.revenue.distribution / currentAnalysis.revenue.total) * 100 : 0
+          },
+          transport: {
+            amount: currentAnalysis.revenue.transport,
+            percentage: currentAnalysis.revenue.total > 0 ? 
+              (currentAnalysis.revenue.transport / currentAnalysis.revenue.total) * 100 : 0
+          },
+          warehouse: {
+            amount: currentAnalysis.revenue.warehouse,
+            percentage: currentAnalysis.revenue.total > 0 ? 
+              (currentAnalysis.revenue.warehouse / currentAnalysis.revenue.total) * 100 : 0
+          }
+        },
+        alerts: {
+          lowProfitMargin: currentAnalysis.profit.margin < 10,
+          highCostRatio: (currentAnalysis.costs.total / currentAnalysis.revenue.total) * 100 > 80,
+          negativeGrowth: revenueGrowth < -5,
+          decreasingMargin: currentAnalysis.profit.margin < previousAnalysis.profit.margin
+        }
+      }
     });
   })
 );
@@ -247,56 +396,20 @@ router.get('/monthly',
     
     const currentDate = new Date();
     const targetYear = year ? parseInt(year) : currentDate.getFullYear();
-    const targetMonth = month ? parseInt(month) : currentDate.getMonth() + 1;
+    const targetMonth = month ? parseInt(month) - 1 : currentDate.getMonth();
 
-    // Calculate date range
-    const startDate = new Date(targetYear, targetMonth - 1, 1);
-    const endDate = new Date(targetYear, targetMonth, 0, 23, 59, 59);
+    const startDate = new Date(targetYear, targetMonth, 1);
+    const endDate = new Date(targetYear, targetMonth + 1, 0, 23, 59, 59);
 
     const monthlyAnalysis = await generatePeriodAnalysis('monthly', startDate, endDate);
-
-    // Get target performance for comparison
-    const target = await prisma.distributionTarget.findUnique({
-      where: { 
-        year_month: { 
-          year: targetYear, 
-          month: targetMonth 
-        } 
-      },
-      include: {
-        weeklyPerformances: true
-      }
-    });
-
-    let targetComparison = null;
-    if (target) {
-      const totalActualPacks = target.weeklyPerformances.reduce(
-        (sum, week) => sum + week.actualPacks, 0
-      );
-      const targetAchievement = target.totalPacksTarget > 0 ? 
-        (totalActualPacks / target.totalPacksTarget) * 100 : 0;
-
-      targetComparison = {
-        targetPacks: target.totalPacksTarget,
-        actualPacks: totalActualPacks,
-        achievement: parseFloat(targetAchievement.toFixed(2)),
-        revenuePerPack: totalActualPacks > 0 ? 
-          monthlyAnalysis.revenue.distribution / totalActualPacks : 0
-      };
-    }
 
     res.json({
       success: true,
       data: {
-        analysis: monthlyAnalysis,
-        targetComparison,
-        insights: {
-          profitPerOrder: monthlyAnalysis.orderMetrics.distributionOrders > 0 ?
-            monthlyAnalysis.profit.net / monthlyAnalysis.orderMetrics.distributionOrders : 0,
-          revenueGrowth: null, // Would need previous month data
-          costEfficiency: monthlyAnalysis.revenue.total > 0 ?
-            (monthlyAnalysis.costs.total / monthlyAnalysis.revenue.total) * 100 : 0
-        }
+        year: targetYear,
+        month: targetMonth + 1,
+        monthName: startDate.toLocaleString('default', { month: 'long' }),
+        analysis: monthlyAnalysis
       }
     });
   })
@@ -319,19 +432,19 @@ router.get('/yearly',
 
     // Get monthly breakdown
     const monthlyBreakdown = [];
-    for (let month = 1; month <= 12; month++) {
-      const monthStart = new Date(targetYear, month - 1, 1);
-      const monthEnd = new Date(targetYear, month, 0, 23, 59, 59);
+    for (let month = 0; month < 12; month++) {
+      const monthStart = new Date(targetYear, month, 1);
+      const monthEnd = new Date(targetYear, month + 1, 0, 23, 59, 59);
       
       const monthAnalysis = await generatePeriodAnalysis('monthly', monthStart, monthEnd);
       monthlyBreakdown.push({
-        month,
+        month: month + 1,
         monthName: monthStart.toLocaleString('default', { month: 'long' }),
         ...monthAnalysis
       });
     }
 
-    // Calculate year-over-year comparison if previous year data exists
+    // Calculate year-over-year comparison
     let yearOverYearComparison = null;
     if (targetYear > 2020) {
       const prevYearStart = new Date(targetYear - 1, 0, 1);
@@ -342,7 +455,7 @@ router.get('/yearly',
       const revenueGrowth = prevYearAnalysis.revenue.total > 0 ?
         ((yearlyAnalysis.revenue.total - prevYearAnalysis.revenue.total) / prevYearAnalysis.revenue.total) * 100 : 0;
       
-      const profitGrowth = prevYearAnalysis.profit.net > 0 ?
+      const profitGrowth = Math.abs(prevYearAnalysis.profit.net) > 0 ?
         ((yearlyAnalysis.profit.net - prevYearAnalysis.profit.net) / Math.abs(prevYearAnalysis.profit.net)) * 100 : 0;
 
       yearOverYearComparison = {
@@ -366,8 +479,7 @@ router.get('/yearly',
           ),
           worstMonth: monthlyBreakdown.reduce((worst, current) => 
             current.profit.net < worst.profit.net ? current : worst, monthlyBreakdown[0]
-          ),
-          avgMonthlyProfit: yearlyAnalysis.profit.net / 12
+          )
         }
       }
     });
@@ -382,7 +494,7 @@ router.get('/location/:locationId',
   authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'TRANSPORT_ADMIN']),
   asyncHandler(async (req, res) => {
     const { locationId } = req.params;
-    const { startDate, endDate, period = '30' } = req.query;
+    const { startDate, endDate, period = '90' } = req.query;
 
     // Verify location exists
     const location = await prisma.location.findUnique({
@@ -398,43 +510,32 @@ router.get('/location/:locationId',
     const startDateTime = startDate ? new Date(startDate) : 
       new Date(endDateTime.getTime() - (parseInt(period) * 24 * 60 * 60 * 1000));
 
-    // Get location-specific data
-    const [
-      distributionOrders,
-      transportOrders,
-      expenses
-    ] = await Promise.all([
-      prisma.distributionOrder.findMany({
-        where: {
-          locationId,
-          createdAt: { gte: startDateTime, lte: endDateTime },
-          status: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] }
+    // Get distribution orders for location
+    const distributionOrders = await prisma.distributionOrder.findMany({
+      where: {
+        locationId,
+        createdAt: { gte: startDateTime, lte: endDateTime }
+      },
+      include: {
+        orderItems: {
+          include: { product: true }
         },
-        include: {
-          orderItems: {
-            include: { product: true }
-          },
-          customer: { select: { name: true } }
-        }
-      }),
+        customer: true,
+        transportOrder: true
+      }
+    });
 
-      prisma.transportOrder.findMany({
-        where: {
-          locationId,
-          createdAt: { gte: startDateTime, lte: endDateTime }
-        }
-      }),
+    // Get standalone transport orders for location
+    const transportOrders = await prisma.transportOrder.findMany({
+      where: {
+        locationId,
+        createdAt: { gte: startDateTime, lte: endDateTime },
+        distributionOrderId: null,
+        deliveryStatus: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] }
+      }
+    });
 
-      prisma.expense.findMany({
-        where: {
-          locationId,
-          expenseDate: { gte: startDateTime, lte: endDateTime },
-          status: 'APPROVED'
-        }
-      })
-    ]);
-
-    // Calculate location-specific metrics
+    // Calculate metrics
     let distributionRevenue = 0;
     let totalCOGS = 0;
     let totalPacks = 0;
@@ -442,32 +543,36 @@ router.get('/location/:locationId',
     for (const order of distributionOrders) {
       distributionRevenue += parseFloat(order.finalAmount);
       totalPacks += order.totalPacks;
-      
+
       for (const item of order.orderItems) {
         const itemPacks = (item.pallets * item.product.packsPerPallet) + item.packs;
         totalCOGS += itemPacks * parseFloat(item.product.costPerPack || 0);
       }
     }
 
-    const transportRevenue = transportOrders.reduce((sum, order) => 
-      sum + parseFloat(order.netProfit || 0), 0);
+    let transportRevenue = 0;
+    let transportExpenses = 0;
 
-    const totalExpenses = expenses.reduce((sum, expense) => 
-      sum + parseFloat(expense.amount), 0);
+    for (const order of transportOrders) {
+      transportRevenue += parseFloat(order.totalOrderAmount);
+      transportExpenses += parseFloat(order.totalExpenses);
+    }
+
+    // Get expenses for location
+    const expenses = await prisma.expense.findMany({
+      where: {
+        locationId,
+        expenseDate: { gte: startDateTime, lte: endDateTime },
+        status: 'APPROVED'
+      }
+    });
+
+    const totalExpenses = expenses.reduce((sum, expense) => sum + parseFloat(expense.amount), 0);
 
     const totalRevenue = distributionRevenue + transportRevenue;
-    const totalCosts = totalCOGS + totalExpenses;
+    const totalCosts = totalCOGS + transportExpenses + totalExpenses;
     const netProfit = totalRevenue - totalCosts;
     const profitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
-
-    // Calculate delivery efficiency metrics
-    const deliveryMetrics = {
-      totalDeliveries: transportOrders.length,
-      avgDeliveryValue: transportOrders.length > 0 ? 
-        transportOrders.reduce((sum, order) => sum + parseFloat(order.totalOrderAmount), 0) / transportOrders.length : 0,
-      avgFuelCostPerDelivery: transportOrders.length > 0 ?
-        transportOrders.reduce((sum, order) => sum + parseFloat(order.totalFuelCost || 0), 0) / transportOrders.length : 0
-    };
 
     res.json({
       success: true,
@@ -482,7 +587,8 @@ router.get('/location/:locationId',
           },
           costs: {
             costOfGoodsSold: totalCOGS,
-            expenses: totalExpenses,
+            transportExpenses,
+            operationalExpenses: totalExpenses,
             total: totalCosts
           },
           profit: {
@@ -492,9 +598,11 @@ router.get('/location/:locationId',
         },
         operationalMetrics: {
           totalOrders: distributionOrders.length,
+          totalTransportTrips: transportOrders.length,
           totalPacks,
           revenuePerPack: totalPacks > 0 ? distributionRevenue / totalPacks : 0,
-          ...deliveryMetrics
+          avgDeliveryValue: transportOrders.length > 0 ? 
+            transportOrders.reduce((sum, o) => sum + parseFloat(o.totalOrderAmount), 0) / transportOrders.length : 0
         },
         expenseBreakdown: expenses.reduce((acc, expense) => {
           const category = expense.category;
@@ -600,7 +708,8 @@ router.get('/customer/:customerId',
     const avgOrderProfit = orders.length > 0 ? netProfit / orders.length : 0;
 
     // Customer lifetime value (simplified)
-    const orderFrequency = orders.length / (period / 30); // orders per month
+    const daysInPeriod = (endDateTime - startDateTime) / (1000 * 60 * 60 * 24);
+    const orderFrequency = orders.length / (daysInPeriod / 30); // orders per month
     const clv = avgOrderProfit * orderFrequency * 12; // simplified annual CLV
 
     res.json({
@@ -616,149 +725,21 @@ router.get('/customer/:customerId',
           profitMargin: parseFloat(profitMargin.toFixed(2)),
           avgOrderValue,
           avgOrderProfit,
-          customerLifetimeValue: clv
+          customerLifetimeValue: parseFloat(clv.toFixed(2))
         },
         orderHistory: orderAnalytics,
         insights: {
           mostProfitableOrder: orderAnalytics.reduce((best, current) => 
-            current.netProfit > best.netProfit ? current : best, orderAnalytics[0] || {}),
-          preferredLocation: Object.values(
-            orders.reduce((acc, order) => {
-              const location = order.location?.name || 'Unknown';
-              acc[location] = (acc[location] || 0) + 1;
-              return acc;
-            }, {})
-          ).length > 0 ? Object.keys(
-            orders.reduce((acc, order) => {
-              const location = order.location?.name || 'Unknown';
-              acc[location] = (acc[location] || 0) + 1;
-              return acc;
-            }, {})
-          ).reduce((a, b) => 
-            orders.filter(o => o.location?.name === a).length > 
-            orders.filter(o => o.location?.name === b).length ? a : b
-          ) : null
-        }
-      }
-    });
-  })
-);
-
-// @route   GET /api/v1/analytics/profit/dashboard
-// @desc    Get comprehensive profit dashboard
-// @access  Private (Admin)
-router.get('/dashboard',
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'TRANSPORT_ADMIN', 'WAREHOUSE_ADMIN']),
-  asyncHandler(async (req, res) => {
-    const { period = '30' } = req.query;
-    const days = parseInt(period);
-
-    const endDate = new Date();
-    const startDate = new Date(endDate.getTime() - (days * 24 * 60 * 60 * 1000));
-
-    // Get current period analysis
-    const currentAnalysis = await generatePeriodAnalysis('current', startDate, endDate);
-
-    // Get previous period for comparison
-    const prevEndDate = new Date(startDate.getTime() - (24 * 60 * 60 * 1000));
-    const prevStartDate = new Date(prevEndDate.getTime() - (days * 24 * 60 * 60 * 1000));
-    const previousAnalysis = await generatePeriodAnalysis('previous', prevStartDate, prevEndDate);
-
-    // Calculate growth metrics
-    const revenueGrowth = previousAnalysis.revenue.total > 0 ?
-      ((currentAnalysis.revenue.total - previousAnalysis.revenue.total) / previousAnalysis.revenue.total) * 100 : 0;
-
-    const profitGrowth = Math.abs(previousAnalysis.profit.net) > 0 ?
-      ((currentAnalysis.profit.net - previousAnalysis.profit.net) / Math.abs(previousAnalysis.profit.net)) * 100 : 0;
-
-    // Get top performing metrics
-    const [
-      topLocations,
-      topCustomers,
-      recentHighValueOrders
-    ] = await Promise.all([
-      // Top performing locations by profit
-      prisma.$queryRaw`
-        SELECT 
-          l.id,
-          l.name,
-          COUNT(do.id) as order_count,
-          SUM(do.final_amount) as total_revenue,
-          AVG(do.final_amount) as avg_order_value
-        FROM locations l
-        JOIN distribution_orders do ON l.id = do.location_id
-        WHERE do.created_at >= ${startDate}
-          AND do.created_at <= ${endDate}
-          AND do.status IN ('DELIVERED', 'PARTIALLY_DELIVERED')
-        GROUP BY l.id, l.name
-        ORDER BY total_revenue DESC
-        LIMIT 5
-      `,
-
-      // Top customers by revenue
-      prisma.$queryRaw`
-        SELECT 
-          c.id,
-          c.name,
-          COUNT(do.id) as order_count,
-          SUM(do.final_amount) as total_revenue,
-          AVG(do.final_amount) as avg_order_value
-        FROM customers c
-        JOIN distribution_orders do ON c.id = do.customer_id
-        WHERE do.created_at >= ${startDate}
-          AND do.created_at <= ${endDate}
-          AND do.status IN ('DELIVERED', 'PARTIALLY_DELIVERED')
-        GROUP BY c.id, c.name
-        ORDER BY total_revenue DESC
-        LIMIT 5
-      `,
-
-      // Recent high-value orders
-      prisma.distributionOrder.findMany({
-        where: {
-          createdAt: { gte: startDate, lte: endDate },
-          finalAmount: { gte: 50000 } // High-value threshold
-        },
-        include: {
-          customer: { select: { name: true } },
-          location: { select: { name: true } }
-        },
-        orderBy: { finalAmount: 'desc' },
-        take: 10
-      })
-    ]);
-
-    // Calculate key performance indicators
-    const kpis = {
-      revenuePerDay: currentAnalysis.revenue.total / days,
-      profitPerDay: currentAnalysis.profit.net / days,
-      avgOrderValue: currentAnalysis.orderMetrics.distributionOrders > 0 ?
-        currentAnalysis.revenue.distribution / currentAnalysis.orderMetrics.distributionOrders : 0,
-      costRatio: currentAnalysis.revenue.total > 0 ?
-        (currentAnalysis.costs.total / currentAnalysis.revenue.total) * 100 : 0
-    };
-
-    res.json({
-      success: true,
-      data: {
-        period: { days, startDate, endDate },
-        currentPeriod: currentAnalysis,
-        previousPeriod: previousAnalysis,
-        growth: {
-          revenue: parseFloat(revenueGrowth.toFixed(2)),
-          profit: parseFloat(profitGrowth.toFixed(2)),
-          marginChange: currentAnalysis.profit.margin - previousAnalysis.profit.margin
-        },
-        kpis,
-        topPerformers: {
-          locations: topLocations,
-          customers: topCustomers,
-          highValueOrders: recentHighValueOrders
-        },
-        alerts: {
-          lowProfitMargin: currentAnalysis.profit.margin < 10,
-          highCostRatio: kpis.costRatio > 80,
-          negativeGrowth: revenueGrowth < -5
+            current.netProfit > best.netProfit ? current : best, orderAnalytics[0]
+          ),
+          preferredLocation: orders.length > 0 ? 
+            Object.entries(
+              orders.reduce((acc, order) => {
+                const loc = order.location?.name || 'Unknown';
+                acc[loc] = (acc[loc] || 0) + 1;
+                return acc;
+              }, {})
+            ).sort((a, b) => b[1] - a[1])[0]?.[0] : null
         }
       }
     });
@@ -766,8 +747,8 @@ router.get('/dashboard',
 );
 
 // @route   POST /api/v1/analytics/profit/recalculate
-// @desc    Recalculate profit analysis for all orders (Admin only)
-// @access  Private (Super Admin)
+// @desc    Recalculate profit analysis for all orders
+// @access  Private (Super Admin only)
 router.post('/recalculate',
   authorizeRole(['SUPER_ADMIN']),
   asyncHandler(async (req, res) => {
@@ -789,7 +770,7 @@ router.post('/recalculate',
     let processedCount = 0;
     const batchSize = 50;
 
-    // Process in batches to avoid memory issues
+    // Process in batches
     for (let i = 0; i < orders.length; i += batchSize) {
       const batch = orders.slice(i, i + batchSize);
       
