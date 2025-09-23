@@ -12,6 +12,7 @@ const distributionRoutes = require('./routes/distribution');
 const transportRoutes = require('./routes/transport');
 const warehouseRoutes = require('./routes/warehouse');
 const adminRoutes = require('./routes/admin');
+const truckRoutes = require('./routes/trucks');
 
 // Import new enhanced routes
 const targetRoutes = require('./routes/targets'); // Target management
@@ -248,6 +249,7 @@ app.use(`/api/${apiVersion}/users`, authenticateToken, userRoutes);
 app.use(`/api/${apiVersion}/distribution`, authenticateToken, distributionRoutes);
 app.use(`/api/${apiVersion}/transport`, authenticateToken, transportRoutes);
 app.use(`/api/${apiVersion}/warehouse`, authenticateToken, warehouseRoutes);
+app.use(`/api/${apiVersion}/transport`, authenticateToken, truckRoutes);
 
 // Enhanced routes (new features)
 app.use(`/api/${apiVersion}/targets`, authenticateToken, targetRoutes);

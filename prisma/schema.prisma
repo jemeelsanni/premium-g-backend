@@ -291,14 +291,22 @@ model PriceAdjustment {
 }
 
 model TruckCapacity {
-    id             String  @id @default(cuid())
-    truckId        String  @unique @map("truck_id")
-    maxPallets     Int     @default(12) @map("max_pallets")
-    currentLoad    Int     @default(0) @map("current_load")
-    availableSpace Int     @map("available_space")
-    isActive       Boolean @default(true) @map("is_active")
+    id                 String  @id @default(cuid())
+    truckId            String  @unique @map("truck_id")
+    registrationNumber String? @map("registration_number")
+    maxPallets         Int     @default(12) @map("max_pallets")
+    currentLoad        Int     @default(0) @map("current_load")
+    availableSpace     Int     @map("available_space")
+    isActive           Boolean @default(true) @map("is_active")
+
+    // Vehicle details
+    make  String? @map("make")
+    model String? @map("model")
+    year  Int?    @map("year")
+    notes String? @map("notes")
 
     // Metadata
+    createdAt DateTime @default(now()) @map("created_at")
     updatedAt DateTime @updatedAt @map("updated_at")
 
     // Relations
