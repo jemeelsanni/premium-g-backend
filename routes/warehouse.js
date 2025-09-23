@@ -169,6 +169,25 @@ router.put('/inventory/:id',
   })
 );
 
+// @route   GET /api/v1/warehouse/products
+// @desc    Get products available for warehouse
+// @access  Private (Warehouse module access)
+// Add this to routes/warehouse.js
+router.get('/products', asyncHandler(async (req, res) => {
+  const products = await prisma.product.findMany({
+    where: {
+      isActive: true,
+      module: 'WAREHOUSE'
+    },
+    orderBy: { name: 'asc' }
+  });
+
+  res.json({
+    success: true,
+    data: { products }
+  });
+}));
+
 // ================================
 // WAREHOUSE SALES ROUTES
 // ================================

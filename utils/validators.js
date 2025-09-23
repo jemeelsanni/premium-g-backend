@@ -13,9 +13,14 @@ const isCuid = (value) => {
 /**
  * Custom validator for express-validator to check CUID format
  */
-const validateCuid = (fieldName = 'ID') => {
+const validateCuid = (fieldName) => {
   return (value) => {
-    if (!isCuid(value)) {
+    // Accept both CUID format and standard UUID format (with or without dashes)
+    const cuidRegex = /^[a-z0-9]{25}$/;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const uuidNoDashesRegex = /^[0-9a-f]{32}$/i;
+    
+    if (!cuidRegex.test(value) && !uuidRegex.test(value) && !uuidNoDashesRegex.test(value)) {
       throw new Error(`Invalid ${fieldName} format`);
     }
     return true;

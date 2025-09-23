@@ -97,7 +97,11 @@ const createProductValidation = [
     .withMessage('Packs per pallet must be a positive integer'),
   body('pricePerPack')
     .isDecimal({ decimal_digits: '0,2' })
-    .withMessage('Price per pack must be a valid decimal')
+    .withMessage('Price per pack must be a valid decimal'),
+  body('module')
+    .optional()
+    .isIn(['DISTRIBUTION', 'WAREHOUSE', 'BOTH'])
+    .withMessage('Module must be DISTRIBUTION, WAREHOUSE, or BOTH')
 ];
 
 const createCustomerValidation = [
@@ -233,7 +237,7 @@ router.post('/products',
       throw new ValidationError('Invalid input data', errors.array());
     }
 
-    const { productNo, name, description, packsPerPallet, pricePerPack } = req.body;
+    const { productNo, name, description, packsPerPallet, pricePerPack, module = 'DISTRIBUTION' } = req.body;
 
     // Check if product number already exists
     const existingProduct = await prisma.product.findUnique({
@@ -250,20 +254,23 @@ router.post('/products',
         name,
         description,
         packsPerPallet: parseInt(packsPerPallet),
-        pricePerPack: parseFloat(pricePerPack)
+        pricePerPack: parseFloat(pricePerPack),
+        module // Add module field
       }
     });
 
-    // Create initial warehouse inventory record
-    await prisma.warehouseInventory.create({
-      data: {
-        productId: product.id,
-        packs: 0,
-        units: 0,
-        reorderLevel: 20,
-        location: 'Main Warehouse'
-      }
-    });
+    // Only create warehouse inventory if module includes warehouse
+    if (module === 'WAREHOUSE' || module === 'BOTH') {
+      await prisma.warehouseInventory.create({
+        data: {
+          productId: product.id,
+          packs: 0,
+          units: 0,
+          reorderLevel: 20,
+          location: 'Main Warehouse'
+        }
+      });
+    }
 
     res.status(201).json({
       success: true,

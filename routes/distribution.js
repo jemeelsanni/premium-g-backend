@@ -527,6 +527,24 @@ router.post('/orders/:id/price-adjustments',
   })
 );
 
+// @route   GET /api/v1/distribution/products
+// @desc    Get products available for distribution (Rite Foods only)
+// @access  Private (Distribution module access)
+router.get('/products', asyncHandler(async (req, res) => {
+  const products = await prisma.product.findMany({
+    where: {
+      isActive: true,
+      module: 'DISTRIBUTION'
+    },
+    orderBy: { name: 'asc' }
+  });
+
+  res.json({
+    success: true,
+    data: { products }
+  });
+}));
+
 // ================================
 // ROUTES - ANALYTICS & REPORTS
 // ================================

@@ -130,25 +130,32 @@ model WeeklyPerformance {
 // DISTRIBUTION ARM
 // ================================
 
+enum ProductModule {
+    DISTRIBUTION
+    WAREHOUSE
+    BOTH
+}
+
 model Product {
-    id             String  @id @default(cuid())
-    productNo      String  @unique @map("product_no")
+    id             String        @id @default(cuid())
+    productNo      String        @unique @map("product_no")
     name           String
-    description    String?
-    packsPerPallet Int     @map("packs_per_pallet")
-    pricePerPack   Decimal @map("price_per_pack") @db.Decimal(10, 2)
-    costPerPack    Decimal @default(0) @map("cost_per_pack") @db.Decimal(10, 2) // For profit calculation
-    isActive       Boolean @default(true) @map("is_active")
+    description    String? // ADD THIS - don't lose data
+    packsPerPallet Int           @map("packs_per_pallet")
+    pricePerPack   Decimal       @map("price_per_pack") @db.Decimal(10, 2)
+    costPerPack    Decimal?      @map("cost_per_pack") @db.Decimal(10, 2) // ADD THIS
+    module         ProductModule @default(DISTRIBUTION)
+    isActive       Boolean       @default(true) @map("is_active")
 
     // Metadata
     createdAt DateTime @default(now()) @map("created_at")
     updatedAt DateTime @updatedAt @map("updated_at")
 
     // Relations
-    distributionOrderItems DistributionOrderItem[]
-    palletPricing          PalletPricing[]
-    warehouseInventory     WarehouseInventory[]
-    WarehouseSale          WarehouseSale[]
+    orderItems         DistributionOrderItem[]
+    palletPricing      PalletPricing[]
+    warehouseInventory WarehouseInventory[]
+    warehouseSales     WarehouseSale[]
 
     @@map("products")
 }

@@ -68,6 +68,10 @@ if (process.env.NODE_ENV !== 'test') {
   app.use(morgan('combined'));
 }
 
+// API routes
+const apiVersion = process.env.API_VERSION || 'v1';
+
+
 // Audit logging middleware (for authenticated routes)
 app.use('/api/', auditLogger);
 
@@ -97,8 +101,8 @@ app.get('/health', (req, res) => {
   });
 });
 
-// System status endpoint (Admin only)
-app.get('/api/system/status', 
+/// System status endpoint (Admin only)
+app.get(`/api/${apiVersion}/system/status`, 
   authenticateToken, 
   authorizeRole(['SUPER_ADMIN']),
   async (req, res) => {
@@ -109,16 +113,101 @@ app.get('/api/system/status',
       // Test database connection
       await prisma.$queryRaw`SELECT 1`;
       
-      const stats = await Promise.all([
-        prisma.user.count(),
-        prisma.distributionOrder.count(),
-        prisma.transportOrder.count(),
-        prisma.expense.count(),
-        prisma.auditLog.count({
+      // Get actual dashboard metrics
+      const [
+        totalOrders,
+        activeDeliveries,
+        warehouseStock,
+        totalRevenue,
+        recentOrders,
+        recentTransportOrders,
+        expenses,
+        recentAuditLogs
+      ] = await Promise.all([
+        // Total orders (distribution + transport)
+        Promise.all([
+          prisma.distributionOrder.count(),
+          prisma.transportOrder.count()
+        ]).then(([dist, trans]) => dist + trans),
+        
+        // Active deliveries
+        Promise.all([
+          prisma.distributionOrder.count({
+            where: { status: { in: ['PROCESSING', 'PENDING'] } }
+          }),
+          prisma.transportOrder.count({
+            where: { deliveryStatus: 'IN_TRANSIT' }
+          })
+        ]).then(([dist, trans]) => dist + trans),
+        
+        // Warehouse stock (total packs)
+        prisma.warehouseInventory.aggregate({
+          _sum: { packs: true }
+        }).then(result => result._sum.packs || 0),
+        
+        // Total revenue - Convert Decimal to number
+        Promise.all([
+          prisma.distributionOrder.aggregate({
+            _sum: { finalAmount: true }
+          }),
+          prisma.transportOrder.aggregate({
+            _sum: { totalOrderAmount: true }
+          }),
+          prisma.warehouseSale.aggregate({
+            _sum: { totalAmount: true }
+          })
+        ]).then(([dist, trans, warehouse]) => {
+          // Convert Decimal objects to numbers using parseFloat
+          const distAmount = parseFloat(dist._sum.finalAmount || 0);
+          const transAmount = parseFloat(trans._sum.totalOrderAmount || 0);
+          const warehouseAmount = parseFloat(warehouse._sum.totalAmount || 0);
+          return distAmount + transAmount + warehouseAmount;
+        }),
+        
+        // Recent distribution orders
+        prisma.distributionOrder.findMany({
+          take: 5,
+          orderBy: { createdAt: 'desc' },
+          include: {
+            location: true,
+            customer: true,
+            createdByUser: { select: { username: true } }
+          }
+        }),
+        
+        // Recent transport orders
+        prisma.transportOrder.findMany({
+          take: 5,
+          orderBy: { createdAt: 'desc' },
+          include: {
+            location: true,
+            truck: true,
+            distributionOrder: true,
+            createdByUser: { select: { username: true } }
+          }
+        }),
+        
+        // Recent expenses
+        prisma.expense.findMany({
+          take: 5,
+          orderBy: { createdAt: 'desc' },
+          include: {
+            createdByUser: { select: { username: true } },
+            approver: { select: { username: true } }
+          }
+        }),
+        
+        // Recent audit logs
+        prisma.auditLog.findMany({
+          take: 10,
           where: {
             createdAt: {
-              gte: new Date(Date.now() - 24 * 60 * 60 * 1000) // Last 24 hours
+              gte: new Date(Date.now() - 24 * 60 * 60 * 1000)
             }
+          },
+          orderBy: { createdAt: 'desc' },
+          include: {
+            user: { select: { username: true } }
           }
         })
       ]);
@@ -128,23 +217,19 @@ app.get('/api/system/status',
       res.json({
         status: 'healthy',
         timestamp: new Date().toISOString(),
-        system: {
-          uptime: process.uptime(),
-          memory: process.memoryUsage(),
-          version: process.version
-        },
-        database: {
-          status: 'connected',
-          recordCounts: {
-            users: stats[0],
-            distributionOrders: stats[1],
-            transportOrders: stats[2],
-            expenses: stats[3],
-            recentAuditLogs: stats[4]
-          }
+        data: {
+          totalOrders,
+          activeDeliveries,
+          warehouseStock,
+          totalRevenue: parseFloat(totalRevenue.toFixed(2)),  // Now totalRevenue is a number
+          recentOrders,
+          recentTransportOrders,
+          expenses,
+          recentAuditLogs
         }
       });
     } catch (error) {
+      console.error('System status error:', error);
       res.status(500).json({
         status: 'unhealthy',
         error: error.message,
@@ -154,8 +239,6 @@ app.get('/api/system/status',
   }
 );
 
-// API routes
-const apiVersion = process.env.API_VERSION || 'v1';
 
 // Authentication routes (public)
 app.use(`/api/${apiVersion}/auth`, authRoutes);
