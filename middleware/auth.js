@@ -23,57 +23,49 @@ const MODULE_PERMISSIONS = {
     distribution: ['read', 'write', 'admin'],
     transport: ['read', 'write', 'admin'],
     warehouse: ['read', 'write', 'admin'],
-    admin: ['read', 'write', 'admin'],
-    users: ['read', 'write', 'admin']
+    admin: ['read', 'write', 'admin']
   },
   [USER_ROLES.DISTRIBUTION_ADMIN]: {
-    distribution: ['read', 'admin'],
-    transport: [],
-    warehouse: [],
-    admin: [],
-    users: ['read']
+    distribution: ['read', 'write', 'admin'],
+    transport: [], // NO ACCESS
+    warehouse: [], // NO ACCESS
+    admin: []
   },
   [USER_ROLES.TRANSPORT_ADMIN]: {
-    distribution: [],
+    distribution: [], // NO ACCESS
     transport: ['read', 'write', 'admin'],
-    warehouse: [],
-    admin: [],
-    users: ['read']
+    warehouse: [], // NO ACCESS
+    admin: []
   },
   [USER_ROLES.WAREHOUSE_ADMIN]: {
-    distribution: [],
-    transport: [],
+    distribution: [], // NO ACCESS
+    transport: [], // NO ACCESS
     warehouse: ['read', 'write', 'admin'],
-    admin: [],
-    users: ['read']
+    admin: []
   },
   [USER_ROLES.DISTRIBUTION_SALES_REP]: {
     distribution: ['read', 'write'],
-    transport: [],
-    warehouse: [],
-    admin: [],
-    users: []
+    transport: [], // NO ACCESS
+    warehouse: [], // NO ACCESS
+    admin: []
   },
   [USER_ROLES.WAREHOUSE_SALES_OFFICER]: {
-    distribution: [],
-    transport: [],
+    distribution: [], // NO ACCESS
+    transport: [], // NO ACCESS
     warehouse: ['read', 'write'],
-    admin: [],
-    users: []
-  },
-  [USER_ROLES.CASHIER]: {
-    distribution: [],
-    transport: [],
-    warehouse: ['read'], // Only cash flow operations
-    admin: [],
-    users: []
+    admin: []
   },
   [USER_ROLES.TRANSPORT_STAFF]: {
-    distribution: [],
+    distribution: [], // NO ACCESS
     transport: ['read', 'write'],
-    warehouse: [],
-    admin: [],
-    users: []
+    warehouse: [], // NO ACCESS
+    admin: []
+  },
+  [USER_ROLES.CASHIER]: {
+    distribution: [], // NO ACCESS
+    transport: [], // NO ACCESS
+    warehouse: ['read'], // Only cash flow operations
+    admin: []
   }
 };
 

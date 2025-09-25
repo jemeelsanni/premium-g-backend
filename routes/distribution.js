@@ -3,9 +3,10 @@ const { body, query, param, validationResult } = require('express-validator');
 const { PrismaClient } = require('@prisma/client');
 
 const { asyncHandler, ValidationError, BusinessError, NotFoundError } = require('../middleware/errorHandler');
-const { authorizeModule, authorizeOwnEntry } = require('../middleware/auth');
+const { authorizeModule, authorizeRole } = require('../middleware/auth');
 const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 const { validateCuid } = require('../utils/validators'); // ✅ ADDED
+const distributionCustomersRouter = require('./distribution-customers');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -16,6 +17,7 @@ const prisma = new PrismaClient();
 
 // All distribution routes require distribution module access
 router.use(authorizeModule('distribution'));
+router.use('/', distributionCustomersRouter);
 
 // ================================
 // VALIDATION RULES - UPDATED FOR CUID
@@ -156,9 +158,17 @@ const validateTruckCapacity = async (orderItems) => {
 // @route   POST /api/v1/distribution/orders
 // @desc    Create new distribution order
 // @access  Private (Distribution Sales Rep, Admin)
-router.post('/orders', 
+router.post('/orders',
   authorizeModule('distribution', 'write'),
-  createOrderValidation,
+  [
+    body('customerId').custom(validateCuid('customer ID')),
+    body('locationId').custom(validateCuid('location ID')),
+    body('orderItems').isArray({ min: 1 }).withMessage('Order items are required'),
+    body('orderItems.*.productId').custom(validateCuid('product ID')),
+    body('orderItems.*.pallets').isInt({ min: 0 }).withMessage('Pallets must be 0 or greater'),
+    body('orderItems.*.packs').isInt({ min: 0 }).withMessage('Packs must be 0 or greater'),
+    body('remark').optional().trim()
+  ],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -168,10 +178,16 @@ router.post('/orders',
     const { customerId, locationId, orderItems, remark } = req.body;
     const userId = req.user.id;
 
-    // Validate truck capacity
-    await validateTruckCapacity(orderItems);
+    // Verify customer exists
+    const customer = await prisma.distributionCustomer.findUnique({
+      where: { id: customerId }
+    });
 
-    // Calculate totals
+    if (!customer) {
+      throw new NotFoundError('Distribution customer not found');
+    }
+
+    // Calculate order totals
     let totalPallets = 0;
     let totalPacks = 0;
     let totalAmount = 0;
@@ -197,7 +213,7 @@ router.post('/orders',
       totalAmount += calculation.finalAmount;
     }
 
-    // Create order with transaction
+    // Create standalone distribution order
     const order = await prisma.$transaction(async (tx) => {
       const createdOrder = await tx.distributionOrder.create({
         data: {
@@ -218,10 +234,24 @@ router.post('/orders',
           customer: true,
           location: true,
           orderItems: {
-            include: {
-              product: true
-            }
+            include: { product: true }
           }
+        }
+      });
+
+      // Create distribution analytics entry
+      await tx.distributionAnalytics.create({
+        data: {
+          analysisType: 'ORDER',
+          totalRevenue: totalAmount,
+          costOfGoodsSold: await calculateDistributionCOGS(calculatedItems),
+          grossProfit: totalAmount - await calculateDistributionCOGS(calculatedItems),
+          netProfit: totalAmount - await calculateDistributionCOGS(calculatedItems),
+          profitMargin: totalAmount > 0 ? 
+            ((totalAmount - await calculateDistributionCOGS(calculatedItems)) / totalAmount) * 100 : 0,
+          totalOrders: 1,
+          totalPacks,
+          totalPallets
         }
       });
 
@@ -552,82 +582,84 @@ router.get('/products', asyncHandler(async (req, res) => {
 // @route   GET /api/v1/distribution/analytics/summary
 // @desc    Get distribution analytics summary
 // @access  Private (Distribution module access)
-router.get('/analytics/summary', asyncHandler(async (req, res) => {
-  const { startDate, endDate } = req.query;
-  
-  const where = {};
-  if (startDate || endDate) {
-    where.createdAt = {};
-    if (startDate) where.createdAt.gte = new Date(startDate);
-    if (endDate) where.createdAt.lte = new Date(endDate);
-  }
-
-  // Role-based filtering
-  if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
-    where.createdBy = req.user.id;
-  }
-
-  const [
-    totalOrders,
-    totalRevenue,
-    statusCounts,
-    palletUtilization,
-    topCustomers
-  ] = await Promise.all([
-    prisma.distributionOrder.count({ where }),
+router.get('/analytics/summary', 
+  authorizeModule('distribution'),
+  asyncHandler(async (req, res) => {
+    const { startDate, endDate, period = 'monthly' } = req.query;
     
-    prisma.distributionOrder.aggregate({
-      where,
-      _sum: { finalAmount: true }
-    }),
+    const dateFilter = {};
+    if (startDate) dateFilter.gte = new Date(startDate);
+    if (endDate) dateFilter.lte = new Date(endDate);
 
-    prisma.distributionOrder.groupBy({
-      by: ['status'],
-      where,
-      _count: { status: true }
-    }),
-
-    prisma.distributionOrder.aggregate({
-      where,
-      _sum: { totalPallets: true },
-      _avg: { totalPallets: true }
-    }),
-
-    prisma.distributionOrder.groupBy({
-      by: ['customerId'],
-      where,
-      _count: { customerId: true },
-      _sum: { finalAmount: true },
-      orderBy: { _sum: { finalAmount: 'desc' } },
-      take: 5
-    })
-  ]);
-
-  // Get customer details for top customers
-  const customerIds = topCustomers.map(c => c.customerId);
-  const customers = await prisma.customer.findMany({
-    where: { id: { in: customerIds } },
-    select: { id: true, name: true }
-  });
-
-  const topCustomersWithDetails = topCustomers.map(tc => ({
-    ...tc,
-    customer: customers.find(c => c.id === tc.customerId)
-  }));
-
-  res.json({
-    success: true,
-    data: {
-      totalOrders,
-      totalRevenue: totalRevenue._sum.finalAmount || 0,
-      statusDistribution: statusCounts,
-      palletUtilization: {
-        totalPallets: palletUtilization._sum.totalPallets || 0,
-        averagePalletsPerOrder: palletUtilization._avg.totalPallets || 0
+    // Get pure distribution analytics
+    const orders = await prisma.distributionOrder.findMany({
+      where: {
+        createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined,
+        status: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] }
       },
-      topCustomers: topCustomersWithDetails
+      include: {
+        orderItems: { include: { product: true } }
+      }
+    });
+
+    // Calculate standalone distribution metrics
+    let totalRevenue = 0;
+    let totalCOGS = 0;
+    let totalPacks = 0;
+    let totalPallets = 0;
+
+    for (const order of orders) {
+      totalRevenue += parseFloat(order.finalAmount);
+      totalPacks += order.totalPacks;
+      totalPallets += order.totalPallets;
+      
+      // Calculate COGS for this order
+      for (const item of order.orderItems) {
+        const itemPacks = (item.pallets * item.product.packsPerPallet) + item.packs;
+        totalCOGS += itemPacks * parseFloat(item.product.costPerPack || 0);
+      }
     }
-  });
-}));
+
+    const grossProfit = totalRevenue - totalCOGS;
+    const profitMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+
+    res.json({
+      success: true,
+      data: {
+        summary: {
+          totalRevenue: parseFloat(totalRevenue.toFixed(2)),
+          totalCOGS: parseFloat(totalCOGS.toFixed(2)),
+          grossProfit: parseFloat(grossProfit.toFixed(2)),
+          profitMargin: parseFloat(profitMargin.toFixed(2)),
+          totalOrders: orders.length,
+          totalPacks,
+          totalPallets
+        },
+        period: { startDate, endDate }
+      }
+    });
+  })
+);
+
+// Helper function to calculate distribution COGS
+const calculateDistributionCOGS = async (orderItems) => {
+  let totalCOGS = 0;
+  
+  for (const item of orderItems) {
+    const product = await prisma.product.findUnique({
+      where: { id: item.productId }
+    });
+    
+    if (product && product.costPerPack) {
+      const itemPacks = (item.pallets * product.packsPerPallet) + item.packs;
+      totalCOGS += itemPacks * parseFloat(product.costPerPack);
+    }
+  }
+  
+  return totalCOGS;
+};
+
+
+
 
 module.exports = router;

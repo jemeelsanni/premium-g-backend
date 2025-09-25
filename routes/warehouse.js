@@ -9,6 +9,22 @@ const { validateCuid } = require('../utils/validators');
 const router = express.Router();
 const prisma = new PrismaClient();
 
+const warehouseCustomersRouter = require('./warehouse-customers');
+router.use('/', warehouseCustomersRouter);
+
+// Include expense management routes
+const warehouseExpensesRouter = require('./warehouse-expenses');
+router.use('/', warehouseExpensesRouter);
+
+// Include discount management routes (if created)
+try {
+  const warehouseDiscountsRouter = require('./warehouse-discounts');
+  router.use('/', warehouseDiscountsRouter);
+} catch (error) {
+  console.log('Warehouse discounts router not found, skipping...');
+}
+
+
 // ================================
 // VALIDATION RULES
 // ================================
@@ -103,6 +119,9 @@ const updateInventoryAfterSale = async (productId, quantity, unitType, tx) => {
   });
 };
 
+
+router.use('/', warehouseCustomersRouter);
+
 // ================================
 // INVENTORY ROUTES
 // ================================
@@ -143,7 +162,12 @@ router.get('/inventory', asyncHandler(async (req, res) => {
 router.put('/inventory/:id',
   authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
   param('id').custom(validateCuid('inventory ID')),
-  updateInventoryValidation,
+  [
+    body('pallets').optional().isInt({ min: 0 }),
+    body('packs').optional().isInt({ min: 0 }),
+    body('units').optional().isInt({ min: 0 }),
+    body('reorderLevel').optional().isInt({ min: 0 })
+  ],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -197,7 +221,16 @@ router.get('/products', asyncHandler(async (req, res) => {
 // @access  Private (Warehouse Sales Officer, Admin)
 router.post('/sales',
   authorizeModule('warehouse', 'write'),
-  createWarehouseSaleValidation,
+  [
+    body('productId').custom(validateCuid('product ID')),
+    body('quantity').isInt({ min: 1 }).withMessage('Quantity must be greater than 0'),
+    body('unitType').isIn(['PALLETS', 'PACKS', 'UNITS']).withMessage('Invalid unit type'),
+    body('unitPrice').isFloat({ min: 0 }).withMessage('Unit price must be 0 or greater'),
+    body('paymentMethod').isIn(['CASH', 'BANK_TRANSFER', 'CHECK', 'CARD', 'MOBILE_MONEY']),
+   body('warehouseCustomerId').optional().custom(validateCuid('warehouse customer ID')),
+    body('customerName').optional().trim(), // For backward compatibility
+    body('customerPhone').optional().trim(), // For backward compatibility
+  ],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -210,11 +243,36 @@ router.post('/sales',
       unitType,
       unitPrice,
       paymentMethod,
+      warehouseCustomerId,
       customerName,
       customerPhone
     } = req.body;
 
-    const userId = req.user.id;
+    let customerId = warehouseCustomerId;
+    
+    if (!customerId && customerName) {
+      // Check if customer exists by name/phone
+      let existingCustomer = await prisma.warehouseCustomer.findFirst({
+        where: {
+          name: customerName,
+          phone: customerPhone || null
+        }
+      });
+
+      if (!existingCustomer) {
+        // Create new customer
+        existingCustomer = await prisma.warehouseCustomer.create({
+          data: {
+            name: customerName,
+            phone: customerPhone,
+            customerType: 'INDIVIDUAL',
+            createdBy: req.user.id
+          }
+        });
+      }
+      
+      customerId = existingCustomer.id;
+    }
 
     // Get product for cost calculation
     const product = await prisma.product.findUnique({
@@ -225,91 +283,74 @@ router.post('/sales',
       throw new NotFoundError('Product not found');
     }
 
-    // Calculate cost per unit based on type
-    let costPerUnit = 0;
-    
-    switch (unitType) {
-      case 'PALLETS':
-        costPerUnit = parseFloat(product.costPerPack) * product.packsPerPallet;
-        break;
-      case 'PACKS':
-        costPerUnit = parseFloat(product.costPerPack);
-        break;
-      case 'UNITS':
-        // Assuming 10 units per pack - adjust based on your business logic
-        costPerUnit = parseFloat(product.costPerPack) / 10;
-        break;
-    }
-
-    // Calculate totals
-    const totalAmount = parseFloat((quantity * parseFloat(unitPrice)).toFixed(2));
+    // Calculate costs and profit
+    const totalAmount = parseFloat((quantity * unitPrice).toFixed(2));
+    const costPerUnit = parseFloat(product.costPerPack || 0);
     const totalCost = parseFloat((quantity * costPerUnit).toFixed(2));
     const grossProfit = parseFloat((totalAmount - totalCost).toFixed(2));
-    const profitMargin = totalAmount > 0 ? parseFloat(((grossProfit / totalAmount) * 100).toFixed(2)) : 0;
+    const profitMargin = totalAmount > 0 ? (grossProfit / totalAmount) * 100 : 0;
 
     // Generate receipt number
-    const receiptNumber = await generateReceiptNumber();
+    const receiptNumber = `WHS-${Date.now()}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
 
-    // Create sale with transaction
-    const result = await prisma.$transaction(async (tx) => {
-      // Update inventory
-      await updateInventoryAfterSale(productId, quantity, unitType, tx);
-
-      // Create sale record
-      const sale = await tx.warehouseSale.create({
+    const sale = await prisma.$transaction(async (tx) => {
+      // Create warehouse sale
+      const warehouseSale = await tx.warehouseSale.create({
         data: {
           productId,
           quantity,
           unitType,
-          unitPrice: parseFloat(unitPrice),
+          unitPrice,
           totalAmount,
           costPerUnit,
           totalCost,
           grossProfit,
-          profitMargin,
+          profitMargin: parseFloat(profitMargin.toFixed(2)),
           paymentMethod,
+          warehouseCustomerId: customerId,
           customerName,
           customerPhone,
           receiptNumber,
-          salesOfficer: userId
+          salesOfficer: req.user.id
         },
         include: {
           product: true,
+          warehouseCustomer: true,
           salesOfficerUser: {
-            select: { username: true }
+            select: { id: true, username: true }
           }
         }
       });
 
-      // Create cash flow entry if payment is cash
-      if (paymentMethod === 'CASH') {
-        await tx.cashFlow.create({
+      // Update inventory (if tracking by packs)
+      if (unitType === 'PACKS') {
+        await tx.warehouseInventory.updateMany({
+          where: { productId },
           data: {
-            transactionType: 'CASH_IN',
-            amount: totalAmount,
-            paymentMethod,
-            description: `Warehouse sale - Receipt ${receiptNumber}`,
-            referenceNumber: receiptNumber,
-            cashier: userId
+            packs: { decrement: quantity }
           }
         });
       }
 
-      return sale;
+      // Create warehouse analytics entry
+      await tx.warehouseAnalytics.create({
+        data: {
+          analysisType: 'DAILY',
+          totalRevenue: totalAmount,
+          costOfGoodsSold: totalCost,
+          grossProfit,
+          profitMargin: parseFloat(profitMargin.toFixed(2)),
+          totalSales: 1
+        }
+      });
+
+      return warehouseSale;
     });
 
     res.status(201).json({
       success: true,
-      message: 'Sale recorded successfully',
-      data: { 
-        sale: result,
-        profitSummary: {
-          revenue: totalAmount,
-          cost: totalCost,
-          profit: grossProfit,
-          margin: profitMargin
-        }
-      }
+      message: 'Warehouse sale recorded successfully',
+      data: { sale }
     });
   })
 );
@@ -317,71 +358,308 @@ router.post('/sales',
 // @route   GET /api/v1/warehouse/sales
 // @desc    Get warehouse sales with filtering and pagination
 // @access  Private (Warehouse module access)
-router.get('/sales', asyncHandler(async (req, res) => {
-  const {
-    page = 1,
-    limit = 20,
-    paymentMethod,
-    startDate,
-    endDate,
-    search
-  } = req.query;
+router.post('/sales',
+  authorizeModule('warehouse', 'write'),
+  [
+    body('warehouseCustomerId').optional().custom(validateCuid('warehouse customer ID')),
+    body('productId').custom(validateCuid('product ID')),
+    body('quantity').isInt({ min: 1 }),
+    body('unitType').isIn(['PALLETS', 'PACKS', 'UNITS']),
+    body('unitPrice').isFloat({ min: 0 }),
+    body('applyDiscount').optional().isBoolean(),
+    body('requestDiscountApproval').optional().isBoolean(), // For on-the-spot discount requests
+    body('discountReason').optional().trim()
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
 
-  const skip = (parseInt(page) - 1) * parseInt(limit);
-  const take = parseInt(limit);
+    const {
+      productId,
+      quantity,
+      unitType,
+      unitPrice,
+      paymentMethod,
+      warehouseCustomerId,
+      customerName,
+      customerPhone,
+      applyDiscount = false,
+      requestDiscountApproval = false,
+      discountReason
+    } = req.body;
 
-  const where = {};
-
-  // Role-based filtering
-  if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
-    where.salesOfficer = req.user.id;
-  }
-
-  if (paymentMethod) where.paymentMethod = paymentMethod;
-
-  if (startDate || endDate) {
-    where.createdAt = {};
-    if (startDate) where.createdAt.gte = new Date(startDate);
-    if (endDate) where.createdAt.lte = new Date(endDate);
-  }
-
-  if (search) {
-    where.OR = [
-      { receiptNumber: { contains: search, mode: 'insensitive' } },
-      { customerName: { contains: search, mode: 'insensitive' } },
-      { customerPhone: { contains: search, mode: 'insensitive' } }
-    ];
-  }
-
-  const [sales, total] = await Promise.all([
-    prisma.warehouseSale.findMany({
-      where,
-      include: {
-        product: true,
-        salesOfficerUser: {
-          select: { username: true, role: true }
+    // Handle customer creation if needed
+    let customerId = warehouseCustomerId;
+    
+    if (!customerId && customerName) {
+      // Check if customer exists by name/phone
+      let existingCustomer = await prisma.warehouseCustomer.findFirst({
+        where: {
+          name: customerName,
+          phone: customerPhone || null
         }
-      },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take
-    }),
-    prisma.warehouseSale.count({ where })
-  ]);
+      });
 
-  res.json({
-    success: true,
-    data: {
-      sales,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        totalPages: Math.ceil(total / parseInt(limit))
+      if (!existingCustomer) {
+        // Create new customer
+        existingCustomer = await prisma.warehouseCustomer.create({
+          data: {
+            name: customerName,
+            phone: customerPhone,
+            customerType: 'INDIVIDUAL',
+            createdBy: req.user.id
+          }
+        });
+      }
+      
+      customerId = existingCustomer.id;
+    }
+
+    // Get product for cost calculation
+    const product = await prisma.product.findUnique({
+      where: { id: productId }
+    });
+
+    if (!product) {
+      throw new NotFoundError('Product not found');
+    }
+
+    // Initialize pricing
+    let originalUnitPrice = unitPrice;
+    let finalUnitPrice = unitPrice;
+    let discountAmount = 0;
+    let discountPercentage = 0;
+    let applicableDiscount = null;
+    let requiresApproval = false;
+
+    // Check for applicable discounts if customer exists and applyDiscount is true
+    if (customerId && applyDiscount) {
+      const discountCheck = await checkCustomerDiscount(
+        customerId, 
+        productId, 
+        quantity, 
+        unitPrice
+      );
+
+      if (discountCheck.hasDiscount) {
+        finalUnitPrice = discountCheck.finalPrice;
+        discountAmount = discountCheck.discountAmount;
+        discountPercentage = discountCheck.discountPercentage;
+        applicableDiscount = discountCheck.discount;
       }
     }
+
+    // Handle on-the-spot discount approval requests
+    if (requestDiscountApproval && req.user.role === 'SUPER_ADMIN') {
+      // Super admin can approve discounts immediately
+      if (discountReason && customerId) {
+        // Apply manual discount (requires justification)
+        const manualDiscountPercent = parseFloat(req.body.manualDiscountPercent || 0);
+        if (manualDiscountPercent > 0 && manualDiscountPercent <= 50) { // Max 50% discount
+          originalUnitPrice = unitPrice;
+          discountAmount = (unitPrice * manualDiscountPercent) / 100;
+          finalUnitPrice = unitPrice - discountAmount;
+          discountPercentage = manualDiscountPercent;
+          requiresApproval = false; // Already approved by super admin
+        }
+      }
+    } else if (requestDiscountApproval && customerId) {
+      // Non-admin users must request approval
+      requiresApproval = true;
+      // Create pending discount request
+      await prisma.discountApprovalRequest.create({
+        data: {
+          warehouseCustomerId: customerId,
+          productId,
+          requestedDiscountType: 'PERCENTAGE',
+          requestedDiscountValue: parseFloat(req.body.requestedDiscountPercent || 5),
+          minimumQuantity: quantity,
+          validFrom: new Date(),
+          validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+          reason: discountReason || 'Customer requested discount',
+          businessJustification: `Requested during sale of ${quantity} ${unitType} of ${product.name}`,
+          requestedBy: req.user.id
+        }
+      });
+    }
+
+    // Calculate final amounts
+    const totalAmount = parseFloat((quantity * finalUnitPrice).toFixed(2));
+    const totalDiscountAmount = parseFloat((quantity * discountAmount).toFixed(2));
+    const costPerUnit = parseFloat(product.costPerPack || 0);
+    const totalCost = parseFloat((quantity * costPerUnit).toFixed(2));
+    const grossProfit = parseFloat((totalAmount - totalCost).toFixed(2));
+    const profitMargin = totalAmount > 0 ? (grossProfit / totalAmount) * 100 : 0;
+
+    // Generate receipt number
+    const receiptNumber = `WHS-${Date.now()}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+
+    const sale = await prisma.$transaction(async (tx) => {
+      // Create warehouse sale with discount tracking
+      const warehouseSale = await tx.warehouseSale.create({
+        data: {
+          productId,
+          quantity,
+          unitType,
+          unitPrice: finalUnitPrice,
+          totalAmount,
+          costPerUnit,
+          totalCost,
+          grossProfit,
+          profitMargin: parseFloat(profitMargin.toFixed(2)),
+          paymentMethod,
+          warehouseCustomerId: customerId,
+          customerName: customerName, // Keep for backward compatibility
+          customerPhone: customerPhone, // Keep for backward compatibility
+          receiptNumber,
+          salesOfficer: req.user.id,
+          
+          // NEW: Discount tracking
+          originalUnitPrice: discountAmount > 0 ? originalUnitPrice : null,
+          discountApplied: discountAmount > 0,
+          totalDiscountAmount,
+          discountPercentage: parseFloat(discountPercentage.toFixed(2)),
+          discountReason: discountAmount > 0 ? (discountReason || 'Customer discount applied') : null,
+          approvedBy: req.user.role === 'SUPER_ADMIN' && discountAmount > 0 ? req.user.id : null
+        },
+        include: {
+          product: true,
+          warehouseCustomer: true,
+          salesOfficerUser: {
+            select: { id: true, username: true }
+          },
+          discountApprover: {
+            select: { username: true }
+          }
+        }
+      });
+
+      // If discount was applied, track it and update usage
+      if (applicableDiscount && discountAmount > 0) {
+        // Create sale discount record
+        await tx.warehouseSaleDiscount.create({
+          data: {
+            warehouseSaleId: warehouseSale.id,
+            customerDiscountId: applicableDiscount.id,
+            originalUnitPrice,
+            discountedUnitPrice: finalUnitPrice,
+            discountAmountPerUnit: discountAmount,
+            totalDiscountAmount,
+            quantityApplied: quantity
+          }
+        });
+
+        // Update discount usage
+        await tx.warehouseCustomerDiscount.update({
+          where: { id: applicableDiscount.id },
+          data: {
+            usageCount: { increment: 1 },
+            totalDiscountGiven: { increment: totalDiscountAmount }
+          }
+        });
+      }
+
+      // Update inventory if tracking by packs
+      if (unitType === 'PACKS') {
+        await tx.warehouseInventory.updateMany({
+          where: { productId },
+          data: {
+            packs: { decrement: quantity }
+          }
+        });
+      }
+
+      return warehouseSale;
+    });
+
+    const response = {
+      success: true,
+      message: 'Warehouse sale recorded successfully',
+      data: { sale }
+    };
+
+    // Add discount approval message if applicable
+    if (requiresApproval) {
+      response.message = 'Sale recorded and discount approval request submitted';
+      response.pendingApproval = true;
+    }
+
+    res.status(201).json(response);
+  })
+);
+
+// Helper function to check customer discounts
+async function checkCustomerDiscount(customerId, productId, quantity, unitPrice) {
+  const applicableDiscounts = await prisma.warehouseCustomerDiscount.findMany({
+    where: {
+      warehouseCustomerId: customerId,
+      status: 'APPROVED',
+      OR: [
+        { productId }, // Product-specific discount
+        { productId: null } // General discount
+      ],
+      minimumQuantity: { lte: quantity },
+      validFrom: { lte: new Date() },
+      OR: [
+        { validUntil: null },
+        { validUntil: { gte: new Date() } }
+      ],
+      // Check usage limits
+      OR: [
+        { usageLimit: null },
+        { usageCount: { lt: prisma.raw('usage_limit') } }
+      ]
+    },
+    include: {
+      product: { select: { name: true } }
+    },
+    orderBy: [
+      { productId: 'desc' }, // Product-specific discounts first
+      { discountValue: 'desc' } // Higher discounts first
+    ]
   });
-}));
+
+  if (applicableDiscounts.length === 0) {
+    return {
+      hasDiscount: false,
+      originalPrice: unitPrice,
+      finalPrice: unitPrice,
+      discountAmount: 0,
+      discountPercentage: 0
+    };
+  }
+
+  // Apply the best discount
+  const bestDiscount = applicableDiscounts[0];
+  let discountAmount = 0;
+
+  if (bestDiscount.discountType === 'PERCENTAGE') {
+    discountAmount = (unitPrice * bestDiscount.discountValue) / 100;
+    if (bestDiscount.maximumDiscountAmount && discountAmount > bestDiscount.maximumDiscountAmount) {
+      discountAmount = bestDiscount.maximumDiscountAmount;
+    }
+  } else if (bestDiscount.discountType === 'FIXED_AMOUNT') {
+    discountAmount = Math.min(bestDiscount.discountValue, unitPrice);
+  }
+
+  const discountedPrice = Math.max(0, unitPrice - discountAmount);
+
+  return {
+    hasDiscount: true,
+    originalPrice: parseFloat(unitPrice.toFixed(2)),
+    finalPrice: parseFloat(discountedPrice.toFixed(2)),
+    discountAmount: parseFloat(discountAmount.toFixed(2)),
+    discountPercentage: parseFloat(((discountAmount / unitPrice) * 100).toFixed(2)),
+    discount: {
+      id: bestDiscount.id,
+      type: bestDiscount.discountType,
+      value: bestDiscount.discountValue,
+      reason: bestDiscount.reason
+    }
+  };
+}
 
 // @route   GET /api/v1/warehouse/sales/:id
 // @desc    Get single warehouse sale
@@ -536,6 +814,9 @@ router.get('/cash-flow', asyncHandler(async (req, res) => {
   });
 }));
 
+router.use('/', warehouseExpensesRouter);
+
+
 // ================================
 // ANALYTICS & REPORTS
 // ================================
@@ -543,115 +824,52 @@ router.get('/cash-flow', asyncHandler(async (req, res) => {
 // @route   GET /api/v1/warehouse/analytics/summary
 // @desc    Get warehouse analytics summary
 // @access  Private (Warehouse module access)
-router.get('/analytics/summary', asyncHandler(async (req, res) => {
-  const { startDate, endDate } = req.query;
-  
-  const where = {};
-  if (startDate || endDate) {
-    where.createdAt = {};
-    if (startDate) where.createdAt.gte = new Date(startDate);
-    if (endDate) where.createdAt.lte = new Date(endDate);
-  }
-
-  const [
-    totalSales,
-    salesSummary,
-    paymentMethodBreakdown,
-    lowStockItems,
-    topProducts,
-    cashFlowSummary
-  ] = await Promise.all([
-    prisma.warehouseSale.count({ where }),
+router.get('/analytics/summary',
+  authorizeModule('warehouse'),
+  asyncHandler(async (req, res) => {
+    const { startDate, endDate } = req.query;
     
-    prisma.warehouseSale.aggregate({
-      where,
-      _sum: { 
-        totalAmount: true,
-        totalCost: true,
-        grossProfit: true
-      },
-      _avg: {
-        profitMargin: true
-      }
-    }),
+    const dateFilter = {};
+    if (startDate) dateFilter.gte = new Date(startDate);
+    if (endDate) dateFilter.lte = new Date(endDate);
 
-    prisma.warehouseSale.groupBy({
-      by: ['paymentMethod'],
-      where,
-      _count: { paymentMethod: true },
-      _sum: { totalAmount: true }
-    }),
-
-    prisma.warehouseInventory.findMany({
+    const sales = await prisma.warehouseSale.findMany({
       where: {
-        packs: { lte: 20 }
+        createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined
       },
-      include: {
-        product: true
-      },
-      take: 10
-    }),
+      include: { product: true }
+    });
 
-    prisma.warehouseSale.groupBy({
-      by: ['productId'],
-      where,
-      _sum: { 
-        quantity: true, 
-        totalAmount: true,
-        grossProfit: true
-      },
-      _count: { productId: true },
-      orderBy: { _sum: { totalAmount: 'desc' } },
-      take: 10
-    }),
+    // Calculate metrics
+    let totalRevenue = 0;
+    let totalCOGS = 0;
+    let totalQuantitySold = 0;
 
-    prisma.cashFlow.groupBy({
-      by: ['transactionType'],
-      where,
-      _sum: { amount: true },
-      _count: { transactionType: true }
-    })
-  ]);
+    sales.forEach(sale => {
+      totalRevenue += parseFloat(sale.totalAmount);
+      totalCOGS += parseFloat(sale.totalCost);
+      totalQuantitySold += sale.quantity;
+    });
 
-  // Get product details for top products
-  const productIds = topProducts.map(p => p.productId);
-  const products = await prisma.product.findMany({
-    where: { id: { in: productIds } },
-    select: { id: true, name: true, productNo: true }
-  });
+    const grossProfit = totalRevenue - totalCOGS;
+    const profitMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
 
-  const topProductsWithDetails = topProducts.map(tp => ({
-    ...tp,
-    product: products.find(p => p.id === tp.productId)
-  }));
-
-  const totalRevenue = salesSummary._sum.totalAmount || 0;
-  const totalCost = salesSummary._sum.totalCost || 0;
-  const totalProfit = salesSummary._sum.grossProfit || 0;
-  const avgMargin = salesSummary._avg.profitMargin || 0;
-
-  res.json({
-    success: true,
-    data: {
-      salesMetrics: {
-        totalSales,
-        totalRevenue: parseFloat(totalRevenue.toFixed(2)),
-        totalCost: parseFloat(totalCost.toFixed(2)),
-        totalProfit: parseFloat(totalProfit.toFixed(2)),
-        averageMargin: parseFloat(avgMargin.toFixed(2)),
-        overallMargin: totalRevenue > 0 ? 
-          parseFloat(((totalProfit / totalRevenue) * 100).toFixed(2)) : 0
-      },
-      paymentMethodBreakdown,
-      lowStockItems: {
-        count: lowStockItems.length,
-        items: lowStockItems
-      },
-      topProducts: topProductsWithDetails,
-      cashFlow: cashFlowSummary
-    }
-  });
-}));
+    res.json({
+      success: true,
+      data: {
+        summary: {
+          totalRevenue: parseFloat(totalRevenue.toFixed(2)),
+          totalCOGS: parseFloat(totalCOGS.toFixed(2)),
+          grossProfit: parseFloat(grossProfit.toFixed(2)),
+          profitMargin: parseFloat(profitMargin.toFixed(2)),
+          totalSales: sales.length,
+          totalQuantitySold
+        },
+        period: { startDate, endDate }
+      }
+    });
+  })
+);
 
 // @route   GET /api/v1/warehouse/analytics/profit-summary
 // @desc    Get detailed profit summary

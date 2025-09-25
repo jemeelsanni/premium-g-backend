@@ -48,6 +48,48 @@ const updateTransportOrderValidation = [
   body('truckExpenses').optional().isDecimal({ decimal_digits: '0,2' })
 ];
 
+const calculateTransportProfitability = async (
+  totalOrderAmount,
+  fuelRequired,
+  fuelPricePerLiter,
+  locationId,
+  serviceChargePercentage = 10.00
+) => {
+  // Get location for driver wages
+  const location = await prisma.location.findUnique({
+    where: { id: locationId }
+  });
+
+  if (!location) {
+    throw new NotFoundError('Location not found');
+  }
+
+  // Calculate expenses
+  const totalFuelCost = parseFloat((fuelRequired * fuelPricePerLiter).toFixed(2));
+  const serviceChargeExpense = parseFloat(((totalOrderAmount * serviceChargePercentage) / 100).toFixed(2));
+  const driverWages = parseFloat(location.driverWagesPerTrip || 0);
+  
+  const totalTripExpenses = parseFloat(
+    (totalFuelCost + serviceChargeExpense + driverWages).toFixed(2)
+  );
+
+  // Profit calculations
+  const grossProfit = parseFloat((totalOrderAmount - totalTripExpenses).toFixed(2));
+  const netProfit = grossProfit; // For individual trips
+  const profitMargin = totalOrderAmount > 0 ? 
+    parseFloat(((netProfit / totalOrderAmount) * 100).toFixed(2)) : 0;
+  
+  return {
+    totalFuelCost,
+    serviceChargeExpense,
+    driverWages,
+    totalTripExpenses,
+    grossProfit,
+    netProfit,
+    profitMargin
+  };
+};
+
 // ================================
 // COST CALCULATION FUNCTIONS
 // ================================
@@ -125,7 +167,18 @@ const createProfitAnalysis = async (transportOrder, type = 'TRANSPORT_TRIP') => 
 // @access  Private (Transport Staff, Admin)
 router.post('/orders',
   authorizeModule('transport', 'write'),
-  createTransportOrderValidation,
+  [
+    body('orderNumber').trim().notEmpty().withMessage('Order number is required'),
+    body('clientName').trim().notEmpty().withMessage('Client name is required'),
+    body('clientPhone').optional().trim(),
+    body('pickupLocation').trim().notEmpty().withMessage('Pickup location is required'),
+    body('deliveryAddress').trim().notEmpty().withMessage('Delivery address is required'),
+    body('locationId').custom(validateCuid('location ID')),
+    body('totalOrderAmount').isFloat({ min: 0 }).withMessage('Total order amount must be 0 or greater'),
+    body('fuelRequired').isFloat({ min: 0 }).withMessage('Fuel required must be 0 or greater'),
+    body('fuelPricePerLiter').isFloat({ min: 0 }).withMessage('Fuel price per liter must be 0 or greater'),
+    body('serviceChargePercentage').optional().isFloat({ min: 0, max: 100 })
+  ],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -133,121 +186,84 @@ router.post('/orders',
     }
 
     const {
-      distributionOrderId,
       orderNumber,
       invoiceNumber,
+      clientName,
+      clientPhone,
+      pickupLocation,
+      deliveryAddress,
       locationId,
       truckId,
       totalOrderAmount,
       fuelRequired,
       fuelPricePerLiter,
+      serviceChargePercentage = 10.00,
       driverDetails
     } = req.body;
 
     const userId = req.user.id;
 
-    // VALIDATE FOREIGN KEYS BEFORE CREATING
-    
-    // Check if distribution order exists (if provided)
-    if (distributionOrderId) {
-      const distributionOrder = await prisma.distributionOrder.findUnique({
-        where: { id: distributionOrderId }
-      });
-      if (!distributionOrder) {
-        throw new NotFoundError('Distribution order not found');
-      }
-    }
-
-    // Check if location exists
-    const location = await prisma.location.findUnique({
-      where: { id: locationId }
-    });
-    if (!location) {
-      throw new NotFoundError('Location not found');
-    }
-
-    // Check if truck exists (if provided)
-    if (truckId) {
-      const truck = await prisma.truckCapacity.findUnique({
-        where: { truckId: truckId }
-      });
-      if (!truck) {
-        throw new NotFoundError(`Truck with ID ${truckId} not found`);
-      }
-    }
-
-    // Check for duplicate order number
-    const existingOrder = await prisma.transportOrder.findUnique({
-      where: { orderNumber }
-    });
-
-    if (existingOrder) {
-      throw new BusinessError('Order number already exists', 'ORDER_NUMBER_EXISTS');
-    }
-
-    // Calculate costs and profit
-    const costCalculation = await calculateTransportCosts(
-      parseFloat(totalOrderAmount),
-      parseFloat(fuelRequired),
-      parseFloat(fuelPricePerLiter),
-      locationId
+    // Calculate transport profitability
+    const profitData = await calculateTransportProfitability(
+      totalOrderAmount,
+      fuelRequired,
+      fuelPricePerLiter,
+      locationId,
+      serviceChargePercentage
     );
 
-    // Create transport order
-    const result = await prisma.$transaction(async (tx) => {
-      const transportOrder = await tx.transportOrder.create({
+    // Create standalone transport order
+    const transportOrder = await prisma.$transaction(async (tx) => {
+      const order = await tx.transportOrder.create({
         data: {
-          ...(distributionOrderId && { distributionOrderId }), // Only include if exists
           orderNumber,
-          invoiceNumber: invoiceNumber || null,
+          invoiceNumber,
+          clientName,
+          clientPhone,
+          pickupLocation,
+          deliveryAddress,
           locationId,
-          ...(truckId && { truckId }), // Only include if exists
-          totalOrderAmount: parseFloat(totalOrderAmount),
-          fuelRequired: parseFloat(fuelRequired),
-          fuelPricePerLiter: parseFloat(fuelPricePerLiter),
-          totalFuelCost: costCalculation.totalFuelCost,
-          serviceChargeExpense: costCalculation.serviceChargeExpense,
-          driverWages: costCalculation.driverWages,
-          truckExpenses: 0,
-          totalExpenses: costCalculation.totalExpenses,
-          grossProfit: costCalculation.grossProfit,
-          netProfit: costCalculation.netProfit,
-          profitMargin: costCalculation.profitMargin,
-          driverDetails: driverDetails || null,
-          deliveryStatus: 'PENDING',
+          truckId,
+          totalOrderAmount,
+          serviceChargePercentage,
+          fuelRequired,
+          fuelPricePerLiter,
+          ...profitData,
+          driverDetails,
           createdBy: userId
         },
         include: {
           location: true,
           truck: true,
-          distributionOrder: {
-            include: {
-              customer: true
-            }
-          },
           createdByUser: {
-            select: { username: true, role: true }
+            select: { id: true, username: true }
           }
         }
       });
 
-      // Rest of the transaction code...
-      return transportOrder;
+      // Create transport analytics entry
+      await tx.transportAnalytics.create({
+        data: {
+          analysisType: 'TRANSPORT_TRIP',
+          totalRevenue: totalOrderAmount,
+          fuelCosts: profitData.totalFuelCost,
+          driverWages: profitData.driverWages,
+          serviceCharges: profitData.serviceChargeExpense,
+          totalExpenses: profitData.totalTripExpenses,
+          grossProfit: profitData.grossProfit,
+          netProfit: profitData.netProfit,
+          profitMargin: profitData.profitMargin,
+          totalTrips: 1
+        }
+      });
+
+      return order;
     });
 
     res.status(201).json({
       success: true,
       message: 'Transport order created successfully',
-      data: { 
-        order: result,
-        financialSummary: {
-          revenue: parseFloat(totalOrderAmount),
-          totalExpenses: costCalculation.totalExpenses,
-          grossProfit: costCalculation.grossProfit,
-          netProfit: costCalculation.netProfit,
-          profitMargin: costCalculation.profitMargin
-        }
-      }
+      data: { transportOrder }
     });
   })
 );
@@ -255,79 +271,123 @@ router.post('/orders',
 // @route   GET /api/v1/transport/orders
 // @desc    Get transport orders with filtering
 // @access  Private (Transport module access)
-router.get('/orders', asyncHandler(async (req, res) => {
-  const {
-    page = 1,
-    limit = 20,
-    deliveryStatus,
-    locationId,
-    startDate,
-    endDate,
-    search
-  } = req.query;
+router.get('/orders', 
+  authorizeModule('transport'),
+  asyncHandler(async (req, res) => {
+    const {
+      page = 1,
+      limit = 20,
+      status,
+      clientName,
+      locationId,
+      truckId,
+      startDate,
+      endDate
+    } = req.query;
 
-  const skip = (parseInt(page) - 1) * parseInt(limit);
-  const take = parseInt(limit);
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
 
-  const where = {};
+    const where = {};
+    
+    if (status) where.deliveryStatus = status;
+    if (clientName) where.clientName = { contains: clientName, mode: 'insensitive' };
+    if (locationId) where.locationId = locationId;
+    if (truckId) where.truckId = truckId;
+    
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = new Date(endDate);
+    }
 
-  // Role-based filtering
-  if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
-    where.createdBy = req.user.id;
-  }
+    // Role-based filtering for non-admin users
+    if (!['SUPER_ADMIN', 'TRANSPORT_ADMIN'].includes(req.user.role)) {
+      where.createdBy = req.user.id;
+    }
 
-  if (deliveryStatus) where.deliveryStatus = deliveryStatus;
-  if (locationId) where.locationId = locationId;
-
-  if (startDate || endDate) {
-    where.createdAt = {};
-    if (startDate) where.createdAt.gte = new Date(startDate);
-    if (endDate) where.createdAt.lte = new Date(endDate);
-  }
-
-  if (search) {
-    where.OR = [
-      { orderNumber: { contains: search, mode: 'insensitive' } },
-      { invoiceNumber: { contains: search, mode: 'insensitive' } },
-      { driverDetails: { contains: search, mode: 'insensitive' } }
-    ];
-  }
-
-  const [orders, total] = await Promise.all([
-    prisma.transportOrder.findMany({
-      where,
-      include: {
-        location: true,
-        truck: true,
-        distributionOrder: {
-          include: {
-            customer: true
+    const [orders, total] = await Promise.all([
+      prisma.transportOrder.findMany({
+        where,
+        include: {
+          location: true,
+          truck: true,
+          createdByUser: {
+            select: { id: true, username: true }
           }
         },
-        createdByUser: {
-          select: { username: true, role: true }
-        }
-      },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take
-    }),
-    prisma.transportOrder.count({ where })
-  ]);
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take
+      }),
+      prisma.transportOrder.count({ where })
+    ]);
 
-  res.json({
-    success: true,
-    data: {
-      orders,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        totalPages: Math.ceil(total / parseInt(limit))
+    res.json({
+      success: true,
+      data: {
+        orders,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total,
+          totalPages: Math.ceil(total / parseInt(limit))
+        }
       }
+    });
+  })
+);
+
+
+router.post('/expenses',
+  authorizeModule('transport', 'write'),
+  [
+    body('truckId').optional().trim(),
+    body('expenseType').trim().notEmpty().withMessage('Expense type is required'),
+    body('amount').isFloat({ min: 0 }).withMessage('Amount must be greater than 0'),
+    body('description').optional().trim(),
+    body('expenseDate').isISO8601().withMessage('Valid expense date is required')
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
     }
-  });
-}));
+
+    const {
+      truckId,
+      expenseType,
+      amount,
+      description,
+      expenseDate,
+      receiptUrl
+    } = req.body;
+
+    const expense = await prisma.transportExpense.create({
+      data: {
+        truckId,
+        expenseType,
+        amount,
+        description,
+        expenseDate: new Date(expenseDate),
+        receiptUrl,
+        createdBy: req.user.id
+      },
+      include: {
+        truck: true,
+        createdByUser: {
+          select: { id: true, username: true }
+        }
+      }
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Transport expense created successfully',
+      data: { expense }
+    });
+  })
+);
 
 // @route   GET /api/v1/transport/orders/:id
 // @desc    Get single transport order
@@ -508,109 +568,76 @@ router.put('/orders/:id/expenses',
 // @route   GET /api/v1/transport/analytics/summary
 // @desc    Get transport analytics summary
 // @access  Private (Transport module access)
-router.get('/analytics/summary', asyncHandler(async (req, res) => {
-  const { startDate, endDate, locationId } = req.query;
+router.get('/analytics/summary',
+  authorizeModule('transport'),
+  asyncHandler(async (req, res) => {
+    const { startDate, endDate } = req.query;
+    
+    const dateFilter = {};
+    if (startDate) dateFilter.gte = new Date(startDate);
+    if (endDate) dateFilter.lte = new Date(endDate);
 
-  const where = {};
-
-  if (startDate || endDate) {
-    where.createdAt = {};
-    if (startDate) where.createdAt.gte = new Date(startDate);
-    if (endDate) where.createdAt.lte = new Date(endDate);
-  }
-
-  if (locationId) where.locationId = locationId;
-
-  const [
-    totalOrders,
-    financialSummary,
-    statusBreakdown,
-    locationBreakdown
-  ] = await Promise.all([
-    prisma.transportOrder.count({ where }),
-
-    prisma.transportOrder.aggregate({
-      where,
-      _sum: {
-        totalOrderAmount: true,
-        totalExpenses: true,
-        totalFuelCost: true,
-        driverWages: true,
-        serviceChargeExpense: true,
-        truckExpenses: true,
-        grossProfit: true,
-        netProfit: true
-      },
-      _avg: {
-        profitMargin: true
+    // Get transport orders
+    const orders = await prisma.transportOrder.findMany({
+      where: {
+        createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined,
+        deliveryStatus: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] }
       }
-    }),
+    });
 
-    prisma.transportOrder.groupBy({
-      by: ['deliveryStatus'],
-      where,
-      _count: { deliveryStatus: true }
-    }),
+    // Get transport expenses (non-trip)
+    const expenses = await prisma.transportExpense.findMany({
+      where: {
+        expenseDate: Object.keys(dateFilter).length > 0 ? dateFilter : undefined,
+        status: 'APPROVED'
+      }
+    });
 
-    prisma.transportOrder.groupBy({
-      by: ['locationId'],
-      where,
-      _count: true,
-      _sum: {
-        totalOrderAmount: true,
-        netProfit: true
-      },
-      orderBy: {
-        _sum: {
-          totalOrderAmount: 'desc'
-        }
-      },
-      take: 10
-    })
-  ]);
+    // Calculate metrics
+    let totalRevenue = 0;
+    let totalTripExpenses = 0;
+    let totalFuelCosts = 0;
+    let totalDriverWages = 0;
+    let totalServiceCharges = 0;
 
-  // Get location details
-  const locationIds = locationBreakdown.map(l => l.locationId);
-  const locations = await prisma.location.findMany({
-    where: { id: { in: locationIds } },
-    select: { id: true, name: true }
-  });
+    orders.forEach(order => {
+      totalRevenue += parseFloat(order.totalOrderAmount);
+      totalTripExpenses += parseFloat(order.totalTripExpenses);
+      totalFuelCosts += parseFloat(order.totalFuelCost);
+      totalDriverWages += parseFloat(order.driverWages);
+      totalServiceCharges += parseFloat(order.serviceChargeExpense);
+    });
 
-  const locationStats = locationBreakdown.map(lb => ({
-    location: locations.find(l => l.id === lb.locationId),
-    trips: lb._count,
-    revenue: parseFloat((lb._sum.totalOrderAmount || 0).toFixed(2)),
-    profit: parseFloat((lb._sum.netProfit || 0).toFixed(2))
-  }));
+    const totalNonTripExpenses = expenses.reduce(
+      (sum, expense) => sum + parseFloat(expense.amount), 0
+    );
 
-  const totalRevenue = financialSummary._sum.totalOrderAmount || 0;
-  const totalExpenses = financialSummary._sum.totalExpenses || 0;
-  const totalProfit = financialSummary._sum.netProfit || 0;
+    const totalExpenses = totalTripExpenses + totalNonTripExpenses;
+    const netProfit = totalRevenue - totalExpenses;
+    const profitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
-  res.json({
-    success: true,
-    data: {
-      totalOrders,
-      financialSummary: {
-        totalRevenue: parseFloat(totalRevenue.toFixed(2)),
-        totalExpenses: parseFloat(totalExpenses.toFixed(2)),
-        grossProfit: parseFloat((financialSummary._sum.grossProfit || 0).toFixed(2)),
-        netProfit: parseFloat(totalProfit.toFixed(2)),
-        averageMargin: parseFloat((financialSummary._avg.profitMargin || 0).toFixed(2)),
-        overallMargin: totalRevenue > 0 ? 
-          parseFloat(((totalProfit / totalRevenue) * 100).toFixed(2)) : 0
-      },
-      expenseBreakdown: {
-        fuel: parseFloat((financialSummary._sum.totalFuelCost || 0).toFixed(2)),
-        driverWages: parseFloat((financialSummary._sum.driverWages || 0).toFixed(2)),
-        serviceCharges: parseFloat((financialSummary._sum.serviceChargeExpense || 0).toFixed(2)),
-        truckExpenses: parseFloat((financialSummary._sum.truckExpenses || 0).toFixed(2))
-      },
-      statusBreakdown,
-      locationStats
-    }
-  });
-}));
+    res.json({
+      success: true,
+      data: {
+        summary: {
+          totalRevenue: parseFloat(totalRevenue.toFixed(2)),
+          tripExpenses: {
+            fuel: parseFloat(totalFuelCosts.toFixed(2)),
+            driverWages: parseFloat(totalDriverWages.toFixed(2)),
+            serviceCharges: parseFloat(totalServiceCharges.toFixed(2)),
+            total: parseFloat(totalTripExpenses.toFixed(2))
+          },
+          nonTripExpenses: parseFloat(totalNonTripExpenses.toFixed(2)),
+          totalExpenses: parseFloat(totalExpenses.toFixed(2)),
+          netProfit: parseFloat(netProfit.toFixed(2)),
+          profitMargin: parseFloat(profitMargin.toFixed(2)),
+          totalTrips: orders.length
+        },
+        period: { startDate, endDate }
+      }
+    });
+  })
+);
 
 // @route   GET /api/v1/transport/analytics/profit-analysis
 // @desc    Get detailed transport profit analysis
@@ -730,6 +757,8 @@ router.get('/analytics/profit-analysis',
     });
   })
 );
+
+
 
 router.use('/', truckRoutes);
 
