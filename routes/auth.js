@@ -324,8 +324,28 @@ router.post('/change-password',
   })
 );
 
-// @route   GET /api/v1/auth/profile
-// @desc    Get current user profile
+// Add this to routes/auth.js (Backend)
+
+// @route   GET /api/v1/auth/me
+// @desc    Get current user info
+// @access  Private
+router.get('/me', authenticateToken, asyncHandler(async (req, res) => {
+  // Return current user info (already attached by authenticateToken middleware)
+  res.json({
+    success: true,
+    data: {
+      id: req.user.id,
+      username: req.user.username,
+      email: req.user.email,
+      role: req.user.role,
+      permissions: req.user.permissions || {},
+      isActive: true
+    }
+  });
+}));
+
+// @route   GET /api/v1/auth/profile  
+// @desc    Get detailed user profile
 // @access  Private
 router.get('/profile', authenticateToken, asyncHandler(async (req, res) => {
   const user = await prisma.user.findUnique({
@@ -336,6 +356,7 @@ router.get('/profile', authenticateToken, asyncHandler(async (req, res) => {
       email: true,
       role: true,
       isActive: true,
+      permissions: true,
       createdAt: true,
       lastLoginAt: true
     }
@@ -347,7 +368,9 @@ router.get('/profile', authenticateToken, asyncHandler(async (req, res) => {
 
   res.json({
     success: true,
-    data: { user }
+    data: {
+      user
+    }
   });
 }));
 
