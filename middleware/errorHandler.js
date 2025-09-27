@@ -297,11 +297,24 @@ const asyncHandler = (fn) => {
 };
 
 // ================================
+// NOT FOUND MIDDLEWARE
+// ================================
+
+const notFound = (req, res, next) => {
+  res.status(404).json({
+    error: 'Not Found',
+    message: `Route ${req.originalUrl} not found`,
+    timestamp: new Date().toISOString()
+  });
+};
+
+// ================================
 // EXPORTS
 // ================================
 
 module.exports = {
   errorHandler,
+  notFound,
   handlePrismaError,
   BusinessError,
   AuthorizationError,

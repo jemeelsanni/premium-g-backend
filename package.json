@@ -13,12 +13,19 @@
     "db:studio": "prisma studio",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["enterprise", "management", "distribution", "transport", "warehouse"],  
+  "keywords": [
+    "enterprise",
+    "management",
+    "distribution",
+    "transport",
+    "warehouse"
+  ],
   "author": "Premium G",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
     "@prisma/client": "^6.15.0",
+    "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
