@@ -6,9 +6,50 @@ const { PrismaClient } = require('@prisma/client');
 
 const { asyncHandler, ValidationError } = require('../../middleware/errorHandler');
 const { authorizeModule } = require('../../middleware/auth');
+const { authorizeRole } = require('../../middleware/auth'); // Import authorizeRole
 
 const router = express.Router();
 const prisma = new PrismaClient();
+
+router.get('/dashboard',
+  authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
+  asyncHandler(async (req, res) => {
+    try {
+      const orders = await prisma.transportOrder.findMany({
+        include: { truck: true }
+      });
+
+      const activeTrips = orders.filter(order => order.status === 'IN_TRANSIT').length;
+      const totalRevenue = orders.reduce((sum, order) => sum + order.totalOrderAmount, 0);
+      const completedTrips = orders.filter(order => order.status === 'DELIVERED').length;
+
+      res.json({
+        success: true,
+        data: {
+          activeTrips,
+          totalRevenue,
+          completedTrips,
+          totalOrders: orders.length,
+          recentOrders: orders.slice(0, 10).map(order => ({
+            id: order.id,
+            orderNumber: order.orderNumber,
+            clientName: order.clientName,
+            status: order.status,
+            totalAmount: order.totalOrderAmount,
+            createdAt: order.createdAt
+          }))
+        }
+      });
+    } catch (error) {
+      console.error('Transport dashboard error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Internal Server Error',
+        message: 'Failed to fetch transport dashboard data'
+      });
+    }
+  })
+);
 
 // Get transport analytics summary
 router.get('/summary',

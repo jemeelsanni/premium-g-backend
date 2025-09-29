@@ -6,6 +6,7 @@ const { PrismaClient } = require('@prisma/client');
 
 const { asyncHandler, ValidationError } = require('../../middleware/errorHandler');
 const { authorizeModule } = require('../../middleware/auth');
+const { authorizeRole } = require('../../middleware/auth'); // Import authorizeRole
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -115,6 +116,59 @@ router.get('/summary',
         period: { startDate, endDate }
       }
     });
+  })
+);
+
+router.get('/dashboard', 
+  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN']),
+  asyncHandler(async (req, res) => {
+    try {
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+      
+      const endOfMonth = new Date();
+      endOfMonth.setMonth(endOfMonth.getMonth() + 1);
+      endOfMonth.setDate(0);
+      endOfMonth.setHours(23, 59, 59, 999);
+
+      const orders = await prisma.distributionOrder.findMany({
+        where: {
+          createdAt: { gte: startOfMonth, lte: endOfMonth }
+        },
+        include: { customer: true, orderItems: true }
+      });
+
+      const totalOrders = orders.length;
+      const totalRevenue = orders.reduce((sum, order) => sum + order.totalAmount, 0);
+      const totalPacks = orders.reduce((sum, order) => 
+        sum + order.orderItems.reduce((itemSum, item) => itemSum + item.packs, 0), 0
+      );
+
+      res.json({
+        success: true,
+        data: {
+          totalOrders,
+          totalRevenue,
+          totalPacks,
+          recentOrders: orders.slice(0, 10).map(order => ({
+            id: order.id,
+            orderNumber: order.orderNumber || `ORD-${order.id.slice(-6)}`,
+            customerName: order.customer?.name || 'Unknown',
+            totalAmount: order.totalAmount,
+            status: order.status,
+            createdAt: order.createdAt
+          }))
+        }
+      });
+    } catch (error) {
+      console.error('Distribution dashboard error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Internal Server Error',
+        message: 'Failed to fetch distribution dashboard data'
+      });
+    }
   })
 );
 

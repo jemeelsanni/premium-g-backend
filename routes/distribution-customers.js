@@ -40,13 +40,14 @@ router.post('/customers',
       createdBy: req.user.id
     };
 
-    const customer = await prisma.distributionCustomer.create({
-      data: customerData,
-      include: {
-        salesRep: { select: { id: true, username: true } },
-        createdByUser: { select: { id: true, username: true } }
-      }
-    });
+    const customer = await prisma.customer.create({
+        data: customerData,
+        include: {
+            distributionOrders: {
+            select: { id: true }
+            }
+        }
+        });
 
     res.status(201).json({
       success: true,
@@ -94,18 +95,19 @@ router.get('/customers',
     }
 
     const [customers, total] = await Promise.all([
-      prisma.distributionCustomer.findMany({
-        where,
-        include: {
-          salesRep: { select: { id: true, username: true } },
-          _count: { select: { distributionOrders: true } }
-        },
-        orderBy: { name: 'asc' },
-        skip,
-        take
-      }),
-      prisma.distributionCustomer.count({ where })
-    ]);
+        prisma.customer.findMany({
+            where,
+            include: {
+            distributionOrders: {
+                select: { id: true }
+            }
+            },
+            orderBy: { name: 'asc' },
+            skip,
+            take
+        }),
+        prisma.customer.count({ where })
+        ]);
 
     res.json({
       success: true,

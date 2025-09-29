@@ -6,6 +6,7 @@ const { PrismaClient } = require('@prisma/client');
 
 const { asyncHandler, ValidationError } = require('../../middleware/errorHandler');
 const { authorizeModule } = require('../../middleware/auth');
+const { authorizeRole } = require('../../middleware/auth'); // Import authorizeRole
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -172,6 +173,68 @@ router.get('/summary',
     });
   })
 );
+
+
+router.get('/dashboard',
+  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN', 'WAREHOUSE_SALES_OFFICER']),
+  asyncHandler(async (req, res) => {
+    try {
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      
+      const endOfDay = new Date();
+      endOfDay.setHours(23, 59, 59, 999);
+
+      const todaySales = await prisma.warehouseSale.findMany({
+        where: {
+          createdAt: { gte: startOfDay, lte: endOfDay }
+        },
+        include: { product: true }
+      });
+
+      const dailySales = todaySales.length;
+      const dailyRevenue = todaySales.reduce((sum, sale) => sum + sale.totalAmount, 0);
+
+      const lowStockItems = await prisma.warehouseInventory.findMany({
+        where: {
+          OR: [
+            { pallets: { lte: 5 } },
+            { packs: { lte: 10 } },
+            { units: { lte: 50 } }
+          ]
+        }
+      });
+
+      res.json({
+        success: true,
+        data: {
+          dailySales,
+          dailyRevenue,
+          lowStockItems: lowStockItems.length,
+          totalCustomers: 0,
+          recentSales: todaySales.slice(0, 10).map(sale => ({
+            id: sale.id,
+            productName: sale.product?.name || 'Unknown Product',
+            quantity: sale.quantity,
+            unitType: sale.unitType,
+            totalAmount: sale.totalAmount,
+            customerName: sale.customerName || 'Walk-in Customer',
+            createdAt: sale.createdAt
+          }))
+        }
+      });
+    } catch (error) {
+      console.error('Warehouse dashboard error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Internal Server Error',
+        message: 'Failed to fetch warehouse dashboard data'
+      });
+    }
+  })
+);
+
+module.exports = router;
 
 // Get inventory status
 router.get('/inventory/status',
