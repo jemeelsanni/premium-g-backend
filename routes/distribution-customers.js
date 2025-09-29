@@ -17,44 +17,48 @@ const prisma = new PrismaClient();
 
 // Create distribution customer
 router.post('/customers',
-  authorizeModule('distribution', 'write'),
-  [
-    body('name').trim().notEmpty().withMessage('Customer name is required'),
-    body('email').optional().isEmail().withMessage('Valid email is required'),
-    body('phone').optional().trim(),
-    body('address').optional().trim(),
-    body('customerType').optional().isIn(['BUSINESS', 'ENTERPRISE', 'GOVERNMENT']),
-    body('creditLimit').optional().isFloat({ min: 0 }),
-    body('paymentTerms').optional().isIn(['NET_15', 'NET_30', 'NET_60', 'CASH']),
-    body('territory').optional().trim(),
-    body('salesRepId').optional().custom(validateCuid('sales rep ID'))
-  ],
-  asyncHandler(async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      throw new ValidationError('Invalid input data', errors.array());
-    }
-
-    const customerData = {
-      ...req.body,
-      createdBy: req.user.id
-    };
-
-    const customer = await prisma.customer.create({
-        data: customerData,
-        include: {
-            distributionOrders: {
-            select: { id: true }
-            }
+    authorizeModule('distribution', 'write'),
+    [
+        body('name').trim().notEmpty().withMessage('Customer name is required'),
+        body('email').optional().isEmail().withMessage('Valid email is required'),
+        body('phone').optional().trim(),
+        body('address').optional().trim(),
+        body('customerType').optional().isIn(['BUSINESS', 'ENTERPRISE', 'GOVERNMENT']),
+        body('territory').optional().trim(),
+    ],
+    asyncHandler(async (req, res) => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            throw new ValidationError('Invalid input data', errors.array());
         }
+
+        // Only include fields that exist in the Customer model
+        const customerData = {
+            name: req.body.name.trim(),
+            email: req.body.email?.trim() || null,
+            phone: req.body.phone?.trim() || null,
+            address: req.body.address?.trim() || null,
+            customerType: req.body.customerType || null,
+            territory: req.body.territory?.trim() || null,
+            // createdBy is NOT in the Customer model, so remove it
+            // If you need to track who created it, you'll need to add createdBy to the schema
+        };
+
+        const customer = await prisma.customer.create({
+            data: customerData,
+            include: {
+                distributionOrders: {
+                    select: { id: true }
+                }
+            }
         });
 
-    res.status(201).json({
-      success: true,
-      message: 'Distribution customer created successfully',
-      data: { customer }
-    });
-  })
+        res.status(201).json({
+            success: true,
+            message: 'Distribution customer created successfully',
+            data: { customer }
+        });
+    })
 );
 
 // Get distribution customers with filtering

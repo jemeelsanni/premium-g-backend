@@ -161,12 +161,16 @@ model Product {
 }
 
 model Customer {
-    id       String  @id @default(cuid())
-    name     String
-    email    String?
-    phone    String?
-    address  String?
-    isActive Boolean @default(true) @map("is_active")
+    id           String  @id @default(cuid())
+    name         String
+    email        String?
+    phone        String?
+    address      String?
+    customerType String? @map("customer_type") // ADD THIS
+    territory    String? // ADD THIS
+    totalOrders  Int     @default(0) @map("total_orders") // ADD THIS for analytics
+    totalSpent   Decimal @default(0) @map("total_spent") @db.Decimal(15, 2) // ADD THIS
+    isActive     Boolean @default(true) @map("is_active")
 
     // Metadata
     createdAt DateTime @default(now()) @map("created_at")
