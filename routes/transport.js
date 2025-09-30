@@ -6,6 +6,7 @@ const { asyncHandler, ValidationError, NotFoundError, BusinessError } = require(
 const { authorizeModule, authorizeRole } = require('../middleware/auth');
 const { validateCuid } = require('../utils/validators');
 const truckRoutes = require('./trucks');
+const transportPricingService = require('../services/transportPricingService');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -48,47 +49,47 @@ const updateTransportOrderValidation = [
   body('truckExpenses').optional().isDecimal({ decimal_digits: '0,2' })
 ];
 
-const calculateTransportProfitability = async (
-  totalOrderAmount,
-  fuelRequired,
-  fuelPricePerLiter,
-  locationId,
-  serviceChargePercentage = 10.00
-) => {
-  // Get location for driver wages
-  const location = await prisma.location.findUnique({
-    where: { id: locationId }
-  });
+// const calculateTransportProfitability = async (
+//   totalOrderAmount,
+//   fuelRequired,
+//   fuelPricePerLiter,
+//   locationId,
+//   serviceChargePercentage = 10.00
+// ) => {
+//   // Get location for driver wages
+//   const location = await prisma.location.findUnique({
+//     where: { id: locationId }
+//   });
 
-  if (!location) {
-    throw new NotFoundError('Location not found');
-  }
+//   if (!location) {
+//     throw new NotFoundError('Location not found');
+//   }
 
-  // Calculate expenses
-  const totalFuelCost = parseFloat((fuelRequired * fuelPricePerLiter).toFixed(2));
-  const serviceChargeExpense = parseFloat(((totalOrderAmount * serviceChargePercentage) / 100).toFixed(2));
-  const driverWages = parseFloat(location.driverWagesPerTrip || 0);
+//   // Calculate expenses
+//   const totalFuelCost = parseFloat((fuelRequired * fuelPricePerLiter).toFixed(2));
+//   const serviceChargeExpense = parseFloat(((totalOrderAmount * serviceChargePercentage) / 100).toFixed(2));
+//   const driverWages = parseFloat(location.driverWagesPerTrip || 0);
   
-  const totalTripExpenses = parseFloat(
-    (totalFuelCost + serviceChargeExpense + driverWages).toFixed(2)
-  );
+//   const totalTripExpenses = parseFloat(
+//     (totalFuelCost + serviceChargeExpense + driverWages).toFixed(2)
+//   );
 
-  // Profit calculations
-  const grossProfit = parseFloat((totalOrderAmount - totalTripExpenses).toFixed(2));
-  const netProfit = grossProfit; // For individual trips
-  const profitMargin = totalOrderAmount > 0 ? 
-    parseFloat(((netProfit / totalOrderAmount) * 100).toFixed(2)) : 0;
+//   // Profit calculations
+//   const grossProfit = parseFloat((totalOrderAmount - totalTripExpenses).toFixed(2));
+//   const netProfit = grossProfit; // For individual trips
+//   const profitMargin = totalOrderAmount > 0 ? 
+//     parseFloat(((netProfit / totalOrderAmount) * 100).toFixed(2)) : 0;
   
-  return {
-    totalFuelCost,
-    serviceChargeExpense,
-    driverWages,
-    totalTripExpenses,
-    grossProfit,
-    netProfit,
-    profitMargin
-  };
-};
+//   return {
+//     totalFuelCost,
+//     serviceChargeExpense,
+//     driverWages,
+//     totalTripExpenses,
+//     grossProfit,
+//     netProfit,
+//     profitMargin
+//   };
+// };
 
 // ================================
 // COST CALCULATION FUNCTIONS
@@ -158,6 +159,84 @@ const createProfitAnalysis = async (transportOrder, type = 'TRANSPORT_TRIP') => 
   });
 };
 
+// GET price calculation preview
+router.post('/orders/calculate-price',
+  authorizeModule('transport', 'read'),
+  [
+    body('locationId').custom(validateCuid('location ID')),
+    body('truckId').custom(validateCuid('truck ID')),
+    body('fuelRequired').isFloat({ min: 0 }),
+    body('fuelPricePerLiter').isFloat({ min: 0 }),
+    body('truckExpenses').optional().isFloat({ min: 0 })
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
+    const { locationId, truckId, fuelRequired, fuelPricePerLiter, truckExpenses = 0 } = req.body;
+
+    const calculation = await transportPricingService.calculateTripCosts({
+      locationId,
+      truckId,
+      fuelRequired,
+      fuelPricePerLiter,
+      additionalExpenses: truckExpenses
+    });
+
+    // Get location and truck details for display
+    const [location, truck] = await Promise.all([
+      prisma.location.findUnique({ where: { id: locationId } }),
+      prisma.truckCapacity.findUnique({ where: { truckId } })
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        location: {
+          name: location.name,
+          distance: calculation.distance || 'N/A'
+        },
+        truck: {
+          registration: truck.registrationNumber,
+          capacity: truck.capacity,
+          capacityType: truck.capacityType
+        },
+        pricing: {
+          baseHaulageRate: calculation.baseHaulageRate,
+          totalTripCost: calculation.totalOrderAmount,
+          breakdown: {
+            fuel: {
+              liters: calculation.fuelRequired,
+              pricePerLiter: calculation.fuelPricePerLiter,
+              total: calculation.totalFuelCost
+            },
+            wages: {
+              tripAllowance: calculation.tripAllowance,
+              driverWages: calculation.driverWages,
+              motorBoyWages: calculation.motorBoyWages,
+              total: calculation.totalDriverWages
+            },
+            serviceCharge: {
+              percentage: calculation.serviceChargePercent,
+              amount: calculation.serviceChargeExpense
+            },
+            expenses: calculation.truckExpenses
+          },
+          totals: {
+            totalExpenses: calculation.totalTripExpenses,
+            grossProfit: calculation.grossProfit,
+            netProfit: calculation.netProfit,
+            profitMargin: `${calculation.profitMargin}%`,
+            revenue: calculation.revenue
+          }
+        }
+      }
+    });
+  })
+);
+
 // ================================
 // TRANSPORT ORDER ROUTES
 // ================================
@@ -174,10 +253,10 @@ router.post('/orders',
     body('pickupLocation').trim().notEmpty().withMessage('Pickup location is required'),
     body('deliveryAddress').trim().notEmpty().withMessage('Delivery address is required'),
     body('locationId').custom(validateCuid('location ID')),
-    body('totalOrderAmount').isFloat({ min: 0 }).withMessage('Total order amount must be 0 or greater'),
+    body('truckId').custom(validateCuid('truck ID')).withMessage('Truck ID is required'),
     body('fuelRequired').isFloat({ min: 0 }).withMessage('Fuel required must be 0 or greater'),
     body('fuelPricePerLiter').isFloat({ min: 0 }).withMessage('Fuel price per liter must be 0 or greater'),
-    body('serviceChargePercentage').optional().isFloat({ min: 0, max: 100 })
+    body('truckExpenses').optional().isFloat({ min: 0 }).withMessage('Truck expenses must be 0 or greater'),
   ],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -194,23 +273,22 @@ router.post('/orders',
       deliveryAddress,
       locationId,
       truckId,
-      totalOrderAmount,
       fuelRequired,
       fuelPricePerLiter,
-      serviceChargePercentage = 10.00,
+      truckExpenses = 0,
       driverDetails
     } = req.body;
 
     const userId = req.user.id;
 
-    // Calculate transport profitability
-    const profitData = await calculateTransportProfitability(
-      totalOrderAmount,
+    // AUTO-CALCULATE all costs using the new pricing service
+    const calculatedCosts = await transportPricingService.calculateTripCosts({
+      locationId,
+      truckId,
       fuelRequired,
       fuelPricePerLiter,
-      locationId,
-      serviceChargePercentage
-    );
+      additionalExpenses: truckExpenses
+    });
 
     // Create standalone transport order
     const transportOrder = await prisma.$transaction(async (tx) => {
@@ -224,13 +302,37 @@ router.post('/orders',
           deliveryAddress,
           locationId,
           truckId,
-          totalOrderAmount,
-          serviceChargePercentage,
-          fuelRequired,
-          fuelPricePerLiter,
-          ...profitData,
           driverDetails,
-          createdBy: userId
+          
+          // Calculated pricing from haulage rates
+          baseHaulageRate: calculatedCosts.baseHaulageRate,
+          totalOrderAmount: calculatedCosts.totalOrderAmount, // This is the trip cost
+          
+          // Fuel costs
+          fuelRequired: calculatedCosts.fuelRequired,
+          fuelPricePerLiter: calculatedCosts.fuelPricePerLiter,
+          totalFuelCost: calculatedCosts.totalFuelCost,
+          
+          // Wages breakdown (from salary rates)
+          tripAllowance: calculatedCosts.tripAllowance,
+          driverWages: calculatedCosts.driverWages,
+          motorBoyWages: calculatedCosts.motorBoyWages,
+          
+          // Service charge (10% of haulage rate)
+          serviceChargePercent: calculatedCosts.serviceChargePercent,
+          serviceChargeExpense: calculatedCosts.serviceChargeExpense,
+          
+          // Expenses
+          truckExpenses: calculatedCosts.truckExpenses,
+          totalTripExpenses: calculatedCosts.totalTripExpenses,
+          
+          // Profit (matching Excel formula)
+          grossProfit: calculatedCosts.grossProfit,
+          netProfit: calculatedCosts.netProfit,
+          profitMargin: calculatedCosts.profitMargin,
+          
+          createdBy: userId,
+          deliveryStatus: 'PENDING'
         },
         include: {
           location: true,
@@ -245,15 +347,32 @@ router.post('/orders',
       await tx.transportAnalytics.create({
         data: {
           analysisType: 'TRANSPORT_TRIP',
-          totalRevenue: totalOrderAmount,
-          fuelCosts: profitData.totalFuelCost,
-          driverWages: profitData.driverWages,
-          serviceCharges: profitData.serviceChargeExpense,
-          totalExpenses: profitData.totalTripExpenses,
-          grossProfit: profitData.grossProfit,
-          netProfit: profitData.netProfit,
-          profitMargin: profitData.profitMargin,
+          totalRevenue: calculatedCosts.totalOrderAmount,
+          fuelCosts: calculatedCosts.totalFuelCost,
+          driverWages: calculatedCosts.driverWages + calculatedCosts.tripAllowance + calculatedCosts.motorBoyWages,
+          serviceCharges: calculatedCosts.serviceChargeExpense,
+          totalExpenses: calculatedCosts.totalTripExpenses,
+          grossProfit: calculatedCosts.grossProfit,
+          netProfit: calculatedCosts.netProfit,
+          profitMargin: calculatedCosts.profitMargin,
           totalTrips: 1
+        }
+      });
+
+      // Log audit trail
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: 'CREATE',
+          entity: 'TransportOrder',
+          entityId: order.id,
+          newValues: {
+            orderNumber: order.orderNumber,
+            clientName: order.clientName,
+            location: order.location.name,
+            totalAmount: order.totalOrderAmount,
+            netProfit: order.netProfit
+          }
         }
       });
 
@@ -262,8 +381,21 @@ router.post('/orders',
 
     res.status(201).json({
       success: true,
-      message: 'Transport order created successfully',
-      data: { transportOrder }
+      message: 'Transport order created successfully with auto-calculated pricing',
+      data: { 
+        transportOrder,
+        calculation: {
+          baseHaulageRate: calculatedCosts.baseHaulageRate,
+          breakdown: {
+            fuel: calculatedCosts.totalFuelCost,
+            wages: calculatedCosts.driverWages + calculatedCosts.tripAllowance + calculatedCosts.motorBoyWages,
+            serviceCharge: calculatedCosts.serviceChargeExpense,
+            expenses: calculatedCosts.truckExpenses
+          },
+          revenue: calculatedCosts.revenue,
+          profitMargin: `${calculatedCosts.profitMargin}%`
+        }
+      }
     });
   })
 );

@@ -29,6 +29,8 @@ const distributionAnalyticsRoutes = require('./routes/analytics/distribution');
 const transportAnalyticsRoutes = require('./routes/analytics/transport');
 const warehouseAnalyticsRoutes = require('./routes/analytics/warehouse');
 
+const distributionPaymentRoutes = require('./routes/distributionPayment');
+
 const app = express();
 const prisma = new PrismaClient();
 
@@ -294,6 +296,8 @@ app.use(`/api/${apiVersion}/trucks`, authenticateToken, truckRoutes); // Transpo
 app.use(`/api/${apiVersion}/analytics/distribution`, authenticateToken, distributionAnalyticsRoutes);
 app.use(`/api/${apiVersion}/analytics/transport`, authenticateToken, transportAnalyticsRoutes);
 app.use(`/api/${apiVersion}/analytics/warehouse`, authenticateToken, warehouseAnalyticsRoutes);
+
+app.use('/api/v1/distribution', distributionPaymentRoutes);
 
 // Admin routes (Super Admin only)
 app.use(`/api/${apiVersion}/admin`, authenticateToken, adminRoutes);
