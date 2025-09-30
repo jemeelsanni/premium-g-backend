@@ -1,30 +1,70 @@
 const { PrismaClient } = require('@prisma/client');
-const { NotFoundError, ValidationError } = require('../middleware/errorHandler');
+const { NotFoundError, ValidationError, BusinessError } = require('../middleware/errorHandler');
 const prisma = new PrismaClient();
 
 class DistributionDeliveryService {
 
+  // ================================
+  // HELPER: Check if order is ready for transport assignment
+  // ================================
+  canAssignTransport(order) {
+    const checks = {
+      paymentConfirmed: order.paymentStatus === 'CONFIRMED',
+      paidToRiteFoods: order.paidToRiteFoods === true,
+      orderLoaded: ['LOADED', 'DISPATCHED'].includes(order.riteFoodsStatus),
+      balanceSettled: parseFloat(order.balance) === 0,
+      transportNotAssigned: !order.transporterCompany
+    };
+
+    const allChecksPassed = Object.values(checks).every(check => check === true);
+
+    return {
+      canAssign: allChecksPassed,
+      checks,
+      blockers: Object.entries(checks)
+        .filter(([key, value]) => !value)
+        .map(([key]) => key)
+    };
+  }
+
+  // ================================
   // Assign transport details
-  async assignTransport({
-    orderId,
-    transporterCompany,
-    driverNumber,
-    truckNumber,
-    userId
-  }) {
+  // ================================
+  async assignTransport({ orderId, transporterCompany, driverNumber, truckNumber, userId }) {
     const order = await prisma.distributionOrder.findUnique({
-      where: { id: orderId }
+      where: { id: orderId },
+      include: {
+        customer: true,
+        location: true
+      }
     });
 
     if (!order) {
       throw new NotFoundError('Order not found');
     }
 
-    if (order.paymentStatus !== 'CONFIRMED') {
-      throw new ValidationError('Cannot assign transport until payment is confirmed');
+    // ✅ Use validation helper
+    const readiness = this.canAssignTransport(order);
+    
+    if (!readiness.canAssign) {
+      const blockerMessages = {
+        paymentConfirmed: 'Customer payment must be confirmed by accountant',
+        paidToRiteFoods: 'Payment to Rite Foods must be completed',
+        orderLoaded: 'Order must be loaded at Rite Foods',
+        balanceSettled: 'Outstanding balance must be settled',
+        transportNotAssigned: 'Transport already assigned'
+      };
+
+      const errors = readiness.blockers.map(blocker => blockerMessages[blocker]);
+      
+      throw new BusinessError(
+        `Cannot assign transport. Required: ${errors.join(', ')}`,
+        'TRANSPORT_NOT_READY'
+      );
     }
 
     return await prisma.$transaction(async (tx) => {
+      // Update order with transport details
       const updatedOrder = await tx.distributionOrder.update({
         where: { id: orderId },
         data: {
@@ -32,26 +72,31 @@ class DistributionDeliveryService {
           driverNumber,
           truckNumber,
           status: 'IN_TRANSIT',
-          deliveryStatus: 'IN_TRANSIT'
+          deliveryStatus: 'IN_TRANSIT',
+          riteFoodsStatus: 'DISPATCHED'
         },
         include: {
           customer: true,
-          location: true
+          location: true,
+          orderItems: {
+            include: { product: true }
+          }
         }
       });
 
-      // Audit log
+      // Create audit log
       await tx.auditLog.create({
         data: {
           userId,
-          action: 'UPDATE',
+          action: 'TRANSPORT_ASSIGNED',
           entity: 'DistributionOrder',
           entityId: orderId,
           newValues: {
             transporterCompany,
             driverNumber,
             truckNumber,
-            status: 'IN_TRANSIT'
+            status: 'IN_TRANSIT',
+            deliveryStatus: 'IN_TRANSIT'
           }
         }
       });
@@ -60,7 +105,9 @@ class DistributionDeliveryService {
     });
   }
 
+  // ================================
   // Record delivery (full, partial, or failed)
+  // ================================
   async recordDelivery({
     orderId,
     deliveryStatus,
@@ -203,7 +250,9 @@ class DistributionDeliveryService {
     });
   }
 
+  // ================================
   // Get delivery summary
+  // ================================
   async getDeliverySummary(orderId) {
     const order = await prisma.distributionOrder.findUnique({
       where: { id: orderId },

@@ -75,18 +75,20 @@ const updateOrderValidation = [
 const priceAdjustmentValidation = [
   body('adjustedAmount')
     .isDecimal({ decimal_digits: '0,2' })
-    .withMessage('Adjusted amount must be a valid decimal with up to 2 decimal places'),
+    .withMessage('Adjusted amount must be a valid decimal'),
   body('adjustmentType')
-    .isIn(['FUEL_COST', 'LOCATION_CHANGE', 'OTHER'])
-    .withMessage('Invalid adjustment type'),
+    .isIn(['RITE_FOODS_PRICE_CHANGE'])
+    .withMessage('Invalid adjustment type. Only Rite Foods price changes allowed'),
   body('reason')
+    .notEmpty()
+    .withMessage('Reason for Rite Foods price change is required')
+    .isLength({ max: 500 })
+    .withMessage('Reason must not exceed 500 characters'),
+  body('riteFoodsInvoiceReference')
     .optional()
-    .isLength({ max: 200 })
-    .withMessage('Reason must not exceed 200 characters'),
-  body('locationFuelCost')
-    .optional()
-    .isDecimal({ decimal_digits: '0,2' })
-    .withMessage('Location fuel cost must be a valid decimal')
+    .trim()
+    .isString()  // ✅ Add validator before withMessage
+    .withMessage('Rite Foods invoice reference must be a string')
 ];
 
 // ================================
@@ -102,40 +104,29 @@ const calculatePalletPrice = async (productId, pallets, packs, locationId = null
     throw new NotFoundError('Product not found');
   }
 
-  // Check for location-specific pricing
+  // Check for location-specific pricing (base price only, no adjustments)
   let effectivePrice = product.pricePerPack;
-  let fuelAdjustment = 0;
 
   if (locationId) {
     const locationPricing = await prisma.palletPricing.findFirst({
-      where: {
-        productId,
-        locationId,
-        isActive: true
-      },
+      where: { productId, locationId, isActive: true },
       orderBy: { effectiveDate: 'desc' }
     });
 
     if (locationPricing) {
       effectivePrice = locationPricing.pricePerPack;
-      fuelAdjustment = locationPricing.fuelAdjustment;
     }
   }
 
-  // Calculate total price: Pallets × Packs per Pallet × Price per Pack + Individual Packs × Price per Pack
+  // ✅ SIMPLE: Just quantity × Rite Foods price
   const palletPacks = pallets * product.packsPerPallet;
   const totalPacks = palletPacks + packs;
-  const baseAmount = totalPacks * effectivePrice;
-  const fuelAdjustmentAmount = baseAmount * (fuelAdjustment / 100);
-  const finalAmount = baseAmount + fuelAdjustmentAmount;
+  const finalAmount = totalPacks * effectivePrice;  // No adjustments!
 
   return {
-    baseAmount: parseFloat(baseAmount.toFixed(2)),
-    fuelAdjustmentAmount: parseFloat(fuelAdjustmentAmount.toFixed(2)),
     finalAmount: parseFloat(finalAmount.toFixed(2)),
     totalPacks,
-    effectivePrice: parseFloat(effectivePrice),
-    fuelAdjustment: parseFloat(fuelAdjustment)
+    effectivePrice: parseFloat(effectivePrice)
   };
 };
 
@@ -288,9 +279,6 @@ router.post('/orders/validate',
 // @route   POST /api/v1/distribution/orders
 // @desc    Create new distribution order
 // @access  Private (Distribution Sales Rep, Admin)
-// Add this to the imports section
-
-
 router.post('/orders',
   authorizeModule('distribution', 'write'),
   [
@@ -795,9 +783,16 @@ router.post('/orders/:id/price-adjustments',
       throw new NotFoundError('Order not found');
     }
 
+    // Validate order status
+    if (order.paymentStatus !== 'CONFIRMED') {
+      throw new BusinessError(
+        'Price adjustments only allowed after payment is confirmed',
+        'INVALID_ORDER_STATE'
+      );
+    }
+
     // Create price adjustment and update order
     const result = await prisma.$transaction(async (tx) => {
-      // Create price adjustment record
       const adjustment = await tx.priceAdjustment.create({
         data: {
           orderId,
@@ -809,27 +804,24 @@ router.post('/orders/:id/price-adjustments',
         }
       });
 
-      // Calculate new balance
-      const newBalance = parseFloat(adjustedAmount) - order.originalAmount;
+      // Calculate new balance correctly
+      const amountPaid = parseFloat(order.amountPaid);
+      const newFinalAmount = parseFloat(adjustedAmount);
+      const newBalance = newFinalAmount - amountPaid;
 
-      // Update order with new amounts
       const updatedOrder = await tx.distributionOrder.update({
         where: { id: orderId },
         data: {
-          finalAmount: parseFloat(adjustedAmount),
-          balance: newBalance
+          finalAmount: newFinalAmount,
+          balance: newBalance,
+          paymentStatus: newBalance === 0 ? 'CONFIRMED' : 
+                        newBalance > 0 ? 'PARTIAL' : 'OVERPAID'
         },
         include: {
           customer: true,
           location: true,
-          orderItems: {
-            include: {
-              product: true
-            }
-          },
-          priceAdjustments: {
-            orderBy: { createdAt: 'desc' }
-          }
+          orderItems: { include: { product: true } },
+          priceAdjustments: { orderBy: { createdAt: 'desc' } }
         }
       });
 
@@ -977,7 +969,6 @@ router.get('/locations',
         id: true,
         name: true,
         address: true,
-        fuelAdjustment: true,
         isActive: true
       }
     });
@@ -1044,6 +1035,52 @@ router.post('/orders/bulk/confirm-payments',
       success: true,
       message: `Confirmed ${results.successful.length} payments, ${results.failed.length} failed`,
       data: results
+    });
+  })
+);
+
+// @route   GET /api/v1/distribution/dashboard/ready-for-transport
+// @desc    Get orders that are loaded at Rite Foods and ready for transport assignment
+// @access  Private (Distribution admin)
+router.get('/dashboard/ready-for-transport',
+  authorizeModule('distribution', 'admin'),
+  asyncHandler(async (req, res) => {
+    const readyOrders = await prisma.distributionOrder.findMany({
+      where: {
+        riteFoodsStatus: 'LOADED',
+        transporterCompany: null,
+        paymentStatus: 'CONFIRMED',
+        balance: 0
+      },
+      include: {
+        customer: { select: { name: true, phone: true } },
+        location: { select: { name: true, address: true } }
+      },
+      orderBy: { riteFoodsLoadedDate: 'asc' }
+    });
+
+    const formatted = readyOrders.map(order => ({
+      id: order.id,
+      customer: order.customer.name,
+      customerPhone: order.customer.phone,
+      location: order.location.name,
+      locationAddress: order.location.address,
+      totalPallets: order.totalPallets,
+      totalPacks: order.totalPacks,
+      amount: parseFloat(order.finalAmount),
+      loadedDate: order.riteFoodsLoadedDate,
+      daysWaiting: order.riteFoodsLoadedDate 
+        ? Math.floor((new Date() - new Date(order.riteFoodsLoadedDate)) / (1000 * 60 * 60 * 24))
+        : 0
+    }));
+
+    res.json({
+      success: true,
+      message: `${formatted.length} orders ready for transport assignment`,
+      data: {
+        orders: formatted,
+        count: formatted.length
+      }
     });
   })
 );
@@ -1627,7 +1664,6 @@ router.get('/locations/:id/pricing',
     });
 
     const productPricing = products.map(product => {
-      // Check if location has custom pricing
       const customPricing = location.palletPricing.find(
         p => p.productId === product.id
       );
@@ -1636,18 +1672,13 @@ router.get('/locations/:id/pricing',
         ? parseFloat(customPricing.pricePerPack)
         : parseFloat(product.pricePerPack);
 
-      const fuelAdjustment = parseFloat(location.fuelAdjustment || 0);
-      const adjustedPrice = pricePerPack * (1 + (fuelAdjustment / 100));
-
+      // ✅ No fuel adjustment - just the base price
       return {
         productId: product.id,
         productName: product.name,
         packsPerPallet: product.packsPerPallet,
-        basePricePerPack: parseFloat(product.pricePerPack),
-        locationPricePerPack: pricePerPack,
-        fuelAdjustment: fuelAdjustment,
-        finalPricePerPack: parseFloat(adjustedPrice.toFixed(2)),
-        pricePerPallet: parseFloat((adjustedPrice * product.packsPerPallet).toFixed(2))
+        pricePerPack: pricePerPack,
+        pricePerPallet: parseFloat((pricePerPack * product.packsPerPallet).toFixed(2))
       };
     });
 

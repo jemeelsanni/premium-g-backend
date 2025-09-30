@@ -3,7 +3,7 @@ const { body, param, validationResult } = require('express-validator');
 const router = express.Router();
 const distributionPaymentService = require('../services/distributionPaymentService');
 const distributionDeliveryService = require('../services/distributionDeliveryService');
-const { asyncHandler } = require('../middleware/asyncHandler');
+const { asyncHandler } = require('../middleware/errorHandler');
 const { authorizeModule } = require('../middleware/auth');
 const { ValidationError } = require('../middleware/errorHandler');
 
@@ -282,7 +282,7 @@ router.get('/payments/pending',
 // @desc    Assign transport details to order
 // @access  Private (Distribution write access)
 router.post('/delivery/assign-transport',
-  authorizeModule('distribution', 'write'),
+  authorizeModule('distribution', 'admin'),  // ✅ Only admins (not just 'write')
   [
     body('orderId').custom(validateCuid('order ID')),
     body('transporterCompany').trim().notEmpty().withMessage('Transporter company is required'),
@@ -295,14 +295,63 @@ router.post('/delivery/assign-transport',
       throw new ValidationError('Invalid input data', errors.array());
     }
 
-    const {
-      orderId,
-      transporterCompany,
-      driverNumber,
-      truckNumber
-    } = req.body;
+    const { orderId, transporterCompany, driverNumber, truckNumber } = req.body;
 
-    const order = await distributionDeliveryService.assignTransport({
+    // ✅ CRITICAL: Validate order is ready for transport
+    const order = await prisma.distributionOrder.findUnique({
+      where: { id: orderId },
+      include: {
+        customer: true,
+        location: true
+      }
+    });
+
+    if (!order) {
+      throw new NotFoundError('Order not found');
+    }
+
+    // ✅ Check 1: Payment must be confirmed
+    if (order.paymentStatus !== 'CONFIRMED') {
+      throw new BusinessError(
+        'Cannot assign transport: Customer payment must be confirmed by accountant first',
+        'PAYMENT_NOT_CONFIRMED'
+      );
+    }
+
+    // ✅ Check 2: Must have paid Rite Foods
+    if (!order.paidToRiteFoods) {
+      throw new BusinessError(
+        'Cannot assign transport: Payment to Rite Foods must be completed first',
+        'RITE_FOODS_NOT_PAID'
+      );
+    }
+
+    // ✅ Check 3: Order must be loaded at Rite Foods
+    if (order.riteFoodsStatus !== 'LOADED' && order.riteFoodsStatus !== 'DISPATCHED') {
+      throw new BusinessError(
+        `Cannot assign transport: Order must be loaded at Rite Foods first. Current status: ${order.riteFoodsStatus}`,
+        'ORDER_NOT_LOADED'
+      );
+    }
+
+    // ✅ Check 4: Balance must be zero (no outstanding payment)
+    if (parseFloat(order.balance) !== 0) {
+      throw new BusinessError(
+        `Cannot assign transport: Order has outstanding balance of ₦${order.balance}. Customer must settle balance first.`,
+        'OUTSTANDING_BALANCE'
+      );
+    }
+
+    // ✅ Check 5: Transport not already assigned
+    if (order.transporterCompany) {
+      throw new BusinessError(
+        'Transport already assigned to this order',
+        'TRANSPORT_ALREADY_ASSIGNED'
+      );
+    }
+
+    // All checks passed - assign transport
+    const updatedOrder = await distributionDeliveryService.assignTransport({
       orderId,
       transporterCompany,
       driverNumber,
@@ -312,8 +361,8 @@ router.post('/delivery/assign-transport',
 
     res.json({
       success: true,
-      message: 'Transport assigned successfully',
-      data: { order }
+      message: 'Transport assigned successfully. Order status updated to IN_TRANSIT.',
+      data: { order: updatedOrder }
     });
   })
 );

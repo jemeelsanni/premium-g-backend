@@ -35,6 +35,7 @@ model User {
     cashFlowEntries           CashFlow[]
     expenses                  Expense[]
     approvedExpenses          Expense[]           @relation("ExpenseApprover")
+    PriceAdjustment           PriceAdjustment[]
 
     @@map("users")
 }
@@ -163,7 +164,6 @@ model Location {
     id                 String  @id @default(cuid())
     name               String
     address            String?
-    fuelAdjustment     Decimal @default(0) @map("fuel_adjustment") @db.Decimal(5, 2)
     driverWagesPerTrip Decimal @default(0) @map("driver_wages_per_trip") @db.Decimal(8, 2)
     deliveryNotes      String? @map("delivery_notes")
     isActive           Boolean @default(true) @map("is_active")
@@ -344,17 +344,19 @@ model PalletPricing {
 }
 
 model PriceAdjustment {
-    id               String   @id @default(cuid())
-    orderId          String   @map("order_id")
-    originalAmount   Decimal  @map("original_amount") @db.Decimal(12, 2)
-    adjustedAmount   Decimal  @map("adjusted_amount") @db.Decimal(12, 2)
-    adjustmentType   String   @map("adjustment_type")
-    reason           String?
-    locationFuelCost Decimal? @map("location_fuel_cost") @db.Decimal(5, 2)
+    id                        String  @id @default(cuid())
+    orderId                   String  @map("order_id")
+    originalAmount            Decimal @map("original_amount") @db.Decimal(12, 2)
+    adjustedAmount            Decimal @map("adjusted_amount") @db.Decimal(12, 2)
+    adjustmentType            String  @default("RITE_FOODS_PRICE_CHANGE") @map("adjustment_type")
+    reason                    String  @map("reason") // Required now
+    riteFoodsInvoiceReference String? @map("rite_foods_invoice_ref") // Optional
+    adjustedBy                String  @map("adjusted_by") // Who made adjustment
 
     createdAt DateTime @default(now()) @map("created_at")
 
-    order DistributionOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+    order    DistributionOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+    adjuster User              @relation(fields: [adjustedBy], references: [id])
 
     @@map("price_adjustments")
 }
@@ -699,16 +701,16 @@ enum ProductModule {
 }
 
 enum OrderStatus {
-    PENDING
-    PAYMENT_CONFIRMED
-    SENT_TO_RITE_FOODS
-    PROCESSING_BY_RFL
-    LOADED
-    IN_TRANSIT
-    DELIVERED
-    PARTIALLY_DELIVERED
-    CANCELLED
-    RETURNED
+    PENDING // Order created, awaiting payment
+    PAYMENT_CONFIRMED // Payment confirmed by accountant
+    SENT_TO_RITE_FOODS // Payment sent to Rite Foods
+    PROCESSING_BY_RFL // Rite Foods processing order
+    LOADED // Products loaded at Rite Foods ⭐ READY FOR TRANSPORT
+    IN_TRANSIT // Transport assigned, en route to customer
+    DELIVERED // Successfully delivered
+    PARTIALLY_DELIVERED // Partial delivery
+    CANCELLED // Order cancelled
+    RETURNED // Products returned
 }
 
 enum PaymentStatus {
@@ -734,12 +736,12 @@ enum PaymentType {
 }
 
 enum RiteFoodsStatus {
-    NOT_SENT
-    PAYMENT_SENT
-    ORDER_RAISED
-    PROCESSING
-    LOADED
-    DISPATCHED
+    NOT_SENT // Haven't paid Rite Foods yet
+    PAYMENT_SENT // Payment sent to Rite Foods
+    ORDER_RAISED // Rite Foods acknowledged order
+    PROCESSING // Rite Foods preparing products
+    LOADED // Products ready for pickup ⭐ CAN ASSIGN TRANSPORT NOW
+    DISPATCHED // Products dispatched (transport assigned)
 }
 
 enum DeliveryStatus {
