@@ -575,6 +575,32 @@ router.get('/products', asyncHandler(async (req, res) => {
   });
 }));
 
+
+// @route   GET /api/v1/distribution/locations
+// @desc    Get delivery locations for distribution
+// @access  Private (Distribution module access)
+router.get('/locations', 
+  authorizeModule('distribution'),
+  asyncHandler(async (req, res) => {
+    const locations = await prisma.location.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        address: true,
+        fuelAdjustment: true,
+        isActive: true
+      }
+    });
+
+    res.json({
+      success: true,
+      data: { locations }
+    });
+  })
+);
+
 // ================================
 // ROUTES - ANALYTICS & REPORTS
 // ================================
