@@ -186,6 +186,8 @@ model DistributionOrder {
     customerId String @map("customer_id")
     locationId String @map("location_id")
 
+    deliveryLocation String? @map("delivery_location") // Optional text field for delivery address
+
     totalPallets   Int     @map("total_pallets")
     totalPacks     Int     @map("total_packs")
     originalAmount Decimal @map("original_amount") @db.Decimal(12, 2)

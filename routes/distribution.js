@@ -33,29 +33,37 @@ const createOrderValidation = [
   body('customerId')
     .notEmpty()
     .withMessage('Customer ID is required')
-    .custom(validateCuid('customer ID')), // ✅ UPDATED
+    .custom(validateCuid('customer ID')),
   body('locationId')
-    .notEmpty()
-    .withMessage('Location ID is required')
-    .custom(validateCuid('location ID')), // ✅ UPDATED
+    .optional()
+    .custom(validateCuid('location ID')),
+  body('deliveryLocation')  // ✅ Accept as text
+    .optional()
+    .trim()
+    .isLength({ min: 3, max: 500 })
+    .withMessage('Delivery location must be between 3 and 500 characters'),
   body('orderItems')
     .isArray({ min: 1 })
     .withMessage('At least one order item is required'),
   body('orderItems.*.productId')
     .notEmpty()
     .withMessage('Product ID is required')
-    .custom(validateCuid('product ID')), // ✅ UPDATED
+    .custom(validateCuid('product ID')),
   body('orderItems.*.pallets')
     .isInt({ min: 0 })
     .withMessage('Pallets must be a non-negative integer'),
   body('orderItems.*.packs')
     .isInt({ min: 0 })
     .withMessage('Packs must be a non-negative integer'),
+  body('orderItems.*.amount')
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage('Amount must be a positive number'),
   body('remark')
     .optional()
-    .isLength({ max: 500 })
-    .withMessage('Remark must not exceed 500 characters')
+    .trim()
 ];
+
 
 const updateOrderValidation = [
   body('status')
@@ -285,28 +293,56 @@ router.post('/orders/validate',
 // @access  Private (Distribution Sales Rep, Admin)
 router.post('/orders',
   authorizeModule('distribution', 'write'),
-  [
-    body('customerId').custom(validateCuid('customer ID')),
-    body('locationId').custom(validateCuid('location ID')),
-    body('orderItems').isArray({ min: 1 }).withMessage('Order must have at least one item'),
-    body('orderItems.*.productId').custom(validateCuid('product ID')),
-    body('orderItems.*.pallets').isInt({ min: 0 }).withMessage('Pallets must be 0 or greater'),
-    body('orderItems.*.packs').isInt({ min: 0 }).withMessage('Packs must be 0 or greater'),
-    body('remark').optional().trim(),
-    // NEW: Optional initial payment info
-    body('initialPayment').optional().isObject(),
-    body('initialPayment.amount').optional().isFloat({ min: 0 }),
-    body('initialPayment.method').optional().isIn(['BANK_TRANSFER', 'CASH', 'CHECK', 'WHATSAPP_TRANSFER', 'POS', 'MOBILE_MONEY']),
-    body('initialPayment.reference').optional().trim()
-  ],
+  createOrderValidation,
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      throw new ValidationError('Invalid input data', errors.array());
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
     }
 
-    const { customerId, locationId, orderItems, remark, initialPayment } = req.body;
-    const userId = req.user.id;
+    const { customerId, locationId, deliveryLocation, orderItems, remark } = req.body;
+
+    console.log('📦 Received order data:', { customerId, locationId, deliveryLocation, orderItems });
+
+    // Validate that at least deliveryLocation is provided
+    if (!deliveryLocation) {
+      throw new ValidationError('Delivery location is required');
+    }
+
+    // Find or create location based on deliveryLocation text
+    let finalLocationId = locationId;
+    
+    if (!finalLocationId && deliveryLocation) {
+      // Try to find existing location by name
+      let location = await prisma.location.findFirst({
+        where: {
+          name: {
+            equals: deliveryLocation.trim(),
+            mode: 'insensitive'
+          }
+        }
+      });
+
+      // If not found, create a new location
+      if (!location) {
+        location = await prisma.location.create({
+          data: {
+            name: deliveryLocation.trim(),
+            address: deliveryLocation.trim(),
+            isActive: true
+          }
+        });
+        console.log('✅ Created new location:', location.name);
+      } else {
+        console.log('✅ Found existing location:', location.name);
+      }
+
+      finalLocationId = location.id;
+    }
 
     // Verify customer exists
     const customer = await prisma.customer.findUnique({
@@ -314,111 +350,118 @@ router.post('/orders',
     });
 
     if (!customer) {
-      throw new NotFoundError('Distribution customer not found');
+      throw new NotFoundError('Customer not found');
     }
 
-    // Calculate order totals
+    // Calculate totals and validate products
     let totalPallets = 0;
     let totalPacks = 0;
     let totalAmount = 0;
-    const calculatedItems = [];
+    const validatedItems = [];
 
     for (const item of orderItems) {
-      const calculation = await calculatePalletPrice(
-        item.productId,
-        item.pallets,
-        item.packs,
-        locationId
-      );
-
-      calculatedItems.push({
-        productId: item.productId,
-        pallets: item.pallets,
-        packs: item.packs,
-        amount: calculation.finalAmount
+      // Verify product exists
+      const product = await prisma.product.findUnique({
+        where: { id: item.productId }
       });
 
-      totalPallets += item.pallets;
-      totalPacks += calculation.totalPacks;
-      totalAmount += calculation.finalAmount;
-    }
-
-    // Check credit limit if customer has one
-    if (customer.creditLimit) {
-      const potentialSpent = parseFloat(customer.totalSpent || 0) + totalAmount;
-      
-      if (potentialSpent > parseFloat(customer.creditLimit)) {
-        throw new ValidationError(
-          `Order exceeds customer credit limit. Available credit: ₦${(parseFloat(customer.creditLimit) - parseFloat(customer.totalSpent || 0)).toFixed(2)}`
-        );
+      if (!product) {
+        throw new NotFoundError(`Product not found: ${item.productId}`);
       }
+
+      if (!product.isActive) {
+        throw new BusinessError(`Product is not active: ${product.name}`);
+      }
+
+      const pallets = parseInt(item.pallets) || 0;
+      const packs = parseInt(item.packs) || 0;
+      const amount = parseFloat(item.amount) || 0;
+
+      totalPallets += pallets;
+      totalPacks += packs;
+      totalAmount += amount;
+
+      validatedItems.push({
+        productId: item.productId,
+        pallets,
+        packs,
+        amount
+      });
     }
 
-    // Create order with payment tracking
+    // Create order in transaction
     const order = await prisma.$transaction(async (tx) => {
+      // Create the order with deliveryLocation field
       const createdOrder = await tx.distributionOrder.create({
         data: {
           customerId,
-          locationId,
+          locationId: finalLocationId,
+          deliveryLocation: deliveryLocation.trim(),  // ✅ Store the text field
           totalPallets,
           totalPacks,
           originalAmount: totalAmount,
           finalAmount: totalAmount,
-          balance: totalAmount, // Initially full amount is balance
-          remark,
-          createdBy: userId,
+          balance: totalAmount,
+          amountPaid: 0,
           status: 'PENDING',
           paymentStatus: 'PENDING',
+          createdBy: req.user.id,
+          remark: remark?.trim() || null,
           orderItems: {
-            create: calculatedItems
+            create: validatedItems
           }
         },
         include: {
-          customer: true,
-          location: true,
+          customer: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              phone: true,
+              address: true
+            }
+          },
+          location: {
+            select: {
+              id: true,
+              name: true,
+              address: true
+            }
+          },
           orderItems: {
-            include: { product: true }
+            include: {
+              product: {
+                select: {
+                  id: true,
+                  name: true,
+                  module: true
+                }
+              }
+            }
           }
         }
       });
 
-      // If initial payment provided, record it
-      if (initialPayment && initialPayment.amount > 0) {
-        await distributionPaymentService.recordCustomerPayment({
-          orderId: createdOrder.id,
-          amount: initialPayment.amount,
-          paymentMethod: initialPayment.method,
-          reference: initialPayment.reference,
-          paidBy: customer.name,
-          receivedBy: req.user.username,
-          notes: 'Initial payment with order creation',
-          userId
-        });
-      }
-
-      // Update current week's performance
+      // Update weekly performance if applicable
       const currentDate = new Date();
       const weekNumber = Math.ceil(currentDate.getDate() / 7);
-      
-      const target = await tx.distributionTarget.findFirst({
-        where: {
-          year: currentDate.getFullYear(),
-          month: currentDate.getMonth() + 1
-        }
-      });
 
-      if (target) {
-        const weekPerf = await tx.weeklyPerformance.findUnique({
+      try {
+        const target = await tx.distributionTarget.findFirst({
           where: {
-            targetId_weekNumber: {
-              targetId: target.id,
-              weekNumber
+            year: currentDate.getFullYear(),
+            month: currentDate.getMonth() + 1
+          },
+          include: {
+            weeklyPerformances: {
+              where: { weekNumber }
             }
           }
         });
 
-        if (weekPerf) {
-          const newActual = parseInt(weekPerf.actualPacks) + totalPacks;
+        if (target && target.weeklyPerformances.length > 0) {
+          const weekPerf = target.weeklyPerformances[0];
+          const newActual = (weekPerf.actualPacks || 0) + totalPacks;
           const achievement = weekPerf.targetPacks > 0 
             ? (newActual / weekPerf.targetPacks) * 100 
             : 0;
@@ -436,44 +479,35 @@ router.post('/orders',
             }
           });
         }
+      } catch (error) {
+        console.log('⚠️ Weekly performance update skipped:', error.message);
       }
 
-      // Create distribution analytics entry
-      await tx.distributionAnalytics.create({
+      // Audit log
+      await tx.auditLog.create({
         data: {
-          analysisType: 'ORDER',
-          totalRevenue: totalAmount,
-          costOfGoodsSold: await calculateDistributionCOGS(calculatedItems),
-          grossProfit: totalAmount - await calculateDistributionCOGS(calculatedItems),
-          netProfit: totalAmount - await calculateDistributionCOGS(calculatedItems),
-          profitMargin: totalAmount > 0 ?
-            ((totalAmount - await calculateDistributionCOGS(calculatedItems)) / totalAmount) * 100 : 0,
-          totalOrders: 1,
-          totalPacks,
-          totalPallets
+          userId: req.user.id,
+          action: 'CREATE',
+          entity: 'DistributionOrder',
+          entityId: createdOrder.id,
+          newValues: {
+            customerId,
+            locationId: finalLocationId,
+            deliveryLocation: deliveryLocation.trim(),
+            totalAmount
+          }
         }
       });
 
       return createdOrder;
     });
 
-    // Fetch updated order with payment info
-    const finalOrder = await prisma.distributionOrder.findUnique({
-      where: { id: order.id },
-      include: {
-        customer: true,
-        location: true,
-        orderItems: {
-          include: { product: true }
-        },
-        paymentHistory: true
-      }
-    });
+    console.log('✅ Order created successfully:', order.id);
 
     res.status(201).json({
       success: true,
-      message: 'Distribution order created successfully',
-      data: { order: finalOrder }
+      message: 'Order created successfully',
+      data: { order }
     });
   })
 );
