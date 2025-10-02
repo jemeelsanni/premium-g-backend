@@ -6,8 +6,11 @@ const { asyncHandler, ValidationError, BusinessError, NotFoundError } = require(
 const { authorizeModule, authorizeRole } = require('../middleware/auth');
 const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 const { validateCuid } = require('../utils/validators'); // ✅ ADDED
+
+const distributionPaymentRouter = require('./distributionPayment');
 const distributionCustomersRouter = require('./distribution-customers');
 const distributionPaymentService = require('../services/distributionPaymentService');
+
 
 
 const router = express.Router();
@@ -20,6 +23,7 @@ const prisma = new PrismaClient();
 // All distribution routes require distribution module access
 router.use(authorizeModule('distribution'));
 router.use('/', distributionCustomersRouter);
+router.use('/', distributionPaymentRouter); 
 
 // ================================
 // VALIDATION RULES - UPDATED FOR CUID
