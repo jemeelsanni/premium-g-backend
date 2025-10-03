@@ -1,6 +1,12 @@
 const { PrismaClient } = require('@prisma/client');
-const { NotFoundError, ValidationError, UnauthorizedError } = require('../middleware/errorHandler');
+const { NotFoundError, ValidationError, BusinessError, UnauthorizedError } = require('../middleware/errorHandler');
 const prisma = new PrismaClient();
+
+const {
+  generatePaymentReference,
+  generateRiteFoodsOrderNumber,
+  generateRiteFoodsInvoiceNumber
+} = require('../utils/orderNumberGenerator');
 
 class DistributionPaymentService {
   
@@ -174,34 +180,52 @@ class DistributionPaymentService {
     riteFoodsInvoiceNumber,
     userId
   }) {
+    // Get order
     const order = await prisma.distributionOrder.findUnique({
-      where: { id: orderId }
+      where: { id: orderId },
+      include: {
+        customer: true,
+        location: true,
+        orderItems: {
+          include: { product: true }
+        }
+      }
     });
 
     if (!order) {
       throw new NotFoundError('Order not found');
     }
 
+    // Validation
     if (order.paymentStatus !== 'CONFIRMED') {
-      throw new ValidationError('Customer payment must be confirmed before paying Rite Foods');
+      throw new BusinessError('Customer payment must be confirmed before paying Rite Foods');
     }
 
     if (order.paidToRiteFoods) {
-      throw new ValidationError('Payment already sent to Rite Foods');
+      throw new BusinessError('Payment to Rite Foods has already been recorded for this order');
     }
 
-    return await prisma.$transaction(async (tx) => {
-      // Record payment history
+    const paymentAmount = parseFloat(amount);
+    if (paymentAmount > parseFloat(order.finalAmount)) {
+      throw new BusinessError('Payment amount cannot exceed order total');
+    }
+
+    // ✅ Generate numbers automatically if not provided
+    const finalReference = reference || await generatePaymentReference();
+    const finalRFOrderNumber = riteFoodsOrderNumber || await generateRiteFoodsOrderNumber();
+    const finalRFInvoiceNumber = riteFoodsInvoiceNumber || await generateRiteFoodsInvoiceNumber();
+
+    // Record payment in transaction
+    const result = await prisma.$transaction(async (tx) => {
+      // Record payment to Rite Foods
       const payment = await tx.paymentHistory.create({
         data: {
           orderId,
-          amount,
+          amount: paymentAmount,
+          paymentMethod: paymentMethod,
           paymentType: 'TO_RITE_FOODS',
-          paymentMethod,
-          reference,
-          paidBy: 'Premium G Brands',
-          receivedBy: 'Rite Foods Ltd',
-          confirmedBy: userId
+          reference: finalReference,
+          notes: `Payment to Rite Foods - ${finalReference}`,
         }
       });
 
@@ -210,16 +234,18 @@ class DistributionPaymentService {
         where: { id: orderId },
         data: {
           paidToRiteFoods: true,
-          amountPaidToRiteFoods: amount,
           paymentDateToRiteFoods: new Date(),
-          riteFoodsOrderNumber,
-          riteFoodsInvoiceNumber,
           riteFoodsStatus: 'PAYMENT_SENT',
+          riteFoodsOrderNumber: finalRFOrderNumber,
+          riteFoodsInvoiceNumber: finalRFInvoiceNumber,
           status: 'SENT_TO_RITE_FOODS'
         },
         include: {
           customer: true,
-          location: true
+          location: true,
+          orderItems: {
+            include: { product: true }
+          }
         }
       });
 
@@ -227,19 +253,28 @@ class DistributionPaymentService {
       await tx.auditLog.create({
         data: {
           userId,
-          action: 'UPDATE',
+          action: 'PAY_RITE_FOODS',
           entity: 'DistributionOrder',
           entityId: orderId,
           newValues: {
-            paidToRiteFoods: true,
-            riteFoodsOrderNumber,
-            riteFoodsStatus: 'PAYMENT_SENT'
+            paymentReference: finalReference,
+            riteFoodsOrderNumber: finalRFOrderNumber,
+            riteFoodsInvoiceNumber: finalRFInvoiceNumber,
+            amount: paymentAmount
           }
         }
       });
 
-      return { payment, order: updatedOrder };
+      return {
+        order: updatedOrder,
+        payment,
+        paymentReference: finalReference,
+        riteFoodsOrderNumber: finalRFOrderNumber,
+        riteFoodsInvoiceNumber: finalRFInvoiceNumber
+      };
     });
+
+    return result;
   }
 
   // Update Rite Foods order status

@@ -184,7 +184,9 @@ model Location {
 }
 
 model DistributionOrder {
-    id         String @id @default(cuid())
+    id          String  @id @default(cuid())
+    orderNumber String? @unique @map("order_number") // ✅ Add this line
+
     customerId String @map("customer_id")
     locationId String @map("location_id")
 

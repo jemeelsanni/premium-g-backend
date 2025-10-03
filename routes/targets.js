@@ -586,4 +586,33 @@ router.post('/recalculate',
   })
 );
 
+// @route   DELETE /api/v1/targets/:id
+// @desc    Delete a distribution target
+// @access  Private (Admin only)
+router.delete('/:id',
+  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN']),
+  param('id').custom(validateCuid('target ID')),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+
+    const target = await prisma.distributionTarget.findUnique({
+      where: { id }
+    });
+
+    if (!target) {
+      throw new NotFoundError('Target not found');
+    }
+
+    // Delete target and its weekly performances (cascade)
+    await prisma.distributionTarget.delete({
+      where: { id }
+    });
+
+    res.json({
+      success: true,
+      message: 'Target deleted successfully'
+    });
+  })
+);
+
 module.exports = router;

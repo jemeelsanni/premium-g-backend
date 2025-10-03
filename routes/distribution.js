@@ -6,6 +6,10 @@ const { asyncHandler, ValidationError, BusinessError, NotFoundError } = require(
 const { authorizeModule, authorizeRole } = require('../middleware/auth');
 const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 const { validateCuid } = require('../utils/validators'); // ✅ ADDED
+const { generateDistributionOrderNumber } = require('../utils/orderNumberGenerator');
+
+const { Parser } = require('json2csv');
+const PDFDocument = require('pdfkit-table');
 
 const distributionPaymentRouter = require('./distributionPayment');
 const distributionCustomersRouter = require('./distribution-customers');
@@ -306,6 +310,9 @@ router.post('/orders',
 
     const { customerId, locationId, deliveryLocation, orderItems, remark } = req.body;
 
+    const orderNumber = await generateDistributionOrderNumber();
+
+
     console.log('📦 Received order data:', { customerId, locationId, deliveryLocation, orderItems });
 
     // Validate that at least deliveryLocation is provided
@@ -394,6 +401,7 @@ router.post('/orders',
       // Create the order with deliveryLocation field
       const createdOrder = await tx.distributionOrder.create({
         data: {
+          orderNumber,
           customerId,
           locationId: finalLocationId,
           deliveryLocation: deliveryLocation.trim(),  // ✅ Store the text field
@@ -1312,39 +1320,40 @@ router.get('/analytics/summary',
       .slice(0, 5);
 
     // Get recent orders with proper formatting and Decimal conversion
-    const recentOrders = allOrders
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, 10)
-      .map(order => {
-        // Handle Prisma Decimal type for finalAmount
-        let amount = 0;
-        if (order.finalAmount) {
-          if (typeof order.finalAmount === 'object' && order.finalAmount !== null) {
-            // Prisma Decimal object - convert to string then parse
-            amount = parseFloat(order.finalAmount.toString());
-          } else {
-            amount = parseFloat(order.finalAmount);
-          }
-        }
-        
-        // Ensure valid date
-        let dateStr;
-        try {
-          const dateObj = order.createdAt instanceof Date ? order.createdAt : new Date(order.createdAt);
-          dateStr = dateObj.toISOString();
-        } catch (e) {
-          dateStr = new Date().toISOString();
-        }
-        
-        return {
-          id: order.id,
-          orderNumber: order.id.slice(-8).toUpperCase(),
-          customer: order.customer?.name || 'Unknown',
-          amount: isNaN(amount) ? 0 : amount,
-          status: order.status || 'PENDING',
-          createdAt: dateStr
-        };
-      });
+    // Get recent orders with proper formatting and Decimal conversion
+const recentOrders = allOrders
+  .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  .slice(0, 3)
+  .map(order => {
+    // Handle Prisma Decimal type for finalAmount
+    let amount = 0;
+    if (order.finalAmount) {
+      if (typeof order.finalAmount === 'object' && order.finalAmount !== null) {
+        // Prisma Decimal object - convert to string then parse
+        amount = parseFloat(order.finalAmount.toString());
+      } else {
+        amount = parseFloat(order.finalAmount);
+      }
+    }
+    
+    // Ensure valid date
+    let dateStr;
+    try {
+      const dateObj = order.createdAt instanceof Date ? order.createdAt : new Date(order.createdAt);
+      dateStr = dateObj.toISOString();
+    } catch (e) {
+      dateStr = new Date().toISOString();
+    }
+    
+    return {
+      id: order.id,
+      orderNumber: order.id.slice(-8).toUpperCase(),
+      customer: order.customer?.name || 'Unknown',
+      finalAmount: isNaN(amount) ? 0 : amount, // ✅ Changed from 'amount' to 'finalAmount'
+      status: order.status || 'PENDING',
+      createdAt: dateStr
+    };
+  });
 
     console.log('Dashboard Analytics DEBUG:', {
       totalOrders: allOrders.length,
@@ -1870,6 +1879,337 @@ router.get('/locations/:id/pricing',
         products: productPricing
       }
     });
+  })
+);
+
+
+
+// @route   GET /api/v1/distribution/orders/export/csv
+// @desc    Export orders to CSV in tabular format
+// @access  Private (Distribution module access)
+router.get('/orders/export/csv',
+  authorizeModule('distribution'),
+  asyncHandler(async (req, res) => {
+    const { 
+      status, 
+      paymentStatus, 
+      riteFoodsStatus, 
+      deliveryStatus,
+      startDate, 
+      endDate 
+    } = req.query;
+
+    const where = {};
+    if (status) where.status = status;
+    if (paymentStatus) where.paymentStatus = paymentStatus;
+    if (riteFoodsStatus) where.riteFoodsStatus = riteFoodsStatus;
+    if (deliveryStatus) where.deliveryStatus = deliveryStatus;
+
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = new Date(endDate);
+    }
+
+    const orders = await prisma.distributionOrder.findMany({
+      where,
+      include: {
+        customer: true,
+        location: true,
+        orderItems: {
+          include: { product: true }
+        },
+        createdByUser: {
+          select: { username: true }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // Define CSV fields in order
+    const fields = [
+      { label: 'Order Number', value: 'orderNumber' },
+      { label: 'Customer Name', value: 'customerName' },
+      { label: 'Customer Phone', value: 'customerPhone' },
+      { label: 'Customer Email', value: 'customerEmail' },
+      { label: 'Customer Type', value: 'customerType' },
+      { label: 'Territory', value: 'territory' },
+      { label: 'Location', value: 'location' },
+      { label: 'Delivery Address', value: 'deliveryLocation' },
+      { label: 'Total Pallets', value: 'totalPallets' },
+      { label: 'Total Packs', value: 'totalPacks' },
+      { label: 'Original Amount (₦)', value: 'originalAmount' },
+      { label: 'Final Amount (₦)', value: 'finalAmount' },
+      { label: 'Amount Paid (₦)', value: 'amountPaid' },
+      { label: 'Balance (₦)', value: 'balance' },
+      { label: 'Payment Status', value: 'paymentStatus' },
+      { label: 'Payment Method', value: 'paymentMethod' },
+      { label: 'Payment Reference', value: 'paymentReference' },
+      { label: 'Paid to Rite Foods', value: 'paidToRiteFoods' },
+      { label: 'Rite Foods Order Number', value: 'riteFoodsOrderNumber' },
+      { label: 'Rite Foods Invoice Number', value: 'riteFoodsInvoiceNumber' },
+      { label: 'Rite Foods Status', value: 'riteFoodsStatus' },
+      { label: 'Delivery Status', value: 'deliveryStatus' },
+      { label: 'Transporter Company', value: 'transporterCompany' },
+      { label: 'Driver Number', value: 'driverNumber' },
+      { label: 'Truck Number', value: 'truckNumber' },
+      { label: 'Delivered Pallets', value: 'deliveredPallets' },
+      { label: 'Delivered Packs', value: 'deliveredPacks' },
+      { label: 'Order Status', value: 'orderStatus' },
+      { label: 'Created By', value: 'createdBy' },
+      { label: 'Created Date', value: 'createdAt' },
+      { label: 'Remark', value: 'remark' },
+      { label: 'Delivery Notes', value: 'deliveryNotes' }
+    ];
+
+    const csvData = orders.map(order => ({
+      orderNumber: order.orderNumber || `ORD-${order.id.slice(-8)}`,
+      customerName: order.customer?.name || 'N/A',
+      customerPhone: order.customer?.phone || 'N/A',
+      customerEmail: order.customer?.email || 'N/A',
+      customerType: order.customer?.customerType || 'N/A',
+      territory: order.customer?.territory || 'N/A',
+      location: order.location?.name || 'N/A',
+      deliveryLocation: order.deliveryLocation || 'N/A',
+      totalPallets: order.totalPallets,
+      totalPacks: order.totalPacks,
+      originalAmount: parseFloat(order.originalAmount).toFixed(2),
+      finalAmount: parseFloat(order.finalAmount).toFixed(2),
+      amountPaid: parseFloat(order.amountPaid).toFixed(2),
+      balance: parseFloat(order.balance).toFixed(2),
+      paymentStatus: order.paymentStatus,
+      paymentMethod: order.paymentMethod || 'N/A',
+      paymentReference: order.paymentReference || 'N/A',
+      paidToRiteFoods: order.paidToRiteFoods ? 'Yes' : 'No',
+      riteFoodsOrderNumber: order.riteFoodsOrderNumber || 'N/A',
+      riteFoodsInvoiceNumber: order.riteFoodsInvoiceNumber || 'N/A',
+      riteFoodsStatus: order.riteFoodsStatus,
+      deliveryStatus: order.deliveryStatus,
+      transporterCompany: order.transporterCompany || 'N/A',
+      driverNumber: order.driverNumber || 'N/A',
+      truckNumber: order.truckNumber || 'N/A',
+      deliveredPallets: order.deliveredPallets || 0,
+      deliveredPacks: order.deliveredPacks || 0,
+      orderStatus: order.status,
+      createdBy: order.createdByUser?.username || 'N/A',
+      createdAt: new Date(order.createdAt).toLocaleString(),
+      remark: order.remark || 'N/A',
+      deliveryNotes: order.deliveryNotes || 'N/A'
+    }));
+
+    const parser = new Parser({ fields });
+    const csv = parser.parse(csvData);
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename=distribution-orders-${new Date().toISOString().split('T')[0]}.csv`);
+    res.send('\uFEFF' + csv); // Add BOM for Excel compatibility
+  })
+);
+
+// @route   GET /api/v1/distribution/orders/export/pdf
+// @desc    Export orders to PDF - Professional table format
+// @access  Private (Distribution module access)
+router.get('/orders/export/pdf',
+  authorizeModule('distribution'),
+  asyncHandler(async (req, res) => {
+    const { 
+      status, 
+      paymentStatus, 
+      riteFoodsStatus, 
+      deliveryStatus,
+      startDate, 
+      endDate 
+    } = req.query;
+
+    const where = {};
+    if (status) where.status = status;
+    if (paymentStatus) where.paymentStatus = paymentStatus;
+    if (riteFoodsStatus) where.riteFoodsStatus = riteFoodsStatus;
+    if (deliveryStatus) where.deliveryStatus = deliveryStatus;
+
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = new Date(endDate);
+    }
+
+    const orders = await prisma.distributionOrder.findMany({
+      where,
+      include: {
+        customer: {
+          select: { name: true, phone: true, territory: true }
+        },
+        location: {
+          select: { name: true }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const doc = new PDFDocument({ 
+      margin: 30, 
+      size: 'A4', 
+      layout: 'landscape'
+    });
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=distribution-orders-${new Date().toISOString().split('T')[0]}.pdf`);
+    
+    doc.pipe(res);
+
+    // Header with better styling
+    doc.fontSize(20)
+       .font('Helvetica-Bold')
+       .fillColor('#1e40af')
+       .text('DISTRIBUTION ORDERS REPORT', { align: 'center' });
+    
+    doc.fontSize(10)
+       .font('Helvetica')
+       .fillColor('#666')
+       .text(`Generated on ${new Date().toLocaleString('en-NG', { 
+         dateStyle: 'full', 
+         timeStyle: 'short' 
+       })}`, { align: 'center' });
+    
+    doc.moveDown(1);
+
+    // Summary Stats Box
+    const totalRevenue = orders.reduce((sum, o) => sum + parseFloat(o.finalAmount), 0);
+    const totalPaid = orders.reduce((sum, o) => sum + parseFloat(o.amountPaid), 0);
+    const totalBalance = orders.reduce((sum, o) => sum + parseFloat(o.balance), 0);
+    const totalPacks = orders.reduce((sum, o) => sum + o.totalPacks, 0);
+    const totalPallets = orders.reduce((sum, o) => sum + o.totalPallets, 0);
+    
+    doc.fontSize(11)
+       .font('Helvetica-Bold')
+       .fillColor('#000')
+       .text('SUMMARY', 40, doc.y, { underline: true });
+    
+    doc.moveDown(0.3);
+    
+    doc.fontSize(10)
+       .font('Helvetica')
+       .fillColor('#000');
+    
+    const summaryY = doc.y;
+    const col1X = 40;
+    const col2X = 200;
+    const col3X = 380;
+    const col4X = 560;
+    
+    // Column 1
+    doc.text('Total Orders:', col1X, summaryY);
+    doc.font('Helvetica-Bold').text(orders.length.toString(), col1X, summaryY + 15);
+    
+    // Column 2
+    doc.font('Helvetica').text('Total Revenue:', col2X, summaryY);
+    doc.font('Helvetica-Bold').text(`NGN ${totalRevenue.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, col2X, summaryY + 15);
+    
+    // Column 3
+    doc.font('Helvetica').text('Total Pallets:', col3X, summaryY);
+    doc.font('Helvetica-Bold').text(totalPallets.toLocaleString(), col3X, summaryY + 15);
+    
+    // Column 4
+    doc.font('Helvetica').text('Total Packs:', col4X, summaryY);
+    doc.font('Helvetica-Bold').text(totalPacks.toLocaleString(), col4X, summaryY + 15);
+    
+    doc.moveDown(3);
+    
+    // Draw separator line
+    doc.moveTo(30, doc.y)
+       .lineTo(doc.page.width - 30, doc.y)
+       .strokeColor('#ddd')
+       .stroke();
+    
+    doc.moveDown(0.5);
+
+    // Main Orders Table with BLACK fonts
+    // Main Orders Table - Full width with NGN in headers
+const tableData = {
+  headers: [
+    'Order #',
+    'Customer',
+    'Location',
+    'Pallets',
+    'Packs',
+    'Amount (NGN)',
+    'Paid (NGN)',
+    'Balance (NGN)',
+    'Payment Status',
+    'RF Status',
+    'Delivery',
+    'Status'
+  ],
+  rows: orders.map(order => [
+    order.orderNumber || `ORD-${order.id.slice(-8)}`,
+    order.customer?.name || 'N/A',
+    order.location?.name || 'N/A',
+    order.totalPallets.toString(),
+    order.totalPacks.toLocaleString(),
+    parseFloat(order.finalAmount).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
+    parseFloat(order.amountPaid).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
+    parseFloat(order.balance).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
+    order.paymentStatus,
+    order.riteFoodsStatus,
+    order.deliveryStatus,
+    order.status
+  ])
+};
+
+// Calculate column sizes to fill full width
+const pageWidth = doc.page.width - 60; // Total usable width (30px margins on each side)
+const columnSizes = [60, 90, 70, 45, 50, 75, 75, 75, 75, 75, 70, 70]; // Adjusted for full width
+
+doc.table(tableData, {
+  prepareHeader: () => {
+    doc.font('Helvetica-Bold').fontSize(9).fillColor('#000');
+  },
+  prepareRow: (row, indexColumn, indexRow, rectRow, rectCell) => {
+    doc.font('Helvetica').fontSize(8).fillColor('#000');
+  },
+  padding: 6,
+  columnSpacing: 4,
+  columnsSize: columnSizes,
+  x: 30,
+  width: doc.page.width,
+  headerRows: 1,
+  divider: {
+    header: { disabled: false, width: 1.5, opacity: 1, color: '#000' },
+    horizontal: { disabled: false, width: 0.5, opacity: 1, color: '#000' }
+  }
+});
+
+    doc.moveDown(1);
+
+    // Footer with totals
+    doc.fontSize(10)
+       .font('Helvetica-Bold')
+       .fillColor('#000')
+       .text('TOTALS', 40, doc.y);
+    
+    doc.moveDown(0.3);
+    
+    doc.fontSize(9)
+       .font('Helvetica')
+       .fillColor('#000');
+    
+    const footerY = doc.y;
+    doc.text(`Revenue: NGN ${totalRevenue.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`, 40, footerY);
+    doc.text(`Paid: NGN ${totalPaid.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`, 250, footerY);
+    doc.text(`Balance: NGN ${totalBalance.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`, 460, footerY);
+
+    // Page footer
+    doc.fontSize(8)
+       .font('Helvetica')
+       .fillColor('#666')
+       .text(
+         `Premium G Enterprise - Distribution Report | ${orders.length} Orders`,
+         30,
+         doc.page.height - 40,
+         { align: 'center', width: doc.page.width - 60 }
+       );
+
+    doc.end();
   })
 );
 

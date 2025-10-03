@@ -140,7 +140,8 @@ router.get('/dashboard',
       });
 
       const totalOrders = orders.length;
-      const totalRevenue = orders.reduce((sum, order) => sum + order.totalAmount, 0);
+      // ✅ FIX: Use finalAmount instead of totalAmount
+      const totalRevenue = orders.reduce((sum, order) => sum + parseFloat(order.finalAmount || 0), 0);
       const totalPacks = orders.reduce((sum, order) => 
         sum + order.orderItems.reduce((itemSum, item) => itemSum + item.packs, 0), 0
       );
@@ -155,7 +156,7 @@ router.get('/dashboard',
             id: order.id,
             orderNumber: order.orderNumber || `ORD-${order.id.slice(-6)}`,
             customerName: order.customer?.name || 'Unknown',
-            totalAmount: order.totalAmount,
+            totalAmount: parseFloat(order.finalAmount || 0), // ✅ FIX: Use finalAmount
             status: order.status,
             createdAt: order.createdAt
           }))

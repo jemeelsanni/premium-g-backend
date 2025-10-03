@@ -57,6 +57,7 @@ app.use((req, res, next) => {
 });
 
 // Helper function to recursively convert Prisma Decimals
+// Helper function to recursively convert Prisma Decimals
 function convertPrismaDecimals(obj) {
   if (obj === null || obj === undefined) {
     return obj;
@@ -65,6 +66,11 @@ function convertPrismaDecimals(obj) {
   // Check if it's a Prisma Decimal
   if (obj instanceof Prisma.Decimal) {
     return parseFloat(obj.toString());
+  }
+  
+  // ✅ ADD THIS: Preserve Date objects
+  if (obj instanceof Date) {
+    return obj;
   }
   
   // Handle arrays

@@ -7,6 +7,11 @@ const { asyncHandler } = require('../middleware/errorHandler');
 const { authorizeModule } = require('../middleware/auth');
 const { ValidationError } = require('../middleware/errorHandler');
 const { PrismaClient } = require('@prisma/client');  // ✅ ADD THIS LINE
+const {
+  generatePaymentReference,
+  generateRiteFoodsOrderNumber,
+  generateRiteFoodsInvoiceNumber
+} = require('../utils/orderNumberGenerator');
 
 
 
@@ -124,7 +129,7 @@ router.post('/payments/rite-foods',
     body('orderId').custom(validateCuid('order ID')),
     body('amount').isFloat({ min: 0.01 }).withMessage('Amount must be greater than 0'),
     body('paymentMethod').isIn(['BANK_TRANSFER', 'CHECK']),
-    body('reference').trim().notEmpty().withMessage('Payment reference is required'),
+    body('reference').optional().trim(), // ✅ Make optional
     body('riteFoodsOrderNumber').optional().trim(),
     body('riteFoodsInvoiceNumber').optional().trim()
   ],
@@ -147,9 +152,9 @@ router.post('/payments/rite-foods',
       orderId,
       amount,
       paymentMethod,
-      reference,
-      riteFoodsOrderNumber,
-      riteFoodsInvoiceNumber,
+      reference, // Can be undefined, will be auto-generated
+      riteFoodsOrderNumber, // Can be undefined, will be auto-generated
+      riteFoodsInvoiceNumber, // Can be undefined, will be auto-generated
       userId: req.user.id
     });
 
