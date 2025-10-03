@@ -822,8 +822,17 @@ router.post('/orders/:id/price-adjustments',
 
     // Get existing order
     const order = await prisma.distributionOrder.findUnique({
-      where: { id: orderId }
-    });
+    where: { id },
+    include: {
+        customer: true,
+        location: true,
+        orderItems: { include: { product: true } },
+        priceAdjustments: { 
+            orderBy: { createdAt: 'desc' },
+            include: { adjuster: true } // Optional: include who made the adjustment
+        }
+    }
+});
 
     if (!order) {
       throw new NotFoundError('Order not found');
