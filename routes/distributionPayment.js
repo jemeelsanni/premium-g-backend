@@ -6,6 +6,12 @@ const distributionDeliveryService = require('../services/distributionDeliverySer
 const { asyncHandler } = require('../middleware/errorHandler');
 const { authorizeModule } = require('../middleware/auth');
 const { ValidationError } = require('../middleware/errorHandler');
+const { PrismaClient } = require('@prisma/client');  // ✅ ADD THIS LINE
+
+
+
+const prisma = new PrismaClient();  // ✅ ADD THIS LINE
+
 
 // Helper for validation
 const validateCuid = (field) => {

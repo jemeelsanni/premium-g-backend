@@ -203,31 +203,31 @@ class DistributionDeliveryService {
         });
 
         // Update customer's average order value
-        const customerOrders = await tx.distributionOrder.count({
-          where: {
-            customerId: order.customerId,
-            status: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] }
-          }
-        });
+      //   const customerOrders = await tx.distributionOrder.count({
+      //     where: {
+      //       customerId: order.customerId,
+      //       status: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] }
+      //     }
+      //   });
 
-        const customerTotalSpent = await tx.distributionOrder.aggregate({
-          where: {
-            customerId: order.customerId,
-            status: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] }
-          },
-          _sum: { finalAmount: true }
-        });
+      //   const customerTotalSpent = await tx.distributionOrder.aggregate({
+      //     where: {
+      //       customerId: order.customerId,
+      //       status: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] }
+      //     },
+      //     _sum: { finalAmount: true }
+      //   });
 
-        const avgOrderValue = customerOrders > 0 
-          ? parseFloat(customerTotalSpent._sum.finalAmount) / customerOrders 
-          : 0;
+      //   const avgOrderValue = customerOrders > 0 
+      //     ? parseFloat(customerTotalSpent._sum.finalAmount) / customerOrders 
+      //     : 0;
 
-        await tx.customer.update({
-          where: { id: order.customerId },
-          data: {
-            averageOrderValue: avgOrderValue
-          }
-        });
+      //   await tx.customer.update({
+      //     where: { id: order.customerId },
+      //     data: {
+      //       averageOrderValue: avgOrderValue
+      //     }
+      //   });
       }
 
       // Audit log
