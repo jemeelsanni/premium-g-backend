@@ -1199,35 +1199,97 @@ router.post('/orders/bulk/send-to-ritefoods',
 router.get('/analytics/summary', 
   authorizeModule('distribution'),
   asyncHandler(async (req, res) => {
-    const { startDate, endDate, period = 'monthly' } = req.query;
+    const { startDate, endDate } = req.query;
+    
+    // Default to current month if no dates provided
+    const now = new Date();
+    const defaultStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const defaultEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
     
     const dateFilter = {};
-    if (startDate) dateFilter.gte = new Date(startDate);
-    if (endDate) dateFilter.lte = new Date(endDate);
+    if (startDate) {
+      dateFilter.gte = new Date(startDate);
+    } else {
+      dateFilter.gte = defaultStart;
+    }
+    
+    if (endDate) {
+      dateFilter.lte = new Date(endDate);
+    } else {
+      dateFilter.lte = defaultEnd;
+    }
 
-    // Get pure distribution analytics
-    const orders = await prisma.distributionOrder.findMany({
+    // Get all orders for the period
+    const allOrders = await prisma.distributionOrder.findMany({
       where: {
-        createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined,
-        status: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] }
+        createdAt: dateFilter
       },
       include: {
-        orderItems: { include: { product: true } }
+        customer: { 
+          select: { 
+            id: true, 
+            name: true 
+          } 
+        },
+        location: { 
+          select: { 
+            name: true 
+          } 
+        },
+        orderItems: { 
+          include: { 
+            product: true 
+          } 
+        }
       }
     });
 
-    // Calculate standalone distribution metrics
+    // Calculate metrics from ALL orders
     let totalRevenue = 0;
     let totalCOGS = 0;
     let totalPacks = 0;
     let totalPallets = 0;
+    const customerIds = new Set();
+    const customerStats = {};
+    const locationStats = {};
 
-    for (const order of orders) {
-      totalRevenue += parseFloat(order.finalAmount);
+    for (const order of allOrders) {
+      // Use finalAmount which is the correct field in the schema
+      // Convert Decimal to number explicitly
+      const orderRevenue = typeof order.finalAmount === 'object' && order.finalAmount !== null
+        ? parseFloat(order.finalAmount.toString())
+        : parseFloat(order.finalAmount);
+      
+      totalRevenue += orderRevenue;
+      
+      // Add the totalPacks from the order (already calculated and stored)
       totalPacks += order.totalPacks;
       totalPallets += order.totalPallets;
       
-      // Calculate COGS for this order
+      // Track unique customers
+      if (order.customer?.id) {
+        customerIds.add(order.customer.id);
+      }
+      
+      // Customer analytics
+      const customerName = order.customer?.name || 'Unknown';
+      if (!customerStats[customerName]) {
+        customerStats[customerName] = { orders: 0, revenue: 0, packs: 0 };
+      }
+      customerStats[customerName].orders += 1;
+      customerStats[customerName].revenue += orderRevenue;
+      customerStats[customerName].packs += order.totalPacks;
+
+      // Location analytics
+      const locationName = order.location?.name || 'Unknown';
+      if (!locationStats[locationName]) {
+        locationStats[locationName] = { orders: 0, revenue: 0, packs: 0 };
+      }
+      locationStats[locationName].orders += 1;
+      locationStats[locationName].revenue += orderRevenue;
+      locationStats[locationName].packs += order.totalPacks;
+      
+      // Calculate COGS for profit analysis
       for (const item of order.orderItems) {
         const itemPacks = (item.pallets * item.product.packsPerPallet) + item.packs;
         totalCOGS += itemPacks * parseFloat(item.product.costPerPack || 0);
@@ -1236,20 +1298,97 @@ router.get('/analytics/summary',
 
     const grossProfit = totalRevenue - totalCOGS;
     const profitMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+    const averageOrderValue = allOrders.length > 0 ? totalRevenue / allOrders.length : 0;
+
+    // Get top customers and locations
+    const topCustomers = Object.entries(customerStats)
+      .map(([name, stats]) => ({ name, ...stats }))
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 5);
+
+    const topLocations = Object.entries(locationStats)
+      .map(([name, stats]) => ({ name, ...stats }))
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 5);
+
+    // Get recent orders with proper formatting and Decimal conversion
+    const recentOrders = allOrders
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 10)
+      .map(order => {
+        // Handle Prisma Decimal type for finalAmount
+        let amount = 0;
+        if (order.finalAmount) {
+          if (typeof order.finalAmount === 'object' && order.finalAmount !== null) {
+            // Prisma Decimal object - convert to string then parse
+            amount = parseFloat(order.finalAmount.toString());
+          } else {
+            amount = parseFloat(order.finalAmount);
+          }
+        }
+        
+        // Ensure valid date
+        let dateStr;
+        try {
+          const dateObj = order.createdAt instanceof Date ? order.createdAt : new Date(order.createdAt);
+          dateStr = dateObj.toISOString();
+        } catch (e) {
+          dateStr = new Date().toISOString();
+        }
+        
+        return {
+          id: order.id,
+          orderNumber: order.id.slice(-8).toUpperCase(),
+          customer: order.customer?.name || 'Unknown',
+          amount: isNaN(amount) ? 0 : amount,
+          status: order.status || 'PENDING',
+          createdAt: dateStr
+        };
+      });
+
+    console.log('Dashboard Analytics DEBUG:', {
+      totalOrders: allOrders.length,
+      totalRevenue,
+      totalPacks,
+      activeCustomers: customerIds.size,
+      sampleOrder: recentOrders[0],
+      sampleOrderRaw: allOrders[0] ? {
+        id: allOrders[0].id,
+        finalAmount: allOrders[0].finalAmount,
+        finalAmountType: typeof allOrders[0].finalAmount,
+        createdAt: allOrders[0].createdAt,
+        createdAtType: typeof allOrders[0].createdAt
+      } : null
+    });
 
     res.json({
       success: true,
       data: {
+        // Dashboard summary stats (top-level for easy access)
+        totalRevenue: parseFloat(totalRevenue.toFixed(2)),
+        totalOrders: allOrders.length,
+        totalPacks,
+        activeCustomers: customerIds.size,
+        recentOrders,
+        
+        // Additional detailed analytics
         summary: {
           totalRevenue: parseFloat(totalRevenue.toFixed(2)),
           totalCOGS: parseFloat(totalCOGS.toFixed(2)),
           grossProfit: parseFloat(grossProfit.toFixed(2)),
           profitMargin: parseFloat(profitMargin.toFixed(2)),
-          totalOrders: orders.length,
+          totalOrders: allOrders.length,
           totalPacks,
-          totalPallets
+          totalPallets,
+          averageOrderValue: parseFloat(averageOrderValue.toFixed(2)),
+          activeCustomers: customerIds.size
         },
-        period: { startDate, endDate }
+        topCustomers,
+        topLocations,
+        period: { 
+          startDate: dateFilter.gte, 
+          endDate: dateFilter.lte 
+        }
       }
     });
   })

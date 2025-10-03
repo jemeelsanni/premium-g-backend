@@ -44,6 +44,48 @@ app.use(cors({
   credentials: true
 }));
 
+app.use((req, res, next) => {
+  const originalJson = res.json;
+  
+  res.json = function(data) {
+    // Convert any Prisma Decimals in the response
+    const convertedData = convertPrismaDecimals(data);
+    return originalJson.call(this, convertedData);
+  };
+  
+  next();
+});
+
+// Helper function to recursively convert Prisma Decimals
+function convertPrismaDecimals(obj) {
+  if (obj === null || obj === undefined) {
+    return obj;
+  }
+  
+  // Check if it's a Prisma Decimal
+  if (obj instanceof Prisma.Decimal) {
+    return parseFloat(obj.toString());
+  }
+  
+  // Handle arrays
+  if (Array.isArray(obj)) {
+    return obj.map(item => convertPrismaDecimals(item));
+  }
+  
+  // Handle objects
+  if (typeof obj === 'object') {
+    const converted = {};
+    for (const key in obj) {
+      if (obj.hasOwnProperty(key)) {
+        converted[key] = convertPrismaDecimals(obj[key]);
+      }
+    }
+    return converted;
+  }
+  
+  return obj;
+}
+
 // Rate limiting - more restrictive for production
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
