@@ -528,6 +528,9 @@ router.get('/orders', asyncHandler(async (req, res) => {
     page = 1,
     limit = 20,
     status,
+    paymentStatus,        // ✅ ADD THIS
+    riteFoodsStatus,      // ✅ ADD THIS
+    deliveryStatus,       // ✅ ADD THIS
     customerId,
     locationId,
     startDate,
@@ -547,6 +550,9 @@ router.get('/orders', asyncHandler(async (req, res) => {
   }
 
   if (status) where.status = status;
+  if (paymentStatus) where.paymentStatus = paymentStatus;           // ✅ ADD THIS
+  if (riteFoodsStatus) where.riteFoodsStatus = riteFoodsStatus;     // ✅ ADD THIS
+  if (deliveryStatus) where.deliveryStatus = deliveryStatus;        // ✅ ADD THIS
   if (customerId) where.customerId = customerId;
   if (locationId) where.locationId = locationId;
 
@@ -808,7 +814,7 @@ router.put('/orders/:id',
 // @desc    Create price adjustment for order
 // @access  Private (Admin only)
 router.post('/orders/:id/price-adjustments',
-  param('id').custom(validateCuid('order ID')), // ✅ UPDATED
+  param('id').custom(validateCuid('order ID')),
   authorizeModule('distribution', 'admin'),
   priceAdjustmentValidation,
   asyncHandler(async (req, res) => {
@@ -818,21 +824,21 @@ router.post('/orders/:id/price-adjustments',
     }
 
     const { id: orderId } = req.params;
-    const { adjustedAmount, adjustmentType, reason, locationFuelCost } = req.body;
+    const { adjustedAmount, adjustmentType, reason, riteFoodsInvoiceReference } = req.body;
 
-    // Get existing order
+    // Get existing order - FIX: Use 'orderId' not 'id'
     const order = await prisma.distributionOrder.findUnique({
-    where: { id },
-    include: {
+      where: { id: orderId },  // ✅ FIXED: Use orderId
+      include: {
         customer: true,
         location: true,
         orderItems: { include: { product: true } },
         priceAdjustments: { 
-            orderBy: { createdAt: 'desc' },
-            include: { adjuster: true } // Optional: include who made the adjustment
+          orderBy: { createdAt: 'desc' },
+          include: { adjuster: true }
         }
-    }
-});
+      }
+    });
 
     if (!order) {
       throw new NotFoundError('Order not found');
@@ -855,7 +861,8 @@ router.post('/orders/:id/price-adjustments',
           adjustedAmount: parseFloat(adjustedAmount),
           adjustmentType,
           reason,
-          locationFuelCost: locationFuelCost ? parseFloat(locationFuelCost) : null
+          riteFoodsInvoiceReference: riteFoodsInvoiceReference || null,
+          adjustedBy: req.user.id  // ✅ ADDED: Required field from schema
         }
       });
 
@@ -876,7 +883,10 @@ router.post('/orders/:id/price-adjustments',
           customer: true,
           location: true,
           orderItems: { include: { product: true } },
-          priceAdjustments: { orderBy: { createdAt: 'desc' } }
+          priceAdjustments: { 
+            orderBy: { createdAt: 'desc' },
+            include: { adjuster: true }
+          }
         }
       });
 
@@ -2016,33 +2026,54 @@ router.get('/orders/export/csv',
 );
 
 // @route   GET /api/v1/distribution/orders/export/pdf
-// @desc    Export orders to PDF - Professional table format
+// @desc    Export orders to PDF with flexible options
 // @access  Private (Distribution module access)
 router.get('/orders/export/pdf',
   authorizeModule('distribution'),
+  [
+    query('startDate').optional().isISO8601().withMessage('Invalid start date'),
+    query('endDate').optional().isISO8601().withMessage('Invalid end date'),
+    query('limit').optional().isInt({ min: 1, max: 1000 }).withMessage('Limit must be between 1 and 1000'),
+    query('all').optional().isBoolean().withMessage('All must be boolean'),
+    // Existing filters
+    query('status').optional(),
+    query('paymentStatus').optional(),
+    query('riteFoodsStatus').optional(),
+    query('deliveryStatus').optional()
+  ],
   asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid query parameters', errors.array());
+    }
+
     const { 
       status, 
       paymentStatus, 
       riteFoodsStatus, 
       deliveryStatus,
       startDate, 
-      endDate 
+      endDate,
+      limit,
+      all
     } = req.query;
 
+    // Build where clause
     const where = {};
     if (status) where.status = status;
     if (paymentStatus) where.paymentStatus = paymentStatus;
     if (riteFoodsStatus) where.riteFoodsStatus = riteFoodsStatus;
     if (deliveryStatus) where.deliveryStatus = deliveryStatus;
 
+    // Date range handling
     if (startDate || endDate) {
       where.createdAt = {};
       if (startDate) where.createdAt.gte = new Date(startDate);
       if (endDate) where.createdAt.lte = new Date(endDate);
     }
 
-    const orders = await prisma.distributionOrder.findMany({
+    // Query options
+    const queryOptions = {
       where,
       include: {
         customer: {
@@ -2053,7 +2084,17 @@ router.get('/orders/export/pdf',
         }
       },
       orderBy: { createdAt: 'desc' }
-    });
+    };
+
+    // Apply limit if specified (and no date range)
+    if (limit && !startDate && !endDate && all !== 'true') {
+      queryOptions.take = parseInt(limit);
+    } else if (!startDate && !endDate && all !== 'true') {
+      // Default: last 100 orders
+      queryOptions.take = 100;
+    }
+
+    const orders = await prisma.distributionOrder.findMany(queryOptions);
 
     const doc = new PDFDocument({ 
       margin: 30, 
@@ -2061,8 +2102,20 @@ router.get('/orders/export/pdf',
       layout: 'landscape'
     });
     
+    // Generate filename based on export type
+    let filename = 'distribution-orders';
+    if (startDate && endDate) {
+      filename = `orders-${startDate}-to-${endDate}.pdf`;
+    } else if (limit) {
+      filename = `orders-last-${limit}.pdf`;
+    } else if (all === 'true') {
+      filename = `orders-all-${new Date().toISOString().split('T')[0]}.pdf`;
+    } else {
+      filename = `distribution-orders-${new Date().toISOString().split('T')[0]}.pdf`;
+    }
+    
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=distribution-orders-${new Date().toISOString().split('T')[0]}.pdf`);
+    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
     
     doc.pipe(res);
 
@@ -2079,6 +2132,20 @@ router.get('/orders/export/pdf',
          dateStyle: 'full', 
          timeStyle: 'short' 
        })}`, { align: 'center' });
+    
+    // Add export criteria info
+    doc.fontSize(9)
+       .fillColor('#666');
+    
+    if (startDate && endDate) {
+      doc.text(`Period: ${startDate} to ${endDate}`, { align: 'center' });
+    } else if (limit) {
+      doc.text(`Last ${limit} Orders`, { align: 'center' });
+    } else if (all === 'true') {
+      doc.text(`All Orders (${orders.length} total)`, { align: 'center' });
+    } else {
+      doc.text(`Last 100 Orders`, { align: 'center' });
+    }
     
     doc.moveDown(1);
 
@@ -2132,61 +2199,59 @@ router.get('/orders/export/pdf',
     
     doc.moveDown(0.5);
 
-    // Main Orders Table with BLACK fonts
-    // Main Orders Table - Full width with NGN in headers
-const tableData = {
-  headers: [
-    'Order #',
-    'Customer',
-    'Location',
-    'Pallets',
-    'Packs',
-    'Amount (NGN)',
-    'Paid (NGN)',
-    'Balance (NGN)',
-    'Payment Status',
-    'RF Status',
-    'Delivery',
-    'Status'
-  ],
-  rows: orders.map(order => [
-    order.orderNumber || `ORD-${order.id.slice(-8)}`,
-    order.customer?.name || 'N/A',
-    order.location?.name || 'N/A',
-    order.totalPallets.toString(),
-    order.totalPacks.toLocaleString(),
-    parseFloat(order.finalAmount).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
-    parseFloat(order.amountPaid).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
-    parseFloat(order.balance).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
-    order.paymentStatus,
-    order.riteFoodsStatus,
-    order.deliveryStatus,
-    order.status
-  ])
-};
+    // Main Orders Table with all headers
+    const tableData = {
+      headers: [
+        'Order #',
+        'Customer',
+        'Location',
+        'Pallets',
+        'Packs',
+        'Amount (NGN)',
+        'Paid (NGN)',
+        'Balance (NGN)',
+        'Payment Status',
+        'RF Status',
+        'Delivery',
+        'Status'
+      ],
+      rows: orders.map(order => [
+        order.orderNumber || `ORD-${order.id.slice(-8)}`,
+        order.customer?.name || 'N/A',
+        order.location?.name || 'N/A',
+        order.totalPallets.toString(),
+        order.totalPacks.toLocaleString(),
+        parseFloat(order.finalAmount).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
+        parseFloat(order.amountPaid).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
+        parseFloat(order.balance).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
+        order.paymentStatus || 'N/A',
+        order.riteFoodsStatus || 'N/A',
+        order.deliveryStatus || 'N/A',
+        order.status
+      ])
+    };
 
-// Calculate column sizes to fill full width
-const pageWidth = doc.page.width - 60; // Total usable width (30px margins on each side)
-const columnSizes = [60, 90, 70, 45, 50, 75, 75, 75, 75, 75, 70, 70]; // Adjusted for full width
+    // Calculate column sizes to fill full width
+    const columnSizes = [60, 90, 70, 45, 50, 75, 75, 75, 75, 75, 70, 70];
 
-doc.table(tableData, {
-  prepareHeader: () => {
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#000');
-  },
-  prepareRow: (row, indexColumn, indexRow, rectRow, rectCell) => {
-    doc.font('Helvetica').fontSize(8).fillColor('#000');
-  },
-  padding: 6,
-  columnSpacing: 4,
-  columnsSize: columnSizes,
-  x: 30,
-  width: doc.page.width,
-  headerRows: 1,
-  divider: {
-    header: { disabled: false, width: 1.5, opacity: 1, color: '#000' },
-    horizontal: { disabled: false, width: 0.5, opacity: 1, color: '#000' }
-  }
-});
+    doc.table(tableData, {
+      prepareHeader: () => {
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#000');
+      },
+      prepareRow: (row, indexColumn, indexRow, rectRow, rectCell) => {
+        doc.font('Helvetica').fontSize(8).fillColor('#000');
+      },
+      padding: 6,
+      columnSpacing: 4,
+      columnsSize: columnSizes,
+      x: 30,
+      width: doc.page.width - 60,
+      headerRows: 1,
+      divider: {
+        header: { disabled: false, width: 1.5, opacity: 1, color: '#000' },
+        horizontal: { disabled: false, width: 0.5, opacity: 1, color: '#000' }
+      }
+    });
 
     doc.moveDown(1);
 
@@ -2216,6 +2281,365 @@ doc.table(tableData, {
          30,
          doc.page.height - 40,
          { align: 'center', width: doc.page.width - 60 }
+       );
+
+    doc.end();
+  })
+);
+
+
+// @route   GET /api/v1/distribution/orders/:id/export/pdf
+// @desc    Export single order as beautifully formatted PDF
+// @access  Private (Distribution module access)
+router.get('/orders/:id/export/pdf',
+  param('id').custom(validateCuid('order ID')),
+  authorizeModule('distribution'),
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
+    const { id } = req.params;
+
+    const order = await prisma.distributionOrder.findUnique({
+      where: { id },
+      include: {
+        customer: true,
+        location: true,
+        orderItems: {
+          include: { product: true }
+        },
+        priceAdjustments: {
+          orderBy: { createdAt: 'desc' },
+          include: { adjuster: true }
+        }
+      }
+    });
+
+    if (!order) {
+      throw new NotFoundError('Order not found');
+    }
+
+    const doc = new PDFDocument({ 
+      margin: 50, 
+      size: 'A4'
+    });
+    
+    const filename = `order-${order.orderNumber || order.id.slice(-8)}-${new Date().toISOString().split('T')[0]}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+    
+    doc.pipe(res);
+
+    // ===== HEADER SECTION =====
+    doc.rect(0, 0, doc.page.width, 120)
+       .fill('#1e40af');
+
+    doc.fontSize(28)
+       .font('Helvetica-Bold')
+       .fillColor('#ffffff')
+       .text('PREMIUM G ENTERPRISE', 50, 30);
+    
+    doc.fontSize(11)
+       .font('Helvetica')
+       .fillColor('#e0e7ff')
+       .text('Distribution Order Invoice', 50, 65);
+    
+    // Order number and date on right
+    doc.fontSize(10)
+       .fillColor('#ffffff')
+       .text(`Order #: ${order.orderNumber || `ORD-${order.id.slice(-8)}`}`, 400, 40, { align: 'right' });
+    
+    doc.fontSize(9)
+       .fillColor('#e0e7ff')
+       .text(`Date: ${new Date(order.createdAt).toLocaleDateString('en-NG', { 
+         year: 'numeric', 
+         month: 'long', 
+         day: 'numeric' 
+       })}`, 400, 60, { align: 'right' });
+
+    // Status badge
+    const statusColor = 
+      order.status === 'DELIVERED' ? '#10b981' :
+      order.status === 'PROCESSING' || order.status === 'PROCESSING_BY_RFL' ? '#3b82f6' :
+      order.status === 'PENDING' ? '#f59e0b' : '#6b7280';
+    
+    doc.rect(400, 80, 145, 25)
+       .fill(statusColor);
+    
+    doc.fontSize(11)
+       .font('Helvetica-Bold')
+       .fillColor('#ffffff')
+       .text(order.status, 400, 88, { width: 145, align: 'center' });
+
+    doc.fillColor('#000000'); // Reset to black
+
+    // ===== CUSTOMER & DELIVERY INFO =====
+    let yPos = 150;
+
+    // Customer box
+    doc.fontSize(12)
+       .font('Helvetica-Bold')
+       .fillColor('#1e40af')
+       .text('CUSTOMER INFORMATION', 50, yPos);
+    
+    doc.rect(50, yPos + 20, 230, 90)
+       .strokeColor('#e5e7eb')
+       .stroke();
+    
+    yPos += 30;
+    doc.fontSize(10)
+       .font('Helvetica-Bold')
+       .fillColor('#000')
+       .text(order.customer?.name || 'N/A', 60, yPos);
+    
+    yPos += 20;
+    doc.fontSize(9)
+       .font('Helvetica')
+       .fillColor('#4b5563');
+    
+    if (order.customer?.phone) {
+      doc.text(`Phone: ${order.customer.phone}`, 60, yPos);
+      yPos += 15;
+    }
+    
+    if (order.customer?.email) {
+      doc.text(`Email: ${order.customer.email}`, 60, yPos);
+      yPos += 15;
+    }
+    
+    if (order.customer?.territory) {
+      doc.text(`Territory: ${order.customer.territory}`, 60, yPos);
+    }
+
+    // Delivery box
+    yPos = 150;
+    doc.fontSize(12)
+       .font('Helvetica-Bold')
+       .fillColor('#1e40af')
+       .text('DELIVERY INFORMATION', 315, yPos);
+    
+    doc.rect(315, yPos + 20, 230, 90)
+       .strokeColor('#e5e7eb')
+       .stroke();
+    
+    yPos += 30;
+    doc.fontSize(10)
+       .font('Helvetica-Bold')
+       .fillColor('#000')
+       .text(order.location?.name || 'N/A', 325, yPos);
+    
+    yPos += 20;
+    doc.fontSize(9)
+       .font('Helvetica')
+       .fillColor('#4b5563')
+       .text(`Address: ${order.deliveryLocation || 'N/A'}`, 325, yPos, { width: 210 });
+
+    // ===== ORDER ITEMS TABLE =====
+    yPos = 280;
+    
+    doc.fontSize(14)
+       .font('Helvetica-Bold')
+       .fillColor('#1e40af')
+       .text('ORDER ITEMS', 50, yPos);
+    
+    yPos += 30;
+
+    // Table header
+    doc.rect(50, yPos, 495, 30)
+       .fill('#f3f4f6');
+    
+    doc.fontSize(9)
+       .font('Helvetica-Bold')
+       .fillColor('#374151');
+    
+    doc.text('PRODUCT', 60, yPos + 10);
+    doc.text('PALLETS', 280, yPos + 10);
+    doc.text('PACKS', 350, yPos + 10);
+    doc.text('AMOUNT (NGN)', 430, yPos + 10, { align: 'right' });
+
+    yPos += 30;
+    doc.strokeColor('#e5e7eb').moveTo(50, yPos).lineTo(545, yPos).stroke();
+
+    // Table rows
+    doc.font('Helvetica').fillColor('#000');
+    
+    order.orderItems.forEach((item, index) => {
+      yPos += 5;
+      
+      if (yPos > 700) {
+        doc.addPage();
+        yPos = 50;
+      }
+
+      const rowBg = index % 2 === 0 ? '#ffffff' : '#f9fafb';
+      doc.rect(50, yPos, 495, 35).fill(rowBg);
+
+      doc.fontSize(9)
+         .fillColor('#000')
+         .text(item.product?.name || 'N/A', 60, yPos + 12, { width: 200 });
+      
+      doc.text(item.pallets.toString(), 280, yPos + 12);
+      doc.text(item.packs.toLocaleString(), 350, yPos + 12);
+      doc.text(parseFloat(item.amount).toLocaleString('en-NG', { 
+        minimumFractionDigits: 2 
+      }), 430, yPos + 12, { align: 'right' });
+
+      yPos += 35;
+      doc.strokeColor('#e5e7eb').moveTo(50, yPos).lineTo(545, yPos).stroke();
+    });
+
+    // ===== PRICE ADJUSTMENTS (if any) =====
+    if (order.priceAdjustments && order.priceAdjustments.length > 0) {
+      yPos += 20;
+      
+      doc.fontSize(12)
+         .font('Helvetica-Bold')
+         .fillColor('#f59e0b')
+         .text('PRICE ADJUSTMENTS', 50, yPos);
+      
+      yPos += 20;
+
+      order.priceAdjustments.forEach((adjustment) => {
+        doc.rect(50, yPos, 495, 60)
+           .fill('#fef3c7')
+           .strokeColor('#f59e0b')
+           .stroke();
+        
+        yPos += 10;
+        
+        doc.fontSize(9)
+           .font('Helvetica')
+           .fillColor('#92400e');
+        
+        doc.text(`Original Amount: NGN ${parseFloat(adjustment.originalAmount).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`, 60, yPos);
+        doc.text(`Adjusted Amount: NGN ${parseFloat(adjustment.adjustedAmount).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`, 300, yPos);
+        
+        yPos += 15;
+        doc.text(`Reason: ${adjustment.reason}`, 60, yPos, { width: 470 });
+        
+        yPos += 15;
+        doc.text(`Date: ${new Date(adjustment.createdAt).toLocaleDateString('en-NG')}`, 60, yPos);
+        
+        yPos += 25;
+      });
+    }
+
+    // ===== TOTALS SECTION =====
+    yPos += 30;
+    
+    if (yPos > 650) {
+      doc.addPage();
+      yPos = 50;
+    }
+
+    const totalsX = 350;
+    const totalsWidth = 195;
+
+    // Subtotal
+    doc.rect(totalsX, yPos, totalsWidth, 25)
+       .fill('#f9fafb');
+    
+    doc.fontSize(10)
+       .font('Helvetica')
+       .fillColor('#4b5563')
+       .text('Subtotal:', totalsX + 10, yPos + 8);
+    
+    doc.font('Helvetica-Bold')
+       .fillColor('#000')
+       .text(
+         `NGN ${parseFloat(order.finalAmount).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`, 
+         totalsX + 10, 
+         yPos + 8, 
+         { width: totalsWidth - 20, align: 'right' }
+       );
+
+    yPos += 25;
+
+    // Amount Paid
+    doc.rect(totalsX, yPos, totalsWidth, 25)
+       .fill('#ffffff')
+       .strokeColor('#e5e7eb')
+       .stroke();
+    
+    doc.font('Helvetica')
+       .fillColor('#4b5563')
+       .text('Amount Paid:', totalsX + 10, yPos + 8);
+    
+    doc.font('Helvetica-Bold')
+       .fillColor('#10b981')
+       .text(
+         `NGN ${parseFloat(order.amountPaid).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`, 
+         totalsX + 10, 
+         yPos + 8, 
+         { width: totalsWidth - 20, align: 'right' }
+       );
+
+    yPos += 25;
+
+    // Balance
+    const balance = parseFloat(order.balance);
+    const balanceColor = balance > 0 ? '#ef4444' : balance < 0 ? '#f59e0b' : '#10b981';
+    
+    doc.rect(totalsX, yPos, totalsWidth, 30)
+       .fill('#1e40af');
+    
+    doc.fontSize(11)
+       .font('Helvetica-Bold')
+       .fillColor('#ffffff')
+       .text('BALANCE DUE:', totalsX + 10, yPos + 10);
+    
+    doc.text(
+      `NGN ${Math.abs(balance).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`, 
+      totalsX + 10, 
+      yPos + 10, 
+      { width: totalsWidth - 20, align: 'right' }
+    );
+
+    // ===== PAYMENT STATUS =====
+    yPos += 50;
+    
+    doc.fontSize(10)
+       .font('Helvetica')
+       .fillColor('#4b5563')
+       .text(`Payment Status: `, 50, yPos);
+    
+    doc.font('Helvetica-Bold')
+       .fillColor('#000')
+       .text(order.paymentStatus, 150, yPos);
+
+    if (order.riteFoodsStatus) {
+      yPos += 20;
+      doc.font('Helvetica')
+         .fillColor('#4b5563')
+         .text(`Rite Foods Status: `, 50, yPos);
+      
+      doc.font('Helvetica-Bold')
+         .fillColor('#000')
+         .text(order.riteFoodsStatus, 150, yPos);
+    }
+
+    if (order.deliveryStatus) {
+      yPos += 20;
+      doc.font('Helvetica')
+         .fillColor('#4b5563')
+         .text(`Delivery Status: `, 50, yPos);
+      
+      doc.font('Helvetica-Bold')
+         .fillColor('#000')
+         .text(order.deliveryStatus, 150, yPos);
+    }
+
+    // ===== FOOTER =====
+    doc.fontSize(8)
+       .font('Helvetica')
+       .fillColor('#9ca3af')
+       .text(
+         `Generated on ${new Date().toLocaleString('en-NG', { dateStyle: 'full', timeStyle: 'short' })}`,
+         50,
+         doc.page.height - 50,
+         { align: 'center', width: doc.page.width - 100 }
        );
 
     doc.end();
