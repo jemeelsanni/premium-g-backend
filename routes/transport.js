@@ -130,7 +130,6 @@ async function calculateOrderCosts(locationId, fuelRequired, fuelPricePerLiter, 
 
 // @route   POST /api/v1/transport/orders
 // @desc    Create transport order with auto-calculated costs
-// @access  Private (Transport module access)
 router.post('/orders',
   createTransportOrderValidation,
   asyncHandler(async (req, res) => {
@@ -470,11 +469,21 @@ router.put('/orders/:id',
 );
 
 // @route   PUT /api/v1/transport/orders/:id/status
-// @desc    Update order delivery status
+// @desc    Update transport order status
 // @access  Private (Transport module access)
 router.put('/orders/:id/status',
+  authorizeModule('transport', 'write'),
   param('id').custom(validateCuid('order ID')),
-  body('deliveryStatus').isIn(['PENDING', 'CONFIRMED', 'PROCESSING', 'IN_TRANSIT', 'DELIVERED', 'PARTIALLY_DELIVERED', 'CANCELLED']),
+  body('deliveryStatus').isIn([
+    'PENDING',
+    'CONFIRMED',
+    'PROCESSING',
+    'IN_TRANSIT',
+    'DELIVERED',
+    'PARTIALLY_DELIVERED',
+    'CANCELLED'
+  ]).withMessage('Invalid delivery status'),
+  body('notes').optional().trim(),
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -482,23 +491,56 @@ router.put('/orders/:id/status',
     }
 
     const { id } = req.params;
-    const { deliveryStatus } = req.body;
+    const { deliveryStatus, notes } = req.body;
+    const userId = req.user.id;
 
+    // Get existing order
+    const existingOrder = await prisma.transportOrder.findUnique({
+      where: { id }
+    });
+
+    if (!existingOrder) {
+      throw new NotFoundError('Transport order not found');
+    }
+
+    // Check permissions - only allow staff to update their own orders unless admin
+    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+      if (existingOrder.createdBy !== userId) {
+        throw new BusinessError('You can only update your own orders', 'PERMISSION_DENIED');
+      }
+    }
+
+    // Update order status
     const updatedOrder = await prisma.transportOrder.update({
       where: { id },
-      data: { 
+      data: {
         deliveryStatus,
-        deliveryDate: deliveryStatus === 'DELIVERED' ? new Date() : undefined
+        updatedAt: new Date()
       },
       include: {
         location: true,
-        truck: true
+        truck: true,
+        createdByUser: {
+          select: { username: true }
+        }
+      }
+    });
+
+    // Log status change
+    await prisma.auditLog.create({
+      data: {
+        userId,
+        action: 'UPDATE',
+        entity: 'TransportOrder',
+        entityId: id,
+        oldValues: { deliveryStatus: existingOrder.deliveryStatus },
+        newValues: { deliveryStatus, notes }
       }
     });
 
     res.json({
       success: true,
-      message: `Order status updated to ${deliveryStatus}`,
+      message: 'Order status updated successfully',
       data: { order: updatedOrder }
     });
   })
@@ -901,14 +943,6 @@ router.get('/expenses/pending/approvals',
     });
   })
 );
-
-
-// ================================
-// EXPORT FUNCTIONS - Add these to routes/transport.js
-// Place these BEFORE the module.exports line
-// ================================
-
-
 
 // @route   GET /api/v1/transport/orders/export/csv
 // @desc    Export transport orders to CSV in tabular format
