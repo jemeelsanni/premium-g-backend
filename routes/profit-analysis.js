@@ -52,7 +52,7 @@ const calculateOrderProfitability = async (orderId) => {
   // Transport costs (if linked)
   let transportCosts = 0;
   if (order.transportOrder) {
-    transportCosts = parseFloat(order.transportOrder.totalExpenses || 0);
+    transportCosts = parseFloat(order.transportorder.totalTripExpenses || 0);
   }
 
   // Calculate profit metrics
@@ -144,7 +144,7 @@ const generatePeriodAnalysis = async (period, startDate, endDate) => {
   
   for (const order of transportOrders) {
     transportGrossRevenue += parseFloat(order.totalOrderAmount);
-    transportExpenses += parseFloat(order.totalExpenses);
+    transportExpenses += parseFloat(order.totalTripExpenses);
   }
   
   // Transport revenue from distribution-linked orders
@@ -154,7 +154,7 @@ const generatePeriodAnalysis = async (period, startDate, endDate) => {
   for (const order of distributionOrders) {
     if (order.transportOrder) {
       linkedTransportRevenue += parseFloat(order.transportOrder.totalOrderAmount);
-      linkedTransportExpenses += parseFloat(order.transportOrder.totalExpenses);
+      linkedTransportExpenses += parseFloat(order.transportorder.totalTripExpenses);
     }
   }
 
@@ -555,7 +555,7 @@ router.get('/location/:locationId',
 
     for (const order of transportOrders) {
       transportRevenue += parseFloat(order.totalOrderAmount);
-      transportExpenses += parseFloat(order.totalExpenses);
+      transportExpenses += parseFloat(order.totalTripExpenses);
     }
 
     // Get expenses for location
@@ -681,7 +681,7 @@ router.get('/customer/:customerId',
       }
 
       const transportCost = order.transportOrder ? 
-        parseFloat(order.transportOrder.totalExpenses || 0) : 0;
+        parseFloat(order.transportorder.totalTripExpenses || 0) : 0;
 
       totalRevenue += orderRevenue;
       totalCOGS += orderCOGS;

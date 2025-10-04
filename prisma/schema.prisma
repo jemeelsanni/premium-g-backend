@@ -406,16 +406,17 @@ model TransportOrder {
 
     totalOrderAmount Decimal @map("total_order_amount") @db.Decimal(12, 2)
 
-    fuelRequired         Decimal  @map("fuel_required") @db.Decimal(8, 2)
-    fuelPricePerLiter    Decimal  @map("fuel_price_per_liter") @db.Decimal(6, 2)
-    totalFuelCost        Decimal  @map("total_fuel_cost") @db.Decimal(10, 2)
-    serviceChargeExpense Decimal  @map("service_charge_expense") @db.Decimal(10, 2)
-    driverWages          Decimal  @default(0) @map("driver_wages") @db.Decimal(8, 2)
-    truckExpenses        Decimal  @default(0) @map("truck_expenses") @db.Decimal(10, 2)
-    baseHaulageRate      Decimal? @map("base_haulage_rate") @db.Decimal(10, 2)
-    serviceChargePercent Decimal  @default(10.00) @map("service_charge_percent") @db.Decimal(5, 2)
-    tripAllowance        Decimal  @default(0) @map("trip_allowance") @db.Decimal(8, 2)
-    motorBoyWages        Decimal  @default(0) @map("motor_boy_wages") @db.Decimal(8, 2)
+    fuelRequired             Decimal  @map("fuel_required") @db.Decimal(8, 2)
+    fuelPricePerLiter        Decimal  @map("fuel_price_per_liter") @db.Decimal(6, 2)
+    totalFuelCost            Decimal  @map("total_fuel_cost") @db.Decimal(10, 2)
+    serviceChargeExpense     Decimal  @map("service_charge_expense") @db.Decimal(10, 2)
+    driverWages              Decimal  @default(0) @map("driver_wages") @db.Decimal(8, 2)
+    truckExpenses            Decimal  @default(0) @map("truck_expenses") @db.Decimal(10, 2)
+    truckExpensesDescription String?  @map("truck_expenses_description") // NEW
+    baseHaulageRate          Decimal? @map("base_haulage_rate") @db.Decimal(10, 2)
+    serviceChargePercent     Decimal  @default(10.00) @map("service_charge_percent") @db.Decimal(5, 2)
+    tripAllowance            Decimal  @default(0) @map("trip_allowance") @db.Decimal(8, 2)
+    motorBoyWages            Decimal  @default(0) @map("motor_boy_wages") @db.Decimal(8, 2)
 
     totalExpenses Decimal @map("total_expenses") @db.Decimal(12, 2)
     grossProfit   Decimal @default(0) @map("gross_profit") @db.Decimal(12, 2)
