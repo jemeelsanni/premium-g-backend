@@ -335,7 +335,6 @@ app.use(`/api/${apiVersion}/distribution`, authenticateToken, distributionRoutes
 app.use(`/api/${apiVersion}/transport`, authenticateToken, transportRoutes);
 app.use(`/api/${apiVersion}/warehouse`, authenticateToken, warehouseRoutes);
 
-const truckRoutes = require('./routes/trucks');
 app.use(`/api/${apiVersion}/transport`, authenticateToken, truckRoutes);
 
 // MODULE-SPECIFIC SUPPORTING ROUTES

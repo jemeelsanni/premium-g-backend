@@ -34,6 +34,9 @@ const createTransportOrderValidation = [
   body('totalOrderAmount').isFloat({ min: 0 }).withMessage('Order amount must be positive'),
   body('fuelRequired').isFloat({ min: 0 }).withMessage('Fuel required must be positive'),
   body('fuelPricePerLiter').isFloat({ min: 0 }).withMessage('Fuel price must be positive'),
+  body('driverWages').isFloat({ min: 0 }).withMessage('Driver wages must be positive'),
+  body('tripAllowance').isFloat({ min: 0 }).withMessage('Trip allowance must be positive'),
+  body('motorBoyWages').isFloat({ min: 0 }).withMessage('Motor boy wages must be positive'),
   body('truckId').optional().custom(validateCuid('truck ID')),
   body('driverDetails').optional().trim(),
   body('invoiceNumber').optional().trim(),
@@ -67,7 +70,15 @@ const createExpenseValidation = [
 // HELPER FUNCTIONS
 // ================================
 
-async function calculateOrderCosts(locationId, fuelRequired, fuelPricePerLiter, totalOrderAmount) {
+async function calculateOrderCosts(
+  locationId, 
+  fuelRequired, 
+  fuelPricePerLiter, 
+  totalOrderAmount,
+  driverWages,      // ✅ ADD THIS
+  tripAllowance,    // ✅ ADD THIS
+  motorBoyWages     // ✅ ADD THIS
+) {
   // Get haulage rate for location
   const haulageRate = await prisma.haulageRate.findFirst({
     where: { 
@@ -77,19 +88,9 @@ async function calculateOrderCosts(locationId, fuelRequired, fuelPricePerLiter, 
     orderBy: { effectiveDate: 'desc' }
   });
 
-  // Get salary rates for location
-  const salaryRate = await prisma.salaryRate.findFirst({
-    where: {
-      locationId,
-      isActive: true
-    },
-    orderBy: { effectiveDate: 'desc' }
-  });
+  
 
   const baseHaulageRate = haulageRate ? parseFloat(haulageRate.rate) : 50000;
-  const driverWages = salaryRate ? parseFloat(salaryRate.driverRate) : 5000;
-  const tripAllowance = salaryRate ? parseFloat(salaryRate.tripAllowance) : 2000;
-  const motorBoyWages = salaryRate ? parseFloat(salaryRate.motorBoyRate) : 3000;
 
   // Calculate costs
   const totalFuelCost = fuelRequired * fuelPricePerLiter;
@@ -148,6 +149,9 @@ router.post('/orders',
       totalOrderAmount,
       fuelRequired,
       fuelPricePerLiter,
+      driverWages,      // ✅ EXTRACT FROM REQUEST
+      tripAllowance,    // ✅ EXTRACT FROM REQUEST
+      motorBoyWages,    // ✅ EXTRACT FROM REQUEST
       truckId,
       driverDetails,
       invoiceNumber
@@ -160,7 +164,10 @@ router.post('/orders',
       locationId,
       fuelRequired,
       fuelPricePerLiter,
-      totalOrderAmount
+      totalOrderAmount,
+      driverWages,      // ✅ PASS IT HERE
+      tripAllowance,    // ✅ PASS IT HERE
+      motorBoyWages     // ✅ PASS IT HERE
     );
 
     // Create order in transaction

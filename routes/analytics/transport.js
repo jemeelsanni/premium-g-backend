@@ -2,14 +2,13 @@
 
 const express = require('express');
 const { query, param, validationResult } = require('express-validator');
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../../lib/prisma');
 
 const { asyncHandler, ValidationError, NotFoundError } = require('../../middleware/errorHandler');
 const { authorizeModule, authorizeRole } = require('../../middleware/auth');
 const { validateCuid } = require('../../utils/validators');
 
 const router = express.Router();
-const prisma = new PrismaClient();
 
 // All routes require transport module access
 router.use(authorizeModule('transport'));
@@ -21,6 +20,7 @@ router.use(authorizeModule('transport'));
 // @route   GET /api/v1/analytics/transport/dashboard
 // @desc    Get transport dashboard statistics
 // @access  Private (Transport module access)
+// @route   GET /api/v1/analytics/transport/dashboard
 router.get('/dashboard',
   asyncHandler(async (req, res) => {
     const { startDate, endDate } = req.query;
@@ -39,15 +39,15 @@ router.get('/dashboard',
       pendingExpenses,
       trucks
     ] = await Promise.all([
-      // Active trips count
+      // ✅ FIXED: Use correct OrderStatus enum values
       prisma.transportOrder.count({
         where: {
-          deliveryStatus: { in: ['CONFIRMED', 'PROCESSING', 'IN_TRANSIT'] },
+          deliveryStatus: { in: ['PENDING', 'IN_TRANSIT'] }, // Changed from CONFIRMED, PROCESSING, IN_TRANSIT
           createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined
         }
       }),
 
-      // Total revenue
+      // ✅ FIXED: Use correct enum values
       prisma.transportOrder.aggregate({
         where: {
           deliveryStatus: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] },
@@ -56,16 +56,16 @@ router.get('/dashboard',
         _sum: { totalOrderAmount: true, netProfit: true }
       }),
 
-      // Total expenses (approved only)
-      prisma.transportExpense.aggregate({
+      // ✅ FIXED: Use prisma.expense with TRANSPORT_EXPENSE filter
+      prisma.expense.aggregate({
         where: {
           status: 'APPROVED',
+          expenseType: 'TRANSPORT_EXPENSE', // Use the correct ExpenseType enum value
           expenseDate: Object.keys(dateFilter).length > 0 ? dateFilter : undefined
         },
         _sum: { amount: true }
       }),
 
-      // Recent orders
       prisma.transportOrder.findMany({
         take: 5,
         orderBy: { createdAt: 'desc' },
@@ -75,12 +75,14 @@ router.get('/dashboard',
         }
       }),
 
-      // Pending expenses count
-      prisma.transportExpense.count({
-        where: { status: 'PENDING' }
+      // ✅ FIXED
+      prisma.expense.count({
+        where: { 
+          status: 'PENDING',
+          expenseType: 'TRANSPORT_EXPENSE'
+        }
       }),
 
-      // Total trucks
       prisma.truckCapacity.count({
         where: { isActive: true }
       })
