@@ -244,11 +244,13 @@ router.delete('/:id',
   })
 );
 
+// routes/users.js
+
 // @route   GET /api/v1/users/:id/activity
-// @desc    Get user activity log
+// @desc    Get user activity log with analytics
 // @access  Private (Admin or own profile)
 router.get('/:id/activity',
-  param('id').custom(validateCuid('user ID')), // ✅ UPDATED
+  param('id').custom(validateCuid('user ID')),
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -267,11 +269,32 @@ router.get('/:id/activity',
       throw new BusinessError('Access denied', 'ACCESS_DENIED');
     }
 
-    const activity = await getUserActivity(id, parseInt(days));
+    // Get raw activity logs
+    const activityLogs = await getUserActivity(id, parseInt(days));
+
+    // Process into analytics
+    const actionsByType = activityLogs.reduce((acc, log) => {
+      const action = log.action || 'UNKNOWN';
+      acc[action] = (acc[action] || 0) + 1;
+      return acc;
+    }, {});
+
+    const analytics = {
+      totalActions: activityLogs.length,
+      recentActions: activityLogs.slice(0, 20).map(log => ({
+        id: log.id,
+        action: log.action,
+        entity: log.entity,
+        entityId: log.entityId,
+        createdAt: log.createdAt,
+        ipAddress: log.ipAddress
+      })),
+      actionsByType
+    };
 
     res.json({
       success: true,
-      data: { activity }
+      data: { activity: analytics }
     });
   })
 );

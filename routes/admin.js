@@ -92,16 +92,31 @@ const createProductValidation = [
     .withMessage('Product name is required')
     .isLength({ max: 200 })
     .withMessage('Product name must not exceed 200 characters'),
+  body('module')
+    .notEmpty()
+    .withMessage('Module is required')
+    .isIn(['DISTRIBUTION', 'WAREHOUSE', 'BOTH'])
+    .withMessage('Module must be DISTRIBUTION, WAREHOUSE, or BOTH'),
+  
+  // Conditional validation based on module
   body('packsPerPallet')
+    .if(body('module').isIn(['DISTRIBUTION', 'BOTH']))
+    .notEmpty()
+    .withMessage('Packs per pallet is required for distribution products')
     .isInt({ min: 1 })
     .withMessage('Packs per pallet must be a positive integer'),
+    
   body('pricePerPack')
+    .if(body('module').isIn(['WAREHOUSE', 'BOTH']))
+    .notEmpty()
+    .withMessage('Price per pack is required for warehouse products')
     .isDecimal({ decimal_digits: '0,2' })
     .withMessage('Price per pack must be a valid decimal'),
-  body('module')
+    
+  body('costPerPack')
     .optional()
-    .isIn(['DISTRIBUTION', 'WAREHOUSE', 'BOTH'])
-    .withMessage('Module must be DISTRIBUTION, WAREHOUSE, or BOTH')
+    .isDecimal({ decimal_digits: '0,2' })
+    .withMessage('Cost per pack must be a valid decimal')
 ];
 
 const createCustomerValidation = [
@@ -237,7 +252,15 @@ router.post('/products',
       throw new ValidationError('Invalid input data', errors.array());
     }
 
-    const { productNo, name, description, packsPerPallet, pricePerPack, module = 'DISTRIBUTION' } = req.body;
+    const { 
+      productNo, 
+      name, 
+      description, 
+      packsPerPallet, 
+      pricePerPack, 
+      costPerPack,
+      module = 'DISTRIBUTION' 
+    } = req.body;
 
     // Check if product number already exists
     const existingProduct = await prisma.product.findUnique({
@@ -248,15 +271,20 @@ router.post('/products',
       throw new BusinessError('Product number already exists', 'PRODUCT_NO_EXISTS');
     }
 
+    // Prepare data based on module
+    const productData = {
+      productNo,
+      name,
+      description,
+      module,
+      // Only include fields if they're provided
+      ...(packsPerPallet && { packsPerPallet: parseInt(packsPerPallet) }),
+      ...(pricePerPack && { pricePerPack: parseFloat(pricePerPack) }),
+      ...(costPerPack && { costPerPack: parseFloat(costPerPack) })
+    };
+
     const product = await prisma.product.create({
-      data: {
-        productNo,
-        name,
-        description,
-        packsPerPallet: parseInt(packsPerPallet),
-        pricePerPack: parseFloat(pricePerPack),
-        module // Add module field
-      }
+      data: productData
     });
 
     // Only create warehouse inventory if module includes warehouse
@@ -515,6 +543,29 @@ router.get('/locations', asyncHandler(async (req, res) => {
         totalPages: Math.ceil(total / parseInt(limit))
       }
     }
+  });
+}));
+
+router.delete('/locations/:id', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  // Check if location exists
+  const location = await prisma.location.findUnique({
+    where: { id }
+  });
+
+  if (!location) {
+    throw new NotFoundError('Location not found');
+  }
+
+  // Delete location
+  await prisma.location.delete({
+    where: { id }
+  });
+
+  res.json({
+    success: true,
+    message: 'Location deleted successfully'
   });
 }));
 
@@ -867,6 +918,41 @@ router.get('/reports/performance', asyncHandler(async (req, res) => {
         }
       }
     }
+  });
+}));
+
+// @route   GET /api/v1/admin/products/next-number
+// @desc    Get next product number
+// @access  Private (Admin only)
+router.get('/products/next-number', asyncHandler(async (req, res) => {
+  const currentYear = new Date().getFullYear();
+  const prefix = `PRD-${currentYear}-`;
+
+  // Get the latest product for this year
+  const latestProduct = await prisma.product.findFirst({
+    where: {
+      productNo: {
+        startsWith: prefix
+      }
+    },
+    orderBy: {
+      productNo: 'desc'
+    }
+  });
+
+  let nextNumber = 1;
+  if (latestProduct) {
+    // Extract the number from the latest product (e.g., "PRD-2025-005" -> 5)
+    const lastNumber = parseInt(latestProduct.productNo.split('-')[2]);
+    nextNumber = lastNumber + 1;
+  }
+
+  // Format with leading zeros (001, 002, etc.)
+  const productNumber = `${prefix}${nextNumber.toString().padStart(3, '0')}`;
+
+  res.json({
+    success: true,
+    data: { productNumber }
   });
 }));
 

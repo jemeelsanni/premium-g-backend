@@ -122,8 +122,8 @@ model Product {
     productNo      String        @unique @map("product_no")
     name           String
     description    String?
-    packsPerPallet Int           @map("packs_per_pallet")
-    pricePerPack   Decimal       @map("price_per_pack") @db.Decimal(10, 2)
+    packsPerPallet Int?          @map("packs_per_pallet")
+    pricePerPack   Decimal?      @map("price_per_pack") @db.Decimal(10, 2)
     costPerPack    Decimal?      @map("cost_per_pack") @db.Decimal(10, 2)
     module         ProductModule @default(DISTRIBUTION)
     isActive       Boolean       @default(true) @map("is_active")

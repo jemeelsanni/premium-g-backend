@@ -171,88 +171,61 @@ router.post('/orders',
     );
 
     // Create order in transaction
-    const order = await prisma.$transaction(async (tx) => {
-      const transportOrder = await tx.transportOrder.create({
-        data: {
-          orderNumber,
-          clientName,
-          clientPhone,
-          pickupLocation,
-          deliveryAddress,
-          locationId,
-          totalOrderAmount: calculatedCosts.totalOrderAmount,
-          
-          // Fuel details
-          fuelRequired: calculatedCosts.fuelRequired,
-          fuelPricePerLiter: calculatedCosts.fuelPricePerLiter,
-          totalFuelCost: calculatedCosts.totalFuelCost,
-          
-          // Wages
-          tripAllowance: calculatedCosts.tripAllowance,
-          driverWages: calculatedCosts.driverWages,
-          motorBoyWages: calculatedCosts.motorBoyWages,
-          
-          // Service charge
-          serviceChargePercent: calculatedCosts.serviceChargePercent,
-          serviceChargeExpense: calculatedCosts.serviceChargeExpense,
-          
-          // Expenses & Profit
-          truckExpenses: calculatedCosts.truckExpenses,
-          truckExpensesDescription: req.body.truckExpensesDescription,  // ADD THIS LINE
-          totalTripExpenses: calculatedCosts.totalTripExpenses,
-          grossProfit: calculatedCosts.grossProfit,
-          netProfit: calculatedCosts.netProfit,
-          profitMargin: calculatedCosts.profitMargin,
-          
-          truckId,
-          driverDetails,
-          invoiceNumber,
-          createdBy: userId,
-          deliveryStatus: 'PENDING'
-        },
-        include: {
-          location: true,
-          truck: true,
-          createdByUser: {
-            select: { id: true, username: true }
-          }
-        }
-      });
-
-      // Create analytics entry
-      await tx.transportAnalytics.create({
-        data: {
-          analysisType: 'TRANSPORT_TRIP',
-          totalRevenue: calculatedCosts.totalOrderAmount,
-          fuelCosts: calculatedCosts.totalFuelCost,
-          driverWages: calculatedCosts.driverWages + calculatedCosts.tripAllowance + calculatedCosts.motorBoyWages,
-          serviceCharges: calculatedCosts.serviceChargeExpense,
-          totalExpenses: calculatedCosts.totalTripExpenses,
-          grossProfit: calculatedCosts.grossProfit,
-          netProfit: calculatedCosts.netProfit,
-          profitMargin: calculatedCosts.profitMargin,
-          totalTrips: 1
-        }
-      });
-
-      // Audit log
-      await tx.auditLog.create({
-        data: {
-          userId,
-          action: 'CREATE',
-          entity: 'TransportOrder',
-          entityId: transportOrder.id,
-          newValues: {
-            orderNumber: transportOrder.orderNumber,
-            clientName: transportOrder.clientName,
-            totalAmount: transportOrder.totalOrderAmount,
-            netProfit: transportOrder.netProfit
-          }
-        }
-      });
-
-      return transportOrder;
-    });
+    const transportOrder = await tx.transportOrder.create({
+  data: {
+    orderNumber,
+    clientName,
+    clientPhone,
+    pickupLocation,
+    deliveryAddress,
+    locationId,
+    totalOrderAmount: parseFloat(totalOrderAmount),
+    
+    fuelRequired: parseFloat(fuelRequired),
+    fuelPricePerLiter: parseFloat(fuelPricePerLiter),
+    totalFuelCost: parseFloat(fuelRequired * fuelPricePerLiter),
+    
+    serviceChargePercent: 10,
+    serviceChargeExpense: parseFloat(serviceChargeExpense),
+    
+    driverWages: parseFloat(driverWages),
+    tripAllowance: parseFloat(tripAllowance),
+    motorBoyWages: parseFloat(motorBoyWages),
+    
+    truckExpenses: parseFloat(truckExpenses || 0),
+    truckExpensesDescription,
+    
+    // ✅ Calculate totalExpenses (not totalTripExpenses)
+    totalExpenses: parseFloat(
+      (fuelRequired * fuelPricePerLiter) + 
+      parseFloat(driverWages) + 
+      parseFloat(tripAllowance) + 
+      parseFloat(motorBoyWages) + 
+      parseFloat(serviceChargeExpense) + 
+      parseFloat(truckExpenses || 0)
+    ),
+    
+    grossProfit: parseFloat(grossProfit),
+    netProfit: parseFloat(netProfit),
+    profitMargin: parseFloat(profitMargin),
+    
+    truckId: truckId || null,
+    driverDetails,
+    invoiceNumber,
+    deliveryStatus: 'PENDING',
+    createdBy: req.user.id
+  },
+  include: {
+    location: true,
+    truck: true,
+    createdByUser: {
+      select: {
+        id: true,
+        username: true
+      }
+    }
+  }
+});
 
     res.status(201).json({
       success: true,
