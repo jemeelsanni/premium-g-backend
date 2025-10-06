@@ -1,7 +1,7 @@
 // routes/warehouse-customers.js - Warehouse customer management
 
 const express = require('express');
-const { body, query, param, validationResult } = require('express-validator');
+const { body, param, validationResult } = require('express-validator');
 const { PrismaClient } = require('@prisma/client');
 
 const { asyncHandler, ValidationError, NotFoundError } = require('../middleware/errorHandler');
@@ -59,15 +59,17 @@ router.get('/customers',
   authorizeModule('warehouse'),
   asyncHandler(async (req, res) => {
     const {
-      page = 1,
-      limit = 20,
-      search,
       customerType,
       isActive = 'true'
     } = req.query;
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const take = parseInt(limit);
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : undefined;
+    const page = Math.max(1, parseInt(req.query.page || '1', 10));
+    const limitRaw = parseInt(req.query.limit || '20', 10);
+    const limit = Math.min(Math.max(1, limitRaw), 100);
+
+    const skip = (page - 1) * limit;
+    const take = limit;
 
     const where = {};
     
@@ -87,7 +89,13 @@ router.get('/customers',
       prisma.warehouseCustomer.findMany({
         where,
         include: {
-          _count: { select: { warehouseSales: true } }
+          _count: {
+            select: {
+              sales: true,
+              discountRequests: true,
+              discounts: true
+            }
+          }
         },
         orderBy: { name: 'asc' },
         skip,
@@ -101,10 +109,10 @@ router.get('/customers',
       data: {
         customers,
         pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
+          page,
+          limit,
           total,
-          totalPages: Math.ceil(total / parseInt(limit))
+          totalPages: Math.ceil(total / limit)
         }
       }
       });

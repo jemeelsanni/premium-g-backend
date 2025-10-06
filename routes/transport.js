@@ -26,8 +26,8 @@ router.use(authorizeModule('transport'));
 
 const createTransportOrderValidation = [
   body('orderNumber').notEmpty().withMessage('Order number is required'),
-  body('clientName').notEmpty().withMessage('Client name is required'),
-  body('clientPhone').optional().trim(),
+  body('clientName').notEmpty().withMessage('Client name is required'), // Will be mapped to name
+  body('clientPhone').optional().trim(), // Will be mapped to phone
   body('pickupLocation').notEmpty().withMessage('Pickup location is required'),
   body('deliveryAddress').notEmpty().withMessage('Delivery address is required'),
   body('locationId').notEmpty().custom(validateCuid('location ID')),
@@ -37,11 +37,18 @@ const createTransportOrderValidation = [
   body('driverWages').isFloat({ min: 0 }).withMessage('Driver wages must be positive'),
   body('tripAllowance').isFloat({ min: 0 }).withMessage('Trip allowance must be positive'),
   body('motorBoyWages').isFloat({ min: 0 }).withMessage('Motor boy wages must be positive'),
-  body('truckId').optional().custom(validateCuid('truck ID')),
+  // ✅ FIX: Updated truck ID validation
+  body('truckId')
+    .optional()
+    .custom((value) => {
+      if (!value || value === '') return true;
+      if (typeof value === 'string' && value.length >= 3 && value.length <= 50) {
+        return true;
+      }
+      throw new Error('Invalid truck ID format');
+    }),
   body('driverDetails').optional().trim(),
   body('invoiceNumber').optional().trim(),
-  body('truckExpensesDescription').optional().trim()  // ADD THIS
-
 ];
 
 const updateTransportOrderValidation = [
@@ -149,9 +156,9 @@ router.post('/orders',
       totalOrderAmount,
       fuelRequired,
       fuelPricePerLiter,
-      driverWages,      // ✅ EXTRACT FROM REQUEST
-      tripAllowance,    // ✅ EXTRACT FROM REQUEST
-      motorBoyWages,    // ✅ EXTRACT FROM REQUEST
+      driverWages,
+      tripAllowance,
+      motorBoyWages,
       truckId,
       driverDetails,
       invoiceNumber
@@ -159,91 +166,109 @@ router.post('/orders',
 
     const userId = req.user.id;
 
-    // Calculate all costs
-    const calculatedCosts = await calculateOrderCosts(
-      locationId,
-      fuelRequired,
-      fuelPricePerLiter,
-      totalOrderAmount,
-      driverWages,      // ✅ PASS IT HERE
-      tripAllowance,    // ✅ PASS IT HERE
-      motorBoyWages     // ✅ PASS IT HERE
-    );
+    // ✅ FIX: Wrap in transaction and use correct field names
+    const result = await prisma.$transaction(async (tx) => {
+      // Check if order number already exists
+      const existingOrder = await tx.transportOrder.findUnique({
+        where: { orderNumber }
+      });
 
-    // Create order in transaction
-    const transportOrder = await tx.transportOrder.create({
-  data: {
-    orderNumber,
-    clientName,
-    clientPhone,
-    pickupLocation,
-    deliveryAddress,
-    locationId,
-    totalOrderAmount: parseFloat(totalOrderAmount),
-    
-    fuelRequired: parseFloat(fuelRequired),
-    fuelPricePerLiter: parseFloat(fuelPricePerLiter),
-    totalFuelCost: parseFloat(fuelRequired * fuelPricePerLiter),
-    
-    serviceChargePercent: 10,
-    serviceChargeExpense: parseFloat(serviceChargeExpense),
-    
-    driverWages: parseFloat(driverWages),
-    tripAllowance: parseFloat(tripAllowance),
-    motorBoyWages: parseFloat(motorBoyWages),
-    
-    truckExpenses: parseFloat(truckExpenses || 0),
-    truckExpensesDescription,
-    
-    // ✅ Calculate totalExpenses (not totalTripExpenses)
-    totalExpenses: parseFloat(
-      (fuelRequired * fuelPricePerLiter) + 
-      parseFloat(driverWages) + 
-      parseFloat(tripAllowance) + 
-      parseFloat(motorBoyWages) + 
-      parseFloat(serviceChargeExpense) + 
-      parseFloat(truckExpenses || 0)
-    ),
-    
-    grossProfit: parseFloat(grossProfit),
-    netProfit: parseFloat(netProfit),
-    profitMargin: parseFloat(profitMargin),
-    
-    truckId: truckId || null,
-    driverDetails,
-    invoiceNumber,
-    deliveryStatus: 'PENDING',
-    createdBy: req.user.id
-  },
-  include: {
-    location: true,
-    truck: true,
-    createdByUser: {
-      select: {
-        id: true,
-        username: true
+      if (existingOrder) {
+        throw new BusinessError('Order number already exists', 'ORDER_NUMBER_EXISTS');
       }
-    }
-  }
-});
+
+      // Validate truck if provided
+      if (truckId) {
+        const truck = await tx.truckCapacity.findUnique({
+          where: { truckId: truckId }
+        });
+
+        if (!truck) {
+          throw new NotFoundError('Truck not found');
+        }
+      }
+
+      // Validate location
+      const location = await tx.location.findUnique({
+        where: { id: locationId }
+      });
+
+      if (!location) {
+        throw new NotFoundError('Location not found');
+      }
+
+      // Calculate all expenses
+      const totalFuelCost = parseFloat(fuelRequired * fuelPricePerLiter);
+      const serviceChargeExpense = parseFloat(totalOrderAmount * 0.10); // 10% service charge
+      const totalTripExpenses = totalFuelCost + parseFloat(driverWages) + parseFloat(tripAllowance) + parseFloat(motorBoyWages) + serviceChargeExpense;
+      const grossProfit = parseFloat(totalOrderAmount) - totalTripExpenses;
+      const netProfit = grossProfit;
+      const profitMargin = totalOrderAmount > 0 ? (grossProfit / totalOrderAmount) * 100 : 0;
+
+      // ✅ CREATE ORDER - Based on actual schema usage in your codebase
+      const order = await tx.transportOrder.create({
+        data: {
+          orderNumber,
+          name: clientName, // Changed from clientName to name
+          phone: clientPhone, // Changed from clientPhone to phone
+          pickupLocation,
+          deliveryAddress,
+          locationId,
+          totalOrderAmount: parseFloat(totalOrderAmount),
+          fuelRequired: parseFloat(fuelRequired),
+          fuelPricePerLiter: parseFloat(fuelPricePerLiter),
+          totalFuelCost,
+          driverWages: parseFloat(driverWages),
+          tripAllowance: parseFloat(tripAllowance),
+          motorBoyWages: parseFloat(motorBoyWages),
+          serviceChargeExpense,
+          totalTripExpenses,
+          grossProfit,
+          netProfit,
+          profitMargin,
+          truckId: truckId || null,
+          driverDetails,
+          invoiceNumber,
+          deliveryStatus: 'PENDING',
+          createdBy: userId,
+          serviceChargePercent: 10.0,
+          truckExpenses: 0.0,
+          baseHaulageRate: parseFloat(totalOrderAmount),
+          totalExpenses: totalTripExpenses,
+          // Optional fields
+          deliveryDate: null,
+          truckExpensesDescription: null,
+          distributionOrderId: null
+        },
+        include: {
+          location: true,
+          truck: true,
+          createdByUser: {
+            select: {
+              username: true
+            }
+          }
+        }
+      });
+
+      return order;
+    });
+
+    // Log the creation
+    await logDataChange(
+      userId,
+      'transport_order',
+      result.id,
+      'CREATE',
+      null,
+      result,
+      getClientIP(req)
+    );
 
     res.status(201).json({
       success: true,
       message: 'Transport order created successfully',
-      data: {
-        transportOrder: order,
-        calculation: {
-          baseHaulageRate: calculatedCosts.baseHaulageRate,
-          breakdown: {
-            fuel: calculatedCosts.totalFuelCost,
-            wages: calculatedCosts.driverWages + calculatedCosts.tripAllowance + calculatedCosts.motorBoyWages,
-            serviceCharge: calculatedCosts.serviceChargeExpense,
-            expenses: calculatedCosts.truckExpenses
-          },
-          revenue: calculatedCosts.revenue,
-          profitMargin: `${calculatedCosts.profitMargin}%`
-        }
-      }
+      data: { order: result }
     });
   })
 );

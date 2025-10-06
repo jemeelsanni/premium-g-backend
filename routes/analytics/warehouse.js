@@ -30,8 +30,8 @@ router.get('/summary',
     if (startDate) dateFilter.gte = new Date(startDate);
     if (endDate) dateFilter.lte = new Date(endDate);
 
-    // Get warehouse sales and cash flow
-    const [sales, cashFlow, inventory] = await Promise.all([
+    // Get warehouse sales, cash flow, inventory, and customers
+    const [sales, cashFlow, inventory, customers] = await Promise.all([
       prisma.warehouseSale.findMany({
         where: {
           createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined
@@ -49,8 +49,12 @@ router.get('/summary',
       
       prisma.warehouseInventory.findMany({
         include: {
-          product: { select: { name: true, productNo: true, reorderLevel: true } }
+          product: { select: { name: true, productNo: true, packsPerPallet: true, pricePerPack: true } }
         }
+      }),
+
+      prisma.warehouseCustomer.findMany({
+        select: { id: true, isActive: true }
       })
     ]);
 
@@ -126,6 +130,9 @@ router.get('/summary',
     const averageSaleValue = sales.length > 0 ? totalRevenue / sales.length : 0;
     const netCashFlow = totalCashIn - totalCashOut;
 
+    const totalCustomers = customers.length;
+    const activeCustomers = customers.filter(customer => customer.isActive !== false).length;
+
     // Top products
     const topProducts = Object.entries(productStats)
       .map(([name, stats]) => ({ productName: name, ...stats }))
@@ -148,7 +155,9 @@ router.get('/summary',
           profitMargin: parseFloat(profitMargin.toFixed(2)),
           totalSales: sales.length,
           totalQuantitySold,
-          averageSaleValue: parseFloat(averageSaleValue.toFixed(2))
+          averageSaleValue: parseFloat(averageSaleValue.toFixed(2)),
+          totalCustomers,
+          activeCustomers
         },
         
         cashFlow: {
@@ -164,6 +173,11 @@ router.get('/summary',
           outOfStockItems,
           stockHealthPercentage: inventory.length > 0 ? 
             ((inventory.length - lowStockItems - outOfStockItems) / inventory.length) * 100 : 0
+        },
+
+        customerSummary: {
+          totalCustomers,
+          activeCustomers
         },
         
         topProducts,

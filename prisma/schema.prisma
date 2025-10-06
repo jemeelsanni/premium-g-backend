@@ -1,10 +1,10 @@
 generator client {
-    provider = "prisma-client-js"
+  provider = "prisma-client-js"
 }
 
 datasource db {
-    provider = "postgresql"
-    url      = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // ================================
@@ -12,66 +12,74 @@ datasource db {
 // ================================
 
 model User {
-    id           String   @id @default(cuid())
-    username     String   @unique
-    email        String   @unique
-    passwordHash String   @map("password_hash")
-    role         UserRole
-    isActive     Boolean  @default(true) @map("is_active")
-    permissions  Json?
+  id           String   @id @default(cuid())
+  username     String   @unique
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         UserRole
+  isActive     Boolean  @default(true) @map("is_active")
+  permissions  Json?
 
-    createdAt   DateTime  @default(now()) @map("created_at")
-    updatedAt   DateTime  @updatedAt @map("updated_at")
-    lastLoginAt DateTime? @map("last_login_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  lastLoginAt DateTime? @map("last_login_at")
 
-    // Relations with explicit names
-    sessions                  UserSession[]
-    auditLogs                 AuditLog[]
-    createdDistributionOrders DistributionOrder[] @relation("DistributionOrderCreator")
-    confirmedPayments         DistributionOrder[] @relation("PaymentConfirmer")
-    reviewedDeliveries        DistributionOrder[] @relation("DeliveryReviewer")
-    transportOrders           TransportOrder[]
-    warehouseSales            WarehouseSale[]
-    cashFlowEntries           CashFlow[]
-    expenses                  Expense[]
-    approvedExpenses          Expense[]           @relation("ExpenseApprover")
-    PriceAdjustment           PriceAdjustment[]
+  // Relations with explicit names
+  sessions                   UserSession[]
+  auditLogs                  AuditLog[]
+  createdDistributionOrders  DistributionOrder[]         @relation("DistributionOrderCreator")
+  confirmedPayments          DistributionOrder[]         @relation("PaymentConfirmer")
+  reviewedDeliveries         DistributionOrder[]         @relation("DeliveryReviewer")
+  transportOrders            TransportOrder[]
+  warehouseSales             WarehouseSale[]
+  cashFlowEntries            CashFlow[]
+  expenses                   Expense[]
+  approvedExpenses           Expense[]                   @relation("ExpenseApprover")
+  PriceAdjustment            PriceAdjustment[]
+  warehouseCustomersCreated  WarehouseCustomer[]         @relation("WarehouseCustomersCreatedBy")
+  warehouseDiscountRequests  WarehouseCustomerDiscount[] @relation("WarehouseDiscountRequestedBy")
+  warehouseDiscountApprovals WarehouseCustomerDiscount[] @relation("WarehouseDiscountApprovedBy")
+  discountApprovalRequests   DiscountApprovalRequest[]   @relation("DiscountRequestRequestedBy")
+  discountApprovals          DiscountApprovalRequest[]   @relation("DiscountRequestApprovedBy")
+  warehouseSalesApproved     WarehouseSale[]             @relation("WarehouseSaleApprovedBy")
+  warehouseExpensesCreated   WarehouseExpense[]          @relation("WarehouseExpensesCreatedBy")
+  warehouseExpensesApproved  WarehouseExpense[]          @relation("WarehouseExpensesApprovedBy")
 
-    @@map("users")
+  @@map("users")
 }
 
 model UserSession {
-    id        String   @id @default(cuid())
-    userId    String   @map("user_id")
-    token     String   @unique
-    expiresAt DateTime @map("expires_at")
-    ipAddress String?  @map("ip_address")
-    userAgent String?  @map("user_agent")
-    isActive  Boolean  @default(true) @map("is_active")
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  isActive  Boolean  @default(true) @map("is_active")
 
-    createdAt DateTime @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
-    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-    @@map("user_sessions")
+  @@map("user_sessions")
 }
 
 model AuditLog {
-    id        String  @id @default(cuid())
-    userId    String? @map("user_id")
-    action    String
-    entity    String
-    entityId  String? @map("entity_id")
-    oldValues Json?   @map("old_values")
-    newValues Json?   @map("new_values")
-    ipAddress String? @map("ip_address")
-    userAgent String? @map("user_agent")
+  id        String  @id @default(cuid())
+  userId    String? @map("user_id")
+  action    String
+  entity    String
+  entityId  String? @map("entity_id")
+  oldValues Json?   @map("old_values")
+  newValues Json?   @map("new_values")
+  ipAddress String? @map("ip_address")
+  userAgent String? @map("user_agent")
 
-    createdAt DateTime @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
-    user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-    @@map("audit_logs")
+  @@map("audit_logs")
 }
 
 // ================================
@@ -79,38 +87,38 @@ model AuditLog {
 // ================================
 
 model DistributionTarget {
-    id               String @id @default(cuid())
-    year             Int
-    month            Int
-    totalPacksTarget Int    @map("total_packs_target")
-    weeklyTargets    Json
+  id               String @id @default(cuid())
+  year             Int
+  month            Int
+  totalPacksTarget Int    @map("total_packs_target")
+  weeklyTargets    Json
 
-    createdAt DateTime @default(now()) @map("created_at")
-    updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-    weeklyPerformances WeeklyPerformance[]
+  weeklyPerformances WeeklyPerformance[]
 
-    @@unique([year, month])
-    @@map("distribution_targets")
+  @@unique([year, month])
+  @@map("distribution_targets")
 }
 
 model WeeklyPerformance {
-    id                 String   @id @default(cuid())
-    targetId           String   @map("target_id")
-    weekNumber         Int      @map("week_number")
-    targetPacks        Int      @map("target_packs")
-    actualPacks        Int      @default(0) @map("actual_packs")
-    percentageAchieved Decimal  @default(0) @map("percentage_achieved") @db.Decimal(5, 2)
-    weekStartDate      DateTime @map("week_start_date")
-    weekEndDate        DateTime @map("week_end_date")
+  id                 String   @id @default(cuid())
+  targetId           String   @map("target_id")
+  weekNumber         Int      @map("week_number")
+  targetPacks        Int      @map("target_packs")
+  actualPacks        Int      @default(0) @map("actual_packs")
+  percentageAchieved Decimal  @default(0) @map("percentage_achieved") @db.Decimal(5, 2)
+  weekStartDate      DateTime @map("week_start_date")
+  weekEndDate        DateTime @map("week_end_date")
 
-    createdAt DateTime @default(now()) @map("created_at")
-    updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-    target DistributionTarget @relation(fields: [targetId], references: [id])
+  target DistributionTarget @relation(fields: [targetId], references: [id])
 
-    @@unique([targetId, weekNumber])
-    @@map("weekly_performance")
+  @@unique([targetId, weekNumber])
+  @@map("weekly_performance")
 }
 
 // ================================
@@ -118,278 +126,281 @@ model WeeklyPerformance {
 // ================================
 
 model Product {
-    id             String        @id @default(cuid())
-    productNo      String        @unique @map("product_no")
-    name           String
-    description    String?
-    packsPerPallet Int?          @map("packs_per_pallet")
-    pricePerPack   Decimal?      @map("price_per_pack") @db.Decimal(10, 2)
-    costPerPack    Decimal?      @map("cost_per_pack") @db.Decimal(10, 2)
-    module         ProductModule @default(DISTRIBUTION)
-    isActive       Boolean       @default(true) @map("is_active")
+  id             String        @id @default(cuid())
+  productNo      String        @unique @map("product_no")
+  name           String
+  description    String?
+  packsPerPallet Int?          @map("packs_per_pallet")
+  pricePerPack   Decimal?      @map("price_per_pack") @db.Decimal(10, 2)
+  costPerPack    Decimal?      @map("cost_per_pack") @db.Decimal(10, 2)
+  module         ProductModule @default(DISTRIBUTION)
+  isActive       Boolean       @default(true) @map("is_active")
 
-    createdAt DateTime @default(now()) @map("created_at")
-    updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-    orderItems         DistributionOrderItem[]
-    palletPricing      PalletPricing[]
-    warehouseInventory WarehouseInventory[]
-    warehouseSales     WarehouseSale[]
+  orderItems                DistributionOrderItem[]
+  palletPricing             PalletPricing[]
+  warehouseInventory        WarehouseInventory[]
+  warehouseSales            WarehouseSale[]
+  WarehouseCustomerDiscount WarehouseCustomerDiscount[]
+  DiscountApprovalRequest   DiscountApprovalRequest[]
+  warehouseExpenses         WarehouseExpense[]
 
-    @@map("products")
+  @@map("products")
 }
 
 model Customer {
-    id            String    @id @default(cuid())
-    name          String
-    email         String?
-    phone         String?
-    address       String?
-    customerType  String?   @map("customer_type")
-    territory     String?
-    totalOrders   Int       @default(0) @map("total_orders")
-    totalSpent    Decimal   @default(0) @map("total_spent") @db.Decimal(15, 2)
-    lastOrderDate DateTime? @map("last_order_date") // ✅ ADD THIS
-    creditLimit   Decimal?  @map("credit_limit") @db.Decimal(15, 2)
+  id            String    @id @default(cuid())
+  name          String
+  email         String?
+  phone         String?
+  address       String?
+  customerType  String?   @map("customer_type")
+  territory     String?
+  totalOrders   Int       @default(0) @map("total_orders")
+  totalSpent    Decimal   @default(0) @map("total_spent") @db.Decimal(15, 2)
+  lastOrderDate DateTime? @map("last_order_date") // ✅ ADD THIS
+  creditLimit   Decimal?  @map("credit_limit") @db.Decimal(15, 2)
 
-    isActive Boolean @default(true) @map("is_active")
+  isActive Boolean @default(true) @map("is_active")
 
-    createdAt DateTime @default(now()) @map("created_at")
-    updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-    distributionOrders DistributionOrder[]
+  distributionOrders DistributionOrder[]
 
-    @@map("customers")
+  @@map("customers")
 }
 
 model Location {
-    id                 String  @id @default(cuid())
-    name               String
-    address            String?
-    driverWagesPerTrip Decimal @default(0) @map("driver_wages_per_trip") @db.Decimal(8, 2)
-    deliveryNotes      String? @map("delivery_notes")
-    isActive           Boolean @default(true) @map("is_active")
+  id                 String  @id @default(cuid())
+  name               String
+  address            String?
+  driverWagesPerTrip Decimal @default(0) @map("driver_wages_per_trip") @db.Decimal(8, 2)
+  deliveryNotes      String? @map("delivery_notes")
+  isActive           Boolean @default(true) @map("is_active")
 
-    createdAt DateTime @default(now()) @map("created_at")
-    updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-    distributionOrders DistributionOrder[]
-    palletPricing      PalletPricing[]
-    transportOrders    TransportOrder[]
-    expenses           Expense[]
-    haulageRates       HaulageRate[]
-    salaryRates        SalaryRate[]
+  distributionOrders DistributionOrder[]
+  palletPricing      PalletPricing[]
+  transportOrders    TransportOrder[]
+  expenses           Expense[]
+  haulageRates       HaulageRate[]
+  salaryRates        SalaryRate[]
 
-    @@map("locations")
+  @@map("locations")
 }
 
 model DistributionOrder {
-    id          String  @id @default(cuid())
-    orderNumber String? @unique @map("order_number") // ✅ Add this line
+  id          String  @id @default(cuid())
+  orderNumber String? @unique @map("order_number") // ✅ Add this line
 
-    customerId String @map("customer_id")
-    locationId String @map("location_id")
+  customerId String @map("customer_id")
+  locationId String @map("location_id")
 
-    deliveryLocation String? @map("delivery_location") // Optional text field for delivery address
+  deliveryLocation String? @map("delivery_location") // Optional text field for delivery address
 
-    totalPallets   Int     @map("total_pallets")
-    totalPacks     Int     @map("total_packs")
-    originalAmount Decimal @map("original_amount") @db.Decimal(12, 2)
-    balance        Decimal @default(0) @db.Decimal(12, 2)
-    finalAmount    Decimal @map("final_amount") @db.Decimal(12, 2)
+  totalPallets   Int     @map("total_pallets")
+  totalPacks     Int     @map("total_packs")
+  originalAmount Decimal @map("original_amount") @db.Decimal(12, 2)
+  balance        Decimal @default(0) @db.Decimal(12, 2)
+  finalAmount    Decimal @map("final_amount") @db.Decimal(12, 2)
 
-    paymentStatus      PaymentStatus  @default(PENDING) @map("payment_status")
-    amountPaid         Decimal        @default(0) @map("amount_paid") @db.Decimal(12, 2)
-    paymentMethod      PaymentMethod? @map("payment_method")
-    paymentReference   String?        @map("payment_reference")
-    paymentConfirmedBy String?        @map("payment_confirmed_by")
-    paymentConfirmedAt DateTime?      @map("payment_confirmed_at")
-    paymentNotes       String?        @map("payment_notes")
+  paymentStatus      PaymentStatus  @default(PENDING) @map("payment_status")
+  amountPaid         Decimal        @default(0) @map("amount_paid") @db.Decimal(12, 2)
+  paymentMethod      PaymentMethod? @map("payment_method")
+  paymentReference   String?        @map("payment_reference")
+  paymentConfirmedBy String?        @map("payment_confirmed_by")
+  paymentConfirmedAt DateTime?      @map("payment_confirmed_at")
+  paymentNotes       String?        @map("payment_notes")
 
-    paidToRiteFoods        Boolean         @default(false) @map("paid_to_rite_foods")
-    amountPaidToRiteFoods  Decimal?        @map("amount_paid_to_rite_foods") @db.Decimal(12, 2)
-    paymentDateToRiteFoods DateTime?       @map("payment_date_to_rite_foods")
-    riteFoodsOrderNumber   String?         @map("rite_foods_order_number")
-    riteFoodsInvoiceNumber String?         @map("rite_foods_invoice_number")
-    riteFoodsStatus        RiteFoodsStatus @default(NOT_SENT) @map("rite_foods_status")
-    orderRaisedByRFL       Boolean         @default(false) @map("order_raised_by_rfl")
-    orderRaisedAt          DateTime?       @map("order_raised_at")
-    riteFoodsLoadedDate    DateTime?       @map("rite_foods_loaded_date")
+  paidToRiteFoods        Boolean         @default(false) @map("paid_to_rite_foods")
+  amountPaidToRiteFoods  Decimal?        @map("amount_paid_to_rite_foods") @db.Decimal(12, 2)
+  paymentDateToRiteFoods DateTime?       @map("payment_date_to_rite_foods")
+  riteFoodsOrderNumber   String?         @map("rite_foods_order_number")
+  riteFoodsInvoiceNumber String?         @map("rite_foods_invoice_number")
+  riteFoodsStatus        RiteFoodsStatus @default(NOT_SENT) @map("rite_foods_status")
+  orderRaisedByRFL       Boolean         @default(false) @map("order_raised_by_rfl")
+  orderRaisedAt          DateTime?       @map("order_raised_at")
+  riteFoodsLoadedDate    DateTime?       @map("rite_foods_loaded_date")
 
-    deliveryStatus        DeliveryStatus @default(PENDING) @map("delivery_status")
-    deliveredPallets      Int?           @default(0) @map("delivered_pallets")
-    deliveredPacks        Int?           @default(0) @map("delivered_packs")
-    deliveredAt           DateTime?      @map("delivered_at")
-    deliveredBy           String?        @map("delivered_by")
-    deliveryNotes         String?        @map("delivery_notes")
-    nonDeliveryReason     String?        @map("non_delivery_reason")
-    partialDeliveryReason String?        @map("partial_delivery_reason")
-    deliveryReviewedBy    String?        @map("delivery_reviewed_by")
-    deliveryReviewedAt    DateTime?      @map("delivery_reviewed_at")
+  deliveryStatus        DeliveryStatus @default(PENDING) @map("delivery_status")
+  deliveredPallets      Int?           @default(0) @map("delivered_pallets")
+  deliveredPacks        Int?           @default(0) @map("delivered_packs")
+  deliveredAt           DateTime?      @map("delivered_at")
+  deliveredBy           String?        @map("delivered_by")
+  deliveryNotes         String?        @map("delivery_notes")
+  nonDeliveryReason     String?        @map("non_delivery_reason")
+  partialDeliveryReason String?        @map("partial_delivery_reason")
+  deliveryReviewedBy    String?        @map("delivery_reviewed_by")
+  deliveryReviewedAt    DateTime?      @map("delivery_reviewed_at")
 
-    status             OrderStatus @default(PENDING)
-    transporterCompany String?     @map("transporter_company")
-    driverNumber       String?     @map("driver_number")
-    truckNumber        String?     @map("truck_number")
-    remark             String?
+  status             OrderStatus @default(PENDING)
+  transporterCompany String?     @map("transporter_company")
+  driverNumber       String?     @map("driver_number")
+  truckNumber        String?     @map("truck_number")
+  remark             String?
 
-    createdBy String   @map("created_by")
-    createdAt DateTime @default(now()) @map("created_at")
-    updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-    customer         Customer @relation(fields: [customerId], references: [id])
-    location         Location @relation(fields: [locationId], references: [id])
-    createdByUser    User     @relation("DistributionOrderCreator", fields: [createdBy], references: [id])
-    paymentConfirmer User?    @relation("PaymentConfirmer", fields: [paymentConfirmedBy], references: [id])
-    deliveryReviewer User?    @relation("DeliveryReviewer", fields: [deliveryReviewedBy], references: [id])
+  customer         Customer @relation(fields: [customerId], references: [id])
+  location         Location @relation(fields: [locationId], references: [id])
+  createdByUser    User     @relation("DistributionOrderCreator", fields: [createdBy], references: [id])
+  paymentConfirmer User?    @relation("PaymentConfirmer", fields: [paymentConfirmedBy], references: [id])
+  deliveryReviewer User?    @relation("DeliveryReviewer", fields: [deliveryReviewedBy], references: [id])
 
-    orderItems       DistributionOrderItem[]
-    priceAdjustments PriceAdjustment[]
-    transportOrder   TransportOrder?
-    profitAnalysis   ProfitAnalysis[]
-    paymentHistory   PaymentHistory[]
+  orderItems       DistributionOrderItem[]
+  priceAdjustments PriceAdjustment[]
+  transportOrder   TransportOrder?
+  profitAnalysis   ProfitAnalysis[]
+  paymentHistory   PaymentHistory[]
 
-    @@map("distribution_orders")
+  @@map("distribution_orders")
 }
 
 model PaymentHistory {
-    id      String @id @default(cuid())
-    orderId String @map("order_id")
+  id      String @id @default(cuid())
+  orderId String @map("order_id")
 
-    amount        Decimal       @db.Decimal(12, 2)
-    paymentType   PaymentType   @map("payment_type")
-    paymentMethod PaymentMethod @map("payment_method")
-    reference     String?
-    paidBy        String?       @map("paid_by")
-    receivedBy    String?       @map("received_by")
-    confirmedBy   String?       @map("confirmed_by")
-    notes         String?
+  amount        Decimal       @db.Decimal(12, 2)
+  paymentType   PaymentType   @map("payment_type")
+  paymentMethod PaymentMethod @map("payment_method")
+  reference     String?
+  paidBy        String?       @map("paid_by")
+  receivedBy    String?       @map("received_by")
+  confirmedBy   String?       @map("confirmed_by")
+  notes         String?
 
-    createdAt DateTime @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
-    order DistributionOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order DistributionOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
-    @@map("payment_history")
+  @@map("payment_history")
 }
 
 model DistributionOrderItem {
-    id        String @id @default(cuid())
-    orderId   String @map("order_id")
-    productId String @map("product_id")
+  id        String @id @default(cuid())
+  orderId   String @map("order_id")
+  productId String @map("product_id")
 
-    pallets Int
-    packs   Int
-    amount  Decimal @db.Decimal(10, 2)
+  pallets Int
+  packs   Int
+  amount  Decimal @db.Decimal(10, 2)
 
-    order   DistributionOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
-    product Product           @relation(fields: [productId], references: [id])
+  order   DistributionOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product           @relation(fields: [productId], references: [id])
 
-    @@map("distribution_order_items")
+  @@map("distribution_order_items")
 }
 
 model HaulageRate {
-    id           String  @id @default(cuid())
-    locationId   String  @map("location_id")
-    locationCode String? @map("location_code")
+  id           String  @id @default(cuid())
+  locationId   String  @map("location_id")
+  locationCode String? @map("location_code")
 
-    distance  Decimal @db.Decimal(8, 2)
-    rate15Ton Decimal @map("rate_15_ton") @db.Decimal(10, 2)
-    rate20Ton Decimal @map("rate_20_ton") @db.Decimal(10, 2)
-    rate30Ton Decimal @map("rate_30_ton") @db.Decimal(10, 2)
+  distance  Decimal @db.Decimal(8, 2)
+  rate15Ton Decimal @map("rate_15_ton") @db.Decimal(10, 2)
+  rate20Ton Decimal @map("rate_20_ton") @db.Decimal(10, 2)
+  rate30Ton Decimal @map("rate_30_ton") @db.Decimal(10, 2)
 
-    effectiveDate DateTime @default(now()) @map("effective_date")
-    isActive      Boolean  @default(true) @map("is_active")
+  effectiveDate DateTime @default(now()) @map("effective_date")
+  isActive      Boolean  @default(true) @map("is_active")
 
-    createdAt DateTime @default(now()) @map("created_at")
-    updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-    location Location @relation(fields: [locationId], references: [id])
+  location Location @relation(fields: [locationId], references: [id])
 
-    @@unique([locationId, effectiveDate])
-    @@map("haulage_rates")
+  @@unique([locationId, effectiveDate])
+  @@map("haulage_rates")
 }
 
 model SalaryRate {
-    id           String @id @default(cuid())
-    locationId   String @map("location_id")
-    locationName String @map("location_name")
+  id           String @id @default(cuid())
+  locationId   String @map("location_id")
+  locationName String @map("location_name")
 
-    tripAllowance Decimal @map("trip_allowance") @db.Decimal(8, 2)
-    driverWages   Decimal @map("driver_wages") @db.Decimal(8, 2)
-    motorBoyWages Decimal @map("motor_boy_wages") @db.Decimal(8, 2)
-    totalWages    Decimal @map("total_wages") @db.Decimal(8, 2)
+  tripAllowance Decimal @map("trip_allowance") @db.Decimal(8, 2)
+  driverWages   Decimal @map("driver_wages") @db.Decimal(8, 2)
+  motorBoyWages Decimal @map("motor_boy_wages") @db.Decimal(8, 2)
+  totalWages    Decimal @map("total_wages") @db.Decimal(8, 2)
 
-    effectiveDate DateTime @default(now()) @map("effective_date")
-    isActive      Boolean  @default(true) @map("is_active")
+  effectiveDate DateTime @default(now()) @map("effective_date")
+  isActive      Boolean  @default(true) @map("is_active")
 
-    createdAt DateTime @default(now()) @map("created_at")
-    updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-    location Location @relation(fields: [locationId], references: [id])
+  location Location @relation(fields: [locationId], references: [id])
 
-    @@unique([locationId, effectiveDate])
-    @@map("salary_rates")
+  @@unique([locationId, effectiveDate])
+  @@map("salary_rates")
 }
 
 model PalletPricing {
-    id             String   @id @default(cuid())
-    productId      String   @map("product_id")
-    locationId     String?  @map("location_id")
-    pricePerPack   Decimal  @map("price_per_pack") @db.Decimal(10, 2)
-    fuelAdjustment Decimal  @default(0) @map("fuel_adjustment") @db.Decimal(5, 2)
-    effectiveDate  DateTime @default(now()) @map("effective_date")
-    isActive       Boolean  @default(true) @map("is_active")
+  id             String   @id @default(cuid())
+  productId      String   @map("product_id")
+  locationId     String?  @map("location_id")
+  pricePerPack   Decimal  @map("price_per_pack") @db.Decimal(10, 2)
+  fuelAdjustment Decimal  @default(0) @map("fuel_adjustment") @db.Decimal(5, 2)
+  effectiveDate  DateTime @default(now()) @map("effective_date")
+  isActive       Boolean  @default(true) @map("is_active")
 
-    createdAt DateTime @default(now()) @map("created_at")
-    updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-    product  Product   @relation(fields: [productId], references: [id])
-    location Location? @relation(fields: [locationId], references: [id])
+  product  Product   @relation(fields: [productId], references: [id])
+  location Location? @relation(fields: [locationId], references: [id])
 
-    @@map("pallet_pricing")
+  @@map("pallet_pricing")
 }
 
 model PriceAdjustment {
-    id                        String  @id @default(cuid())
-    orderId                   String  @map("order_id")
-    originalAmount            Decimal @map("original_amount") @db.Decimal(12, 2)
-    adjustedAmount            Decimal @map("adjusted_amount") @db.Decimal(12, 2)
-    adjustmentType            String  @default("RITE_FOODS_PRICE_CHANGE") @map("adjustment_type")
-    reason                    String  @map("reason") // Required now
-    riteFoodsInvoiceReference String? @map("rite_foods_invoice_ref") // Optional
-    adjustedBy                String  @map("adjusted_by") // Who made adjustment
+  id                        String  @id @default(cuid())
+  orderId                   String  @map("order_id")
+  originalAmount            Decimal @map("original_amount") @db.Decimal(12, 2)
+  adjustedAmount            Decimal @map("adjusted_amount") @db.Decimal(12, 2)
+  adjustmentType            String  @default("RITE_FOODS_PRICE_CHANGE") @map("adjustment_type")
+  reason                    String  @map("reason") // Required now
+  riteFoodsInvoiceReference String? @map("rite_foods_invoice_ref") // Optional
+  adjustedBy                String  @map("adjusted_by") // Who made adjustment
 
-    createdAt DateTime @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
-    order    DistributionOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
-    adjuster User              @relation(fields: [adjustedBy], references: [id])
+  order    DistributionOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  adjuster User              @relation(fields: [adjustedBy], references: [id])
 
-    @@map("price_adjustments")
+  @@map("price_adjustments")
 }
 
 model TruckCapacity {
-    id                 String  @id @default(cuid())
-    truckId            String  @unique @map("truck_id")
-    registrationNumber String? @map("registration_number")
-    maxPallets         Int     @default(12) @map("max_pallets")
-    currentLoad        Int     @default(0) @map("current_load")
-    availableSpace     Int     @map("available_space")
-    capacity           Int     @default(15)
-    capacityType       String  @default("15TON") @map("capacity_type")
-    isActive           Boolean @default(true) @map("is_active")
+  id                 String  @id @default(cuid())
+  truckId            String  @unique @map("truck_id")
+  registrationNumber String? @map("registration_number")
+  maxPallets         Int     @default(12) @map("max_pallets")
+  currentLoad        Int     @default(0) @map("current_load")
+  availableSpace     Int     @map("available_space")
+  capacity           Int     @default(15)
+  capacityType       String  @default("15TON") @map("capacity_type")
+  isActive           Boolean @default(true) @map("is_active")
 
-    make  String? @map("make")
-    model String? @map("model")
-    year  Int?    @map("year")
-    notes String? @map("notes")
+  make  String? @map("make")
+  model String? @map("model")
+  year  Int?    @map("year")
+  notes String? @map("notes")
 
-    createdAt DateTime @default(now()) @map("created_at")
-    updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-    transportOrders TransportOrder[]
-    expenses        Expense[]
+  transportOrders TransportOrder[]
+  expenses        Expense[]
 
-    @@map("truck_capacity")
+  @@map("truck_capacity")
 }
 
 // ================================
@@ -397,47 +408,65 @@ model TruckCapacity {
 // ================================
 
 model TransportOrder {
-    id                  String  @id @default(cuid())
-    distributionOrderId String? @unique @map("distribution_order_id")
-    orderNumber         String  @unique @map("order_number")
-    invoiceNumber       String? @map("invoice_number")
-    locationId          String  @map("location_id")
-    truckId             String? @map("truck_id")
+  // Primary and Foreign Keys
+  id                  String  @id @default(cuid())
+  distributionOrderId String? @unique @map("distribution_order_id")
+  orderNumber         String  @unique @map("order_number")
+  invoiceNumber       String? @map("invoice_number")
+  locationId          String  @map("location_id")
+  truckId             String? @map("truck_id")
 
-    totalOrderAmount Decimal @map("total_order_amount") @db.Decimal(12, 2)
+  // Customer Information
+  name            String
+  phone           String
+  pickupLocation  String
+  deliveryAddress String
 
-    fuelRequired             Decimal  @map("fuel_required") @db.Decimal(8, 2)
-    fuelPricePerLiter        Decimal  @map("fuel_price_per_liter") @db.Decimal(6, 2)
-    totalFuelCost            Decimal  @map("total_fuel_cost") @db.Decimal(10, 2)
-    serviceChargeExpense     Decimal  @map("service_charge_expense") @db.Decimal(10, 2)
-    driverWages              Decimal  @default(0) @map("driver_wages") @db.Decimal(8, 2)
-    truckExpenses            Decimal  @default(0) @map("truck_expenses") @db.Decimal(10, 2)
-    truckExpensesDescription String?  @map("truck_expenses_description") // NEW
-    baseHaulageRate          Decimal? @map("base_haulage_rate") @db.Decimal(10, 2)
-    serviceChargePercent     Decimal  @default(10.00) @map("service_charge_percent") @db.Decimal(5, 2)
-    tripAllowance            Decimal  @default(0) @map("trip_allowance") @db.Decimal(8, 2)
-    motorBoyWages            Decimal  @default(0) @map("motor_boy_wages") @db.Decimal(8, 2)
+  // Order Details
+  totalOrderAmount Decimal  @map("total_order_amount") @db.Decimal(12, 2)
+  baseHaulageRate  Decimal? @map("base_haulage_rate") @db.Decimal(10, 2)
 
-    totalExpenses Decimal @map("total_expenses") @db.Decimal(12, 2)
-    grossProfit   Decimal @default(0) @map("gross_profit") @db.Decimal(12, 2)
-    netProfit     Decimal @default(0) @map("net_profit") @db.Decimal(12, 2)
-    profitMargin  Decimal @default(0) @map("profit_margin") @db.Decimal(5, 2)
+  // Fuel Information
+  fuelRequired      Decimal @map("fuel_required") @db.Decimal(8, 2)
+  fuelPricePerLiter Decimal @map("fuel_price_per_liter") @db.Decimal(6, 2)
+  totalFuelCost     Decimal @map("total_fuel_cost") @db.Decimal(10, 2)
 
-    driverDetails  String?
-    deliveryStatus OrderStatus @default(PENDING) @map("delivery_status")
-    deliveryDate   DateTime?   @map("delivery_date")
+  // Wages and Allowances
+  driverWages   Decimal @default(0) @map("driver_wages") @db.Decimal(8, 2)
+  motorBoyWages Decimal @default(0) @map("motor_boy_wages") @db.Decimal(8, 2)
+  tripAllowance Decimal @default(0) @map("trip_allowance") @db.Decimal(8, 2)
 
-    createdBy String   @map("created_by")
-    createdAt DateTime @default(now()) @map("created_at")
-    updatedAt DateTime @updatedAt @map("updated_at")
+  // Expenses and Charges
+  totalTripExpenses        Decimal @map("total_trip_expenses") @db.Decimal(12, 2)
+  serviceChargeExpense     Decimal @map("service_charge_expense") @db.Decimal(10, 2)
+  serviceChargePercent     Decimal @default(10.00) @map("service_charge_percent") @db.Decimal(5, 2)
+  truckExpenses            Decimal @default(0) @map("truck_expenses") @db.Decimal(10, 2)
+  truckExpensesDescription String? @map("truck_expenses_description")
 
-    location          Location           @relation(fields: [locationId], references: [id])
-    truck             TruckCapacity?     @relation(fields: [truckId], references: [truckId])
-    distributionOrder DistributionOrder? @relation(fields: [distributionOrderId], references: [id])
-    createdByUser     User               @relation(fields: [createdBy], references: [id])
-    profitAnalysis    ProfitAnalysis[]
+  // Financial Summaries
+  totalExpenses Decimal @map("total_expenses") @db.Decimal(12, 2)
+  grossProfit   Decimal @default(0) @map("gross_profit") @db.Decimal(12, 2)
+  netProfit     Decimal @default(0) @map("net_profit") @db.Decimal(12, 2)
+  profitMargin  Decimal @default(0) @map("profit_margin") @db.Decimal(5, 2)
 
-    @@map("transport_orders")
+  // Delivery Information
+  driverDetails  String?
+  deliveryStatus OrderStatus @default(PENDING) @map("delivery_status")
+  deliveryDate   DateTime?   @map("delivery_date")
+
+  // Timestamps and Relations
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String   @map("created_by")
+
+  // Relations
+  location          Location           @relation(fields: [locationId], references: [id])
+  truck             TruckCapacity?     @relation(fields: [truckId], references: [truckId])
+  distributionOrder DistributionOrder? @relation(fields: [distributionOrderId], references: [id])
+  createdByUser     User               @relation(fields: [createdBy], references: [id])
+  profitAnalysis    ProfitAnalysis[]
+
+  @@map("transport_orders")
 }
 
 // ================================
@@ -445,35 +474,35 @@ model TransportOrder {
 // ================================
 
 model Expense {
-    id          String          @id @default(cuid())
-    expenseType ExpenseType     @map("expense_type")
-    category    ExpenseCategory
-    amount      Decimal         @db.Decimal(12, 2)
-    description String?
-    referenceId String?         @map("reference_id")
-    expenseDate DateTime        @map("expense_date")
+  id          String          @id @default(cuid())
+  expenseType ExpenseType     @map("expense_type")
+  category    ExpenseCategory
+  amount      Decimal         @db.Decimal(12, 2)
+  description String?
+  referenceId String?         @map("reference_id")
+  expenseDate DateTime        @map("expense_date")
 
-    locationId   String? @map("location_id")
-    truckId      String? @map("truck_id")
-    departmentId String? @map("department_id")
+  locationId   String? @map("location_id")
+  truckId      String? @map("truck_id")
+  departmentId String? @map("department_id")
 
-    status     ExpenseStatus @default(PENDING)
-    approvedBy String?       @map("approved_by")
-    approvedAt DateTime?     @map("approved_at")
+  status     ExpenseStatus @default(PENDING)
+  approvedBy String?       @map("approved_by")
+  approvedAt DateTime?     @map("approved_at")
 
-    receiptUrl    String? @map("receipt_url")
-    receiptNumber String? @map("receipt_number")
+  receiptUrl    String? @map("receipt_url")
+  receiptNumber String? @map("receipt_number")
 
-    createdBy String   @map("created_by")
-    createdAt DateTime @default(now()) @map("created_at")
-    updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-    location      Location?      @relation(fields: [locationId], references: [id])
-    truck         TruckCapacity? @relation(fields: [truckId], references: [truckId])
-    createdByUser User           @relation(fields: [createdBy], references: [id])
-    approver      User?          @relation("ExpenseApprover", fields: [approvedBy], references: [id])
+  location      Location?      @relation(fields: [locationId], references: [id])
+  truck         TruckCapacity? @relation(fields: [truckId], references: [truckId])
+  createdByUser User           @relation(fields: [createdBy], references: [id])
+  approver      User?          @relation("ExpenseApprover", fields: [approvedBy], references: [id])
 
-    @@map("expenses")
+  @@map("expenses")
 }
 
 // ================================
@@ -481,114 +510,276 @@ model Expense {
 // ================================
 
 model ProfitAnalysis {
-    id           String       @id @default(cuid())
-    analysisType AnalysisType @map("analysis_type")
-    referenceId  String?      @map("reference_id")
-    period       String?
+  id           String       @id @default(cuid())
+  analysisType AnalysisType @map("analysis_type")
+  referenceId  String?      @map("reference_id")
+  period       String?
 
-    totalRevenue        Decimal @map("total_revenue") @db.Decimal(15, 2)
-    distributionRevenue Decimal @default(0) @map("distribution_revenue") @db.Decimal(15, 2)
-    transportRevenue    Decimal @default(0) @map("transport_revenue") @db.Decimal(15, 2)
-    warehouseRevenue    Decimal @default(0) @map("warehouse_revenue") @db.Decimal(15, 2)
+  totalRevenue        Decimal @map("total_revenue") @db.Decimal(15, 2)
+  distributionRevenue Decimal @default(0) @map("distribution_revenue") @db.Decimal(15, 2)
+  transportRevenue    Decimal @default(0) @map("transport_revenue") @db.Decimal(15, 2)
+  warehouseRevenue    Decimal @default(0) @map("warehouse_revenue") @db.Decimal(15, 2)
 
-    totalCosts          Decimal @map("total_costs") @db.Decimal(15, 2)
-    costOfGoodsSold     Decimal @default(0) @map("cost_of_goods_sold") @db.Decimal(15, 2)
-    transportCosts      Decimal @default(0) @map("transport_costs") @db.Decimal(15, 2)
-    warehouseCOGS       Decimal @default(0) @map("warehouse_cogs") @db.Decimal(15, 2)
-    fuelCosts           Decimal @default(0) @map("fuel_costs") @db.Decimal(15, 2)
-    driverWages         Decimal @default(0) @map("driver_wages") @db.Decimal(15, 2)
-    truckExpenses       Decimal @default(0) @map("truck_expenses") @db.Decimal(15, 2)
-    serviceCharges      Decimal @default(0) @map("service_charges") @db.Decimal(15, 2)
-    operationalExpenses Decimal @default(0) @map("operational_expenses") @db.Decimal(15, 2)
+  totalCosts          Decimal @map("total_costs") @db.Decimal(15, 2)
+  costOfGoodsSold     Decimal @default(0) @map("cost_of_goods_sold") @db.Decimal(15, 2)
+  transportCosts      Decimal @default(0) @map("transport_costs") @db.Decimal(15, 2)
+  warehouseCOGS       Decimal @default(0) @map("warehouse_cogs") @db.Decimal(15, 2)
+  fuelCosts           Decimal @default(0) @map("fuel_costs") @db.Decimal(15, 2)
+  driverWages         Decimal @default(0) @map("driver_wages") @db.Decimal(15, 2)
+  truckExpenses       Decimal @default(0) @map("truck_expenses") @db.Decimal(15, 2)
+  serviceCharges      Decimal @default(0) @map("service_charges") @db.Decimal(15, 2)
+  operationalExpenses Decimal @default(0) @map("operational_expenses") @db.Decimal(15, 2)
 
-    grossProfit  Decimal @map("gross_profit") @db.Decimal(15, 2)
-    netProfit    Decimal @map("net_profit") @db.Decimal(15, 2)
-    profitMargin Decimal @map("profit_margin") @db.Decimal(5, 2)
+  grossProfit  Decimal @map("gross_profit") @db.Decimal(15, 2)
+  netProfit    Decimal @map("net_profit") @db.Decimal(15, 2)
+  profitMargin Decimal @map("profit_margin") @db.Decimal(5, 2)
 
-    totalOrders       Int     @default(0) @map("total_orders")
-    totalPacks        Int     @default(0) @map("total_packs")
-    averageOrderValue Decimal @default(0) @map("average_order_value") @db.Decimal(10, 2)
+  totalOrders       Int     @default(0) @map("total_orders")
+  totalPacks        Int     @default(0) @map("total_packs")
+  averageOrderValue Decimal @default(0) @map("average_order_value") @db.Decimal(10, 2)
 
-    createdAt DateTime @default(now()) @map("created_at")
-    updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-    distributionOrder DistributionOrder? @relation(fields: [referenceId], references: [id], map: "profit_analysis_distribution_order_fkey")
-    transportOrder    TransportOrder?    @relation(fields: [referenceId], references: [id], map: "profit_analysis_transport_order_fkey")
+  distributionOrder DistributionOrder? @relation(fields: [referenceId], references: [id], map: "profit_analysis_distribution_order_fkey")
+  transportOrder    TransportOrder?    @relation(fields: [referenceId], references: [id], map: "profit_analysis_transport_order_fkey")
 
-    @@map("profit_analysis")
+  @@map("profit_analysis")
 }
 
 // ================================
 // WAREHOUSE ARM
 // ================================
 
+model WarehouseCustomer {
+  id      String  @id @default(cuid())
+  name    String
+  email   String?
+  phone   String?
+  address String?
+
+  customerType           String         @default("INDIVIDUAL") @map("customer_type")
+  businessName           String?        @map("business_name")
+  preferredPaymentMethod PaymentMethod? @map("preferred_payment_method")
+
+  creditLimit       Decimal?  @map("credit_limit") @db.Decimal(12, 2)
+  totalPurchases    Int       @default(0) @map("total_purchases")
+  totalSpent        Decimal   @default(0) @map("total_spent") @db.Decimal(15, 2)
+  averageOrderValue Decimal   @default(0) @map("average_order_value") @db.Decimal(12, 2)
+  lastPurchaseDate  DateTime? @map("last_purchase_date")
+
+  notes    String?
+  isActive Boolean @default(true) @map("is_active")
+
+  createdBy     String? @map("created_by")
+  createdByUser User?   @relation("WarehouseCustomersCreatedBy", fields: [createdBy], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  sales            WarehouseSale[]
+  discountRequests DiscountApprovalRequest[]
+  discounts        WarehouseCustomerDiscount[]
+
+  @@map("warehouse_customers")
+}
+
 model WarehouseInventory {
-    id        String @id @default(cuid())
-    productId String @map("product_id")
+  id        String @id @default(cuid())
+  productId String @map("product_id")
 
-    pallets Int @default(0)
-    packs   Int @default(0)
-    units   Int @default(0)
+  pallets Int @default(0)
+  packs   Int @default(0)
+  units   Int @default(0)
 
-    reorderLevel  Int     @default(0) @map("reorder_level")
-    maxStockLevel Int?    @map("max_stock_level")
-    location      String?
+  reorderLevel  Int     @default(0) @map("reorder_level")
+  maxStockLevel Int?    @map("max_stock_level")
+  location      String?
 
-    lastUpdated DateTime @updatedAt @map("last_updated")
-    createdAt   DateTime @default(now()) @map("created_at")
+  lastUpdated DateTime @updatedAt @map("last_updated")
+  createdAt   DateTime @default(now()) @map("created_at")
 
-    product Product @relation(fields: [productId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
 
-    @@unique([productId, location])
-    @@map("warehouse_inventory")
+  @@unique([productId, location])
+  @@map("warehouse_inventory")
 }
 
 model WarehouseSale {
-    id          String   @id @default(cuid())
-    productId   String   @map("product_id")
-    quantity    Int
-    unitType    UnitType @map("unit_type")
-    unitPrice   Decimal  @map("unit_price") @db.Decimal(10, 2)
-    totalAmount Decimal  @map("total_amount") @db.Decimal(10, 2)
+  id                  String   @id @default(cuid())
+  productId           String   @map("product_id")
+  warehouseCustomerId String?  @map("warehouse_customer_id")
+  quantity            Int
+  unitType            UnitType @map("unit_type")
+  unitPrice           Decimal  @map("unit_price") @db.Decimal(10, 2)
+  totalAmount         Decimal  @map("total_amount") @db.Decimal(10, 2)
 
-    costPerUnit  Decimal @map("cost_per_unit") @db.Decimal(10, 2)
-    totalCost    Decimal @map("total_cost") @db.Decimal(10, 2)
-    grossProfit  Decimal @map("gross_profit") @db.Decimal(10, 2)
-    profitMargin Decimal @map("profit_margin") @db.Decimal(5, 2)
+  costPerUnit  Decimal @map("cost_per_unit") @db.Decimal(10, 2)
+  totalCost    Decimal @map("total_cost") @db.Decimal(10, 2)
+  grossProfit  Decimal @map("gross_profit") @db.Decimal(10, 2)
+  profitMargin Decimal @map("profit_margin") @db.Decimal(5, 2)
 
-    paymentMethod PaymentMethod @map("payment_method")
+  paymentMethod PaymentMethod @map("payment_method")
 
-    customerName  String? @map("customer_name")
-    customerPhone String? @map("customer_phone")
+  customerName  String? @map("customer_name")
+  customerPhone String? @map("customer_phone")
 
-    receiptNumber String @unique @map("receipt_number")
+  receiptNumber String @unique @map("receipt_number")
 
-    salesOfficer String   @map("sales_officer")
-    createdAt    DateTime @default(now()) @map("created_at")
+  salesOfficer String   @map("sales_officer")
+  createdAt    DateTime @default(now()) @map("created_at")
 
-    product          Product @relation(fields: [productId], references: [id])
-    salesOfficerUser User    @relation(fields: [salesOfficer], references: [id])
+  originalUnitPrice   Decimal? @map("original_unit_price") @db.Decimal(10, 2)
+  discountApplied     Boolean  @default(false) @map("discount_applied")
+  totalDiscountAmount Decimal? @map("total_discount_amount") @db.Decimal(12, 2)
+  discountPercentage  Decimal? @map("discount_percentage") @db.Decimal(5, 2)
+  discountReason      String?  @map("discount_reason")
+  approvedBy          String?  @map("approved_by")
 
-    @@map("warehouse_sales")
+  product           Product                 @relation(fields: [productId], references: [id])
+  warehouseCustomer WarehouseCustomer?      @relation(fields: [warehouseCustomerId], references: [id])
+  salesOfficerUser  User                    @relation(fields: [salesOfficer], references: [id])
+  discountApprover  User?                   @relation("WarehouseSaleApprovedBy", fields: [approvedBy], references: [id])
+  saleDiscounts     WarehouseSaleDiscount[]
+
+  @@map("warehouse_sales")
+}
+
+model WarehouseExpense {
+  id              String   @id @default(cuid())
+  expenseType     String   @map("expense_type")
+  category        String
+  amount          Decimal  @db.Decimal(12, 2)
+  description     String?
+  expenseDate     DateTime @map("expense_date")
+  productId       String?  @map("product_id")
+  location        String?
+  vendorName      String?  @map("vendor_name")
+  vendorContact   String?  @map("vendor_contact")
+  receiptNumber   String?  @map("receipt_number")
+  receiptUrl      String?  @map("receipt_url")
+  notes           String?
+
+  status          String   @default("PENDING")
+  rejectionReason String?  @map("rejection_reason")
+  isPaid          Boolean  @default(false) @map("is_paid")
+  paymentDate     DateTime? @map("payment_date")
+  paymentMethod   PaymentMethod? @map("payment_method")
+  paymentReference String? @map("payment_reference")
+
+  createdBy  String @map("created_by")
+  approvedBy String? @map("approved_by")
+  approvedAt DateTime? @map("approved_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  product        Product? @relation(fields: [productId], references: [id])
+  createdByUser  User     @relation("WarehouseExpensesCreatedBy", fields: [createdBy], references: [id])
+  approver       User?    @relation("WarehouseExpensesApprovedBy", fields: [approvedBy], references: [id])
+
+  @@map("warehouse_expenses")
+}
+
+model WarehouseCustomerDiscount {
+  id                    String    @id @default(cuid())
+  warehouseCustomerId   String    @map("warehouse_customer_id")
+  productId             String?   @map("product_id")
+  discountType          String    @map("discount_type")
+  discountValue         Decimal   @map("discount_value") @db.Decimal(10, 2)
+  minimumQuantity       Int?      @map("minimum_quantity")
+  maximumDiscountAmount Decimal?  @map("maximum_discount_amount") @db.Decimal(10, 2)
+  usageLimit            Int?      @map("usage_limit")
+  usageCount            Int       @default(0) @map("usage_count")
+  totalDiscountGiven    Decimal   @default(0) @map("total_discount_given") @db.Decimal(12, 2)
+  validFrom             DateTime  @map("valid_from")
+  validUntil            DateTime? @map("valid_until")
+  reason                String?
+  notes                 String?
+  status                String    @default("APPROVED")
+  requestedBy           String?   @map("requested_by")
+  approvedBy            String?   @map("approved_by")
+  approvedAt            DateTime? @map("approved_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  warehouseCustomer WarehouseCustomer       @relation(fields: [warehouseCustomerId], references: [id])
+  product           Product?                @relation(fields: [productId], references: [id])
+  requestedByUser   User?                   @relation("WarehouseDiscountRequestedBy", fields: [requestedBy], references: [id])
+  approvedByUser    User?                   @relation("WarehouseDiscountApprovedBy", fields: [approvedBy], references: [id])
+  saleDiscounts     WarehouseSaleDiscount[]
+
+  @@map("warehouse_customer_discounts")
+}
+
+model WarehouseSaleDiscount {
+  id                    String   @id @default(cuid())
+  warehouseSaleId       String   @map("warehouse_sale_id")
+  customerDiscountId    String?  @map("customer_discount_id")
+  originalUnitPrice     Decimal? @map("original_unit_price") @db.Decimal(10, 2)
+  discountedUnitPrice   Decimal? @map("discounted_unit_price") @db.Decimal(10, 2)
+  discountAmountPerUnit Decimal  @map("discount_amount_per_unit") @db.Decimal(10, 2)
+  totalDiscountAmount   Decimal  @map("total_discount_amount") @db.Decimal(12, 2)
+  quantityApplied       Int      @map("quantity_applied")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  warehouseSale    WarehouseSale              @relation(fields: [warehouseSaleId], references: [id], onDelete: Cascade)
+  customerDiscount WarehouseCustomerDiscount? @relation(fields: [customerDiscountId], references: [id], onDelete: SetNull)
+
+  @@map("warehouse_sale_discounts")
+}
+
+model DiscountApprovalRequest {
+  id                     String    @id @default(cuid())
+  warehouseCustomerId    String    @map("warehouse_customer_id")
+  productId              String?   @map("product_id")
+  requestedDiscountType  String    @map("requested_discount_type")
+  requestedDiscountValue Decimal   @map("requested_discount_value") @db.Decimal(10, 2)
+  minimumQuantity        Int?      @map("minimum_quantity")
+  maximumDiscountAmount  Decimal?  @map("maximum_discount_amount") @db.Decimal(10, 2)
+  validFrom              DateTime  @map("valid_from")
+  validUntil             DateTime? @map("valid_until")
+  reason                 String
+  businessJustification  String?   @map("business_justification")
+  estimatedImpact        Decimal?  @map("estimated_impact") @db.Decimal(12, 2)
+
+  status          String  @default("PENDING")
+  adminNotes      String? @map("admin_notes")
+  rejectionReason String? @map("rejection_reason")
+
+  requestedBy String    @map("requested_by")
+  approvedBy  String?   @map("approved_by")
+  approvedAt  DateTime? @map("approved_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  warehouseCustomer WarehouseCustomer @relation(fields: [warehouseCustomerId], references: [id])
+  product           Product?          @relation(fields: [productId], references: [id])
+  requestedByUser   User              @relation("DiscountRequestRequestedBy", fields: [requestedBy], references: [id])
+  approvedByUser    User?             @relation("DiscountRequestApprovedBy", fields: [approvedBy], references: [id])
+
+  @@map("discount_approval_requests")
 }
 
 model CashFlow {
-    id              String          @id @default(cuid())
-    transactionType TransactionType @map("transaction_type")
-    amount          Decimal         @db.Decimal(12, 2)
-    paymentMethod   PaymentMethod   @map("payment_method")
-    description     String?
-    referenceNumber String?         @map("reference_number")
+  id              String          @id @default(cuid())
+  transactionType TransactionType @map("transaction_type")
+  amount          Decimal         @db.Decimal(12, 2)
+  paymentMethod   PaymentMethod   @map("payment_method")
+  description     String?
+  referenceNumber String?         @map("reference_number")
 
-    reconciliationDate DateTime? @map("reconciliation_date") @db.Date
-    isReconciled       Boolean   @default(false) @map("is_reconciled")
+  reconciliationDate DateTime? @map("reconciliation_date") @db.Date
+  isReconciled       Boolean   @default(false) @map("is_reconciled")
 
-    cashier   String   @map("cashier")
-    createdAt DateTime @default(now()) @map("created_at")
+  cashier   String   @map("cashier")
+  createdAt DateTime @default(now()) @map("created_at")
 
-    cashierUser User @relation(fields: [cashier], references: [id])
+  cashierUser User @relation(fields: [cashier], references: [id])
 
-    @@map("cash_flow")
+  @@map("cash_flow")
 }
 
 // ================================
@@ -596,30 +787,30 @@ model CashFlow {
 // ================================
 
 model KPIMetrics {
-    id         String     @id @default(cuid())
-    metricType KPIType    @map("metric_type")
-    period     String
-    periodType PeriodType @map("period_type")
+  id         String     @id @default(cuid())
+  metricType KPIType    @map("metric_type")
+  period     String
+  periodType PeriodType @map("period_type")
 
-    totalRevenue Decimal? @map("total_revenue") @db.Decimal(15, 2)
-    totalProfit  Decimal? @map("total_profit") @db.Decimal(15, 2)
-    profitMargin Decimal? @map("profit_margin") @db.Decimal(5, 2)
-    costRatio    Decimal? @map("cost_ratio") @db.Decimal(5, 2)
+  totalRevenue Decimal? @map("total_revenue") @db.Decimal(15, 2)
+  totalProfit  Decimal? @map("total_profit") @db.Decimal(15, 2)
+  profitMargin Decimal? @map("profit_margin") @db.Decimal(5, 2)
+  costRatio    Decimal? @map("cost_ratio") @db.Decimal(5, 2)
 
-    totalOrders        Int?     @map("total_orders")
-    totalPacksSold     Int?     @map("total_packs_sold")
-    targetAchievement  Decimal? @map("target_achievement") @db.Decimal(5, 2)
-    onTimeDeliveryRate Decimal? @map("on_time_delivery_rate") @db.Decimal(5, 2)
+  totalOrders        Int?     @map("total_orders")
+  totalPacksSold     Int?     @map("total_packs_sold")
+  targetAchievement  Decimal? @map("target_achievement") @db.Decimal(5, 2)
+  onTimeDeliveryRate Decimal? @map("on_time_delivery_rate") @db.Decimal(5, 2)
 
-    revenuePerTruckTrip Decimal? @map("revenue_per_truck_trip") @db.Decimal(10, 2)
-    costPerPack         Decimal? @map("cost_per_pack") @db.Decimal(8, 2)
-    fuelEfficiency      Decimal? @map("fuel_efficiency") @db.Decimal(8, 2)
+  revenuePerTruckTrip Decimal? @map("revenue_per_truck_trip") @db.Decimal(10, 2)
+  costPerPack         Decimal? @map("cost_per_pack") @db.Decimal(8, 2)
+  fuelEfficiency      Decimal? @map("fuel_efficiency") @db.Decimal(8, 2)
 
-    createdAt DateTime @default(now()) @map("created_at")
-    updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-    @@unique([metricType, period, periodType])
-    @@map("kpi_metrics")
+  @@unique([metricType, period, periodType])
+  @@map("kpi_metrics")
 }
 
 // ================================
@@ -627,15 +818,15 @@ model KPIMetrics {
 // ================================
 
 model SystemConfig {
-    id          String  @id @default(cuid())
-    key         String  @unique
-    value       Json
-    description String?
+  id          String  @id @default(cuid())
+  key         String  @unique
+  value       Json
+  description String?
 
-    updatedAt DateTime @updatedAt @map("updated_at")
-    updatedBy String   @map("updated_by")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  updatedBy String   @map("updated_by")
 
-    @@map("system_config")
+  @@map("system_config")
 }
 
 // ================================
@@ -643,47 +834,47 @@ model SystemConfig {
 // ================================
 
 model DistributionAnalytics {
-    id           String  @id @default(cuid())
-    analysisType String  @map("analysis_type")
-    period       String?
+  id           String  @id @default(cuid())
+  analysisType String  @map("analysis_type")
+  period       String?
 
-    totalRevenue      Decimal @map("total_revenue") @db.Decimal(15, 2)
-    costOfGoodsSold   Decimal @map("cost_of_goods_sold") @db.Decimal(15, 2)
-    grossProfit       Decimal @map("gross_profit") @db.Decimal(15, 2)
-    netProfit         Decimal @map("net_profit") @db.Decimal(15, 2)
-    profitMargin      Decimal @map("profit_margin") @db.Decimal(5, 2)
-    totalOrders       Int     @map("total_orders")
-    totalPacks        Int     @default(0) @map("total_packs")
-    totalPallets      Int     @default(0) @map("total_pallets")
-    averageOrderValue Decimal @default(0) @map("average_order_value") @db.Decimal(10, 2)
+  totalRevenue      Decimal @map("total_revenue") @db.Decimal(15, 2)
+  costOfGoodsSold   Decimal @map("cost_of_goods_sold") @db.Decimal(15, 2)
+  grossProfit       Decimal @map("gross_profit") @db.Decimal(15, 2)
+  netProfit         Decimal @map("net_profit") @db.Decimal(15, 2)
+  profitMargin      Decimal @map("profit_margin") @db.Decimal(5, 2)
+  totalOrders       Int     @map("total_orders")
+  totalPacks        Int     @default(0) @map("total_packs")
+  totalPallets      Int     @default(0) @map("total_pallets")
+  averageOrderValue Decimal @default(0) @map("average_order_value") @db.Decimal(10, 2)
 
-    createdAt DateTime @default(now()) @map("created_at")
-    updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-    @@map("distribution_analytics")
+  @@map("distribution_analytics")
 }
 
 model TransportAnalytics {
-    id           String  @id @default(cuid())
-    analysisType String  @map("analysis_type")
-    period       String?
+  id           String  @id @default(cuid())
+  analysisType String  @map("analysis_type")
+  period       String?
 
-    totalRevenue    Decimal @map("total_revenue") @db.Decimal(15, 2)
-    fuelCosts       Decimal @map("fuel_costs") @db.Decimal(15, 2)
-    driverWages     Decimal @map("driver_wages") @db.Decimal(15, 2)
-    serviceCharges  Decimal @map("service_charges") @db.Decimal(15, 2)
-    totalExpenses   Decimal @map("total_expenses") @db.Decimal(15, 2)
-    grossProfit     Decimal @map("gross_profit") @db.Decimal(15, 2)
-    netProfit       Decimal @map("net_profit") @db.Decimal(15, 2)
-    profitMargin    Decimal @default(0) @map("profit_margin") @db.Decimal(5, 2)
-    totalTrips      Int     @map("total_trips")
-    averageRevenue  Decimal @default(0) @map("average_revenue") @db.Decimal(10, 2)
-    totalFuelLiters Decimal @default(0) @map("total_fuel_liters") @db.Decimal(10, 2)
+  totalRevenue    Decimal @map("total_revenue") @db.Decimal(15, 2)
+  fuelCosts       Decimal @map("fuel_costs") @db.Decimal(15, 2)
+  driverWages     Decimal @map("driver_wages") @db.Decimal(15, 2)
+  serviceCharges  Decimal @map("service_charges") @db.Decimal(15, 2)
+  totalExpenses   Decimal @map("total_expenses") @db.Decimal(15, 2)
+  grossProfit     Decimal @map("gross_profit") @db.Decimal(15, 2)
+  netProfit       Decimal @map("net_profit") @db.Decimal(15, 2)
+  profitMargin    Decimal @default(0) @map("profit_margin") @db.Decimal(5, 2)
+  totalTrips      Int     @map("total_trips")
+  averageRevenue  Decimal @default(0) @map("average_revenue") @db.Decimal(10, 2)
+  totalFuelLiters Decimal @default(0) @map("total_fuel_liters") @db.Decimal(10, 2)
 
-    createdAt DateTime @default(now()) @map("created_at")
-    updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-    @@map("transport_analytics")
+  @@map("transport_analytics")
 }
 
 // ================================
@@ -691,151 +882,151 @@ model TransportAnalytics {
 // ================================
 
 enum UserRole {
-    SUPER_ADMIN
-    DISTRIBUTION_ADMIN
-    TRANSPORT_ADMIN
-    WAREHOUSE_ADMIN
-    DISTRIBUTION_SALES_REP
-    WAREHOUSE_SALES_OFFICER
-    CASHIER
-    TRANSPORT_STAFF
+  SUPER_ADMIN
+  DISTRIBUTION_ADMIN
+  TRANSPORT_ADMIN
+  WAREHOUSE_ADMIN
+  DISTRIBUTION_SALES_REP
+  WAREHOUSE_SALES_OFFICER
+  CASHIER
+  TRANSPORT_STAFF
 }
 
 enum ProductModule {
-    DISTRIBUTION
-    WAREHOUSE
-    BOTH
+  DISTRIBUTION
+  WAREHOUSE
+  BOTH
 }
 
 enum OrderStatus {
-    PENDING // Order created, awaiting payment
-    PAYMENT_CONFIRMED // Payment confirmed by accountant
-    SENT_TO_RITE_FOODS // Payment sent to Rite Foods
-    PROCESSING_BY_RFL // Rite Foods processing order
-    LOADED // Products loaded at Rite Foods ⭐ READY FOR TRANSPORT
-    IN_TRANSIT // Transport assigned, en route to customer
-    DELIVERED // Successfully delivered
-    PARTIALLY_DELIVERED // Partial delivery
-    CANCELLED // Order cancelled
-    RETURNED // Products returned
+  PENDING // Order created, awaiting payment
+  PAYMENT_CONFIRMED // Payment confirmed by accountant
+  SENT_TO_RITE_FOODS // Payment sent to Rite Foods
+  PROCESSING_BY_RFL // Rite Foods processing order
+  LOADED // Products loaded at Rite Foods ⭐ READY FOR TRANSPORT
+  IN_TRANSIT // Transport assigned, en route to customer
+  DELIVERED // Successfully delivered
+  PARTIALLY_DELIVERED // Partial delivery
+  CANCELLED // Order cancelled
+  RETURNED // Products returned
 }
 
 enum PaymentStatus {
-    PENDING
-    PARTIAL
-    CONFIRMED
-    OVERPAID
+  PENDING
+  PARTIAL
+  CONFIRMED
+  OVERPAID
 }
 
 enum PaymentMethod {
-    CASH
-    BANK_TRANSFER
-    CHECK
-    CARD
-    POS
-    WHATSAPP_TRANSFER
-    MOBILE_MONEY
+  CASH
+  BANK_TRANSFER
+  CHECK
+  CARD
+  POS
+  WHATSAPP_TRANSFER
+  MOBILE_MONEY
 }
 
 enum PaymentType {
-    TO_COMPANY
-    TO_RITE_FOODS
+  TO_COMPANY
+  TO_RITE_FOODS
 }
 
 enum RiteFoodsStatus {
-    NOT_SENT // Haven't paid Rite Foods yet
-    PAYMENT_SENT // Payment sent to Rite Foods
-    ORDER_RAISED // Rite Foods acknowledged order
-    PROCESSING // Rite Foods preparing products
-    LOADED // Products ready for pickup ⭐ CAN ASSIGN TRANSPORT NOW
-    DISPATCHED // Products dispatched (transport assigned)
+  NOT_SENT // Haven't paid Rite Foods yet
+  PAYMENT_SENT // Payment sent to Rite Foods
+  ORDER_RAISED // Rite Foods acknowledged order
+  PROCESSING // Rite Foods preparing products
+  LOADED // Products ready for pickup ⭐ CAN ASSIGN TRANSPORT NOW
+  DISPATCHED // Products dispatched (transport assigned)
 }
 
 enum DeliveryStatus {
-    PENDING
-    IN_TRANSIT
-    FULLY_DELIVERED
-    PARTIALLY_DELIVERED
-    FAILED
-    RETURNED
+  PENDING
+  IN_TRANSIT
+  FULLY_DELIVERED
+  PARTIALLY_DELIVERED
+  FAILED
+  RETURNED
 }
 
 enum ExpenseType {
-    TRUCK_EXPENSE
-    TRANSPORT_EXPENSE
-    DISTRIBUTION_EXPENSE
-    WAREHOUSE_EXPENSE
-    FUEL_COST
-    MAINTENANCE
-    SALARY_WAGES
-    OPERATIONAL
-    SERVICE_CHARGE
+  TRUCK_EXPENSE
+  TRANSPORT_EXPENSE
+  DISTRIBUTION_EXPENSE
+  WAREHOUSE_EXPENSE
+  FUEL_COST
+  MAINTENANCE
+  SALARY_WAGES
+  OPERATIONAL
+  SERVICE_CHARGE
 }
 
 enum ExpenseCategory {
-    FUEL
-    MAINTENANCE
-    REPAIRS
-    INSURANCE
-    DRIVER_WAGES
-    SERVICE_CHARGES
-    EQUIPMENT
-    UTILITIES
-    RENT
-    OFFICE_SUPPLIES
-    MARKETING
-    TRANSPORT_SERVICE_FEE
-    OTHER
+  FUEL
+  MAINTENANCE
+  REPAIRS
+  INSURANCE
+  DRIVER_WAGES
+  SERVICE_CHARGES
+  EQUIPMENT
+  UTILITIES
+  RENT
+  OFFICE_SUPPLIES
+  MARKETING
+  TRANSPORT_SERVICE_FEE
+  OTHER
 }
 
 enum ExpenseStatus {
-    PENDING
-    APPROVED
-    REJECTED
-    PAID
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
 }
 
 enum AnalysisType {
-    ORDER
-    TRANSPORT_TRIP
-    DAILY
-    WEEKLY
-    MONTHLY
-    QUARTERLY
-    YEARLY
-    LOCATION
-    CUSTOMER
-    PRODUCT
+  ORDER
+  TRANSPORT_TRIP
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+  LOCATION
+  CUSTOMER
+  PRODUCT
 }
 
 enum UnitType {
-    PALLETS
-    PACKS
-    UNITS
+  PALLETS
+  PACKS
+  UNITS
 }
 
 enum TransactionType {
-    CASH_IN
-    CASH_OUT
-    SALE
-    EXPENSE
-    ADJUSTMENT
+  CASH_IN
+  CASH_OUT
+  SALE
+  EXPENSE
+  ADJUSTMENT
 }
 
 enum KPIType {
-    OVERALL_PERFORMANCE
-    DISTRIBUTION_PERFORMANCE
-    TRANSPORT_PERFORMANCE
-    WAREHOUSE_PERFORMANCE
-    PROFITABILITY
-    EFFICIENCY
-    TARGET_ACHIEVEMENT
+  OVERALL_PERFORMANCE
+  DISTRIBUTION_PERFORMANCE
+  TRANSPORT_PERFORMANCE
+  WAREHOUSE_PERFORMANCE
+  PROFITABILITY
+  EFFICIENCY
+  TARGET_ACHIEVEMENT
 }
 
 enum PeriodType {
-    DAILY
-    WEEKLY
-    MONTHLY
-    QUARTERLY
-    YEARLY
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
 }

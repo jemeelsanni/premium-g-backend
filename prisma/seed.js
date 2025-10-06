@@ -63,7 +63,11 @@ async function main() {
     
     await safeDelete('auditLog', prisma.auditLog);
     await safeDelete('cashFlow', prisma.cashFlow);
+    await safeDelete('warehouseSaleDiscount', prisma.warehouseSaleDiscount);
     await safeDelete('warehouseSale', prisma.warehouseSale);
+    await safeDelete('warehouseCustomerDiscount', prisma.warehouseCustomerDiscount);
+    await safeDelete('discountApprovalRequest', prisma.discountApprovalRequest);
+    await safeDelete('warehouseCustomer', prisma.warehouseCustomer);
     await safeDelete('warehouseInventory', prisma.warehouseInventory);
     await safeDelete('transportOrder', prisma.transportOrder);
     await safeDelete('truckCapacity', prisma.truckCapacity);

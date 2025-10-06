@@ -152,7 +152,7 @@ router.get('/inventory', asyncHandler(async (req, res) => {
 
   res.json({
     success: true,
-    data: { inventory }
+    data: inventory 
   });
 }));
 
@@ -215,6 +215,77 @@ router.get('/products', asyncHandler(async (req, res) => {
 // ================================
 // WAREHOUSE SALES ROUTES
 // ================================
+
+// @route   GET /api/v1/warehouse/sales
+// @desc    Get warehouse sales with filtering and pagination
+// @access  Private (Warehouse module access)
+router.get('/sales',
+  authorizeModule('warehouse'),
+  [
+    query('page').optional().isInt({ min: 1 }).toInt(),
+    query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
+    query('customerId').optional(),
+    query('productId').optional(),
+    query('startDate').optional().isISO8601(),
+    query('endDate').optional().isISO8601()
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid query parameters', errors.array());
+    }
+
+    const {
+      page = '1',
+      limit = '10',
+      customerId,
+      productId,
+      startDate,
+      endDate
+    } = req.query;
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
+
+    const where = {};
+
+    if (customerId) where.warehouseCustomerId = customerId;
+    if (productId) where.productId = productId;
+    
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = new Date(endDate);
+    }
+
+    const [sales, total] = await Promise.all([
+      prisma.warehouseSale.findMany({
+        where,
+        include: {
+          product: { select: { name: true, productNo: true } },
+          salesOfficerUser: { select: { username: true } }
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take
+      }),
+      prisma.warehouseSale.count({ where })
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        sales,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total,
+          totalPages: Math.ceil(total / parseInt(limit))
+        }
+      }
+    });
+  })
+);
 
 // @route   POST /api/v1/warehouse/sales
 // @desc    Create warehouse sale with cost tracking and profit calculation
@@ -332,17 +403,32 @@ router.post('/sales',
         });
       }
 
-      // Create warehouse analytics entry
-      await tx.warehouseAnalytics.create({
-        data: {
-          analysisType: 'DAILY',
-          totalRevenue: totalAmount,
-          costOfGoodsSold: totalCost,
-          grossProfit,
-          profitMargin: parseFloat(profitMargin.toFixed(2)),
-          totalSales: 1
-        }
-      });
+      if (customerId) {
+        const customerStats = await tx.warehouseCustomer.update({
+          where: { id: customerId },
+          data: {
+            totalPurchases: { increment: 1 },
+            totalSpent: { increment: totalAmount },
+            lastPurchaseDate: new Date()
+          },
+          select: {
+            totalPurchases: true,
+            totalSpent: true
+          }
+        });
+
+        const totalSpentValue = parseFloat(customerStats.totalSpent.toString());
+        const averageOrderValue = customerStats.totalPurchases > 0
+          ? parseFloat((totalSpentValue / customerStats.totalPurchases).toFixed(2))
+          : 0;
+
+        await tx.warehouseCustomer.update({
+          where: { id: customerId },
+          data: {
+            averageOrderValue
+          }
+        });
+      }
 
       return warehouseSale;
     });
@@ -567,6 +653,33 @@ router.post('/sales',
           where: { productId },
           data: {
             packs: { decrement: quantity }
+          }
+        });
+      }
+
+      if (customerId) {
+        const customerStats = await tx.warehouseCustomer.update({
+          where: { id: customerId },
+          data: {
+            totalPurchases: { increment: 1 },
+            totalSpent: { increment: totalAmount },
+            lastPurchaseDate: new Date()
+          },
+          select: {
+            totalPurchases: true,
+            totalSpent: true
+          }
+        });
+
+        const totalSpentValue = parseFloat(customerStats.totalSpent.toString());
+        const averageOrderValue = customerStats.totalPurchases > 0
+          ? parseFloat((totalSpentValue / customerStats.totalPurchases).toFixed(2))
+          : 0;
+
+        await tx.warehouseCustomer.update({
+          where: { id: customerId },
+          data: {
+            averageOrderValue
           }
         });
       }
