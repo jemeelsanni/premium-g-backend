@@ -78,21 +78,26 @@ router.get('/discounts/requests',
     const where = {};
     if (status) where.status = status;
 
-    const [requests, total] = await Promise.all([
-      prisma.discountApprovalRequest.findMany({
-        where,
-        include: {
-          warehouseCustomer: { select: { name: true, customerType: true } },
-          product: { select: { name: true, productNo: true } },
-          requestedByUser: { select: { username: true } },
-          approvedByUser: { select: { username: true } }
-        },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take
-      }),
-      prisma.discountApprovalRequest.count({ where })
-    ]);
+    // Add 24-hour filter
+const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+where.createdAt = { gte: twentyFourHoursAgo };
+
+const [requests, total] = await Promise.all([
+  prisma.discountApprovalRequest.findMany({
+    where,
+    include: {
+      warehouseCustomer: { select: { name: true, customerType: true } },
+      product: { select: { name: true, productNo: true } },
+      requestedByUser: { select: { username: true } },
+      approvedByUser: { select: { username: true } }
+    },
+    orderBy: { createdAt: 'desc' },
+    skip,
+    take
+  }),
+  prisma.discountApprovalRequest.count({ where })
+]);
+
 
     res.json({
       success: true,

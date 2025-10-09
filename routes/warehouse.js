@@ -60,6 +60,38 @@ const updateInventoryValidation = [
 // UTILITY FUNCTIONS
 // ================================
 
+const isReceiptNumberConflict = (error) => {
+  if (!error || error.code !== 'P2002') return false;
+  const target = error.meta?.target;
+  if (Array.isArray(target)) {
+    return target.includes('receipt_number');
+  }
+  if (typeof target === 'string') {
+    return target.includes('receipt_number');
+  }
+  return false;
+};
+
+const dropReceiptNumberConstraintIfExists = async () => {
+  try {
+    await prisma.$executeRaw`DROP INDEX IF EXISTS "warehouse_sales_receipt_number_key"`;
+  } catch (dropError) {
+    console.error('Failed to drop receipt number unique index', dropError);
+  }
+};
+
+const withReceiptConflictRetry = async (operation) => {
+  try {
+    return await operation();
+  } catch (error) {
+    if (isReceiptNumberConflict(error)) {
+      await dropReceiptNumberConstraintIfExists();
+      return operation();
+    }
+    throw error;
+  }
+};
+
 const generateReceiptNumber = async () => {
   const prefix = 'WHS';
   const date = new Date();
@@ -244,43 +276,172 @@ router.get('/sales',
       endDate
     } = req.query;
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const take = parseInt(limit);
+    const pageNumber = parseInt(page, 10);
+    const pageSize = parseInt(limit, 10);
+    const skip = (pageNumber - 1) * pageSize;
+    const take = pageSize;
 
-    const where = {};
+    const baseWhere = {};
 
-    if (customerId) where.warehouseCustomerId = customerId;
-    if (productId) where.productId = productId;
-    
-    if (startDate || endDate) {
-      where.createdAt = {};
-      if (startDate) where.createdAt.gte = new Date(startDate);
-      if (endDate) where.createdAt.lte = new Date(endDate);
+    if (customerId) {
+      baseWhere.warehouseCustomerId = customerId;
     }
 
-    const [sales, total] = await Promise.all([
-      prisma.warehouseSale.findMany({
-        where,
-        include: {
-          product: { select: { name: true, productNo: true } },
-          salesOfficerUser: { select: { username: true } }
-        },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take
-      }),
-      prisma.warehouseSale.count({ where })
-    ]);
+    if (startDate || endDate) {
+      baseWhere.createdAt = {};
+      if (startDate) baseWhere.createdAt.gte = new Date(startDate);
+      if (endDate) baseWhere.createdAt.lte = new Date(endDate);
+    }
+
+    const groupWhere = { ...baseWhere };
+    if (productId) {
+      groupWhere.productId = productId;
+    }
+
+    const totalGroups = await prisma.warehouseSale.groupBy({
+      where: groupWhere,
+      by: ['receiptNumber']
+    });
+    const total = totalGroups.length;
+
+    if (total === 0) {
+      return res.json({
+        success: true,
+        data: {
+          sales: [],
+          pagination: {
+            page: pageNumber,
+            limit: pageSize,
+            total: 0,
+            totalPages: 0
+          }
+        }
+      });
+    }
+
+    const groupedReceipts = await prisma.warehouseSale.groupBy({
+      where: groupWhere,
+      by: ['receiptNumber'],
+      orderBy: {
+        _max: { createdAt: 'desc' }
+      },
+      skip,
+      take,
+      _max: { createdAt: true }
+    });
+
+    const receiptNumbers = groupedReceipts.map(group => group.receiptNumber);
+
+    if (receiptNumbers.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          sales: [],
+          pagination: {
+            page: pageNumber,
+            limit: pageSize,
+            total,
+            totalPages: Math.ceil(total / pageSize)
+          }
+        }
+      });
+    }
+
+    const latestCreatedMap = new Map(groupedReceipts.map(group => [group.receiptNumber, group._max.createdAt]));
+
+    const sales = await prisma.warehouseSale.findMany({
+      where: {
+        ...baseWhere,
+        receiptNumber: { in: receiptNumbers }
+      },
+      include: {
+        product: { select: { name: true, productNo: true } },
+        warehouseCustomer: { select: { id: true, name: true, phone: true } },
+        salesOfficerUser: { select: { id: true, username: true } }
+      },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    const aggregateMap = new Map();
+
+    for (const sale of sales) {
+      const key = sale.receiptNumber;
+      const aggregate = aggregateMap.get(key) || {
+        receiptNumber: key,
+        saleIds: [],
+        warehouseCustomerId: sale.warehouseCustomerId,
+        customerName: sale.customerName || sale.warehouseCustomer?.name || null,
+        customerPhone: sale.customerPhone || sale.warehouseCustomer?.phone || null,
+        paymentMethod: sale.paymentMethod,
+        salesOfficer: sale.salesOfficer,
+        salesOfficerUser: sale.salesOfficerUser,
+        warehouseCustomer: sale.warehouseCustomer,
+        totalAmount: 0,
+        totalDiscountAmount: 0,
+        totalCost: 0,
+        grossProfit: 0,
+        discountApplied: false,
+        createdAt: latestCreatedMap.get(key) || sale.createdAt,
+        items: []
+      };
+
+      aggregate.saleIds.push(sale.id);
+      aggregate.totalAmount += Number(sale.totalAmount);
+      aggregate.totalDiscountAmount += Number(sale.totalDiscountAmount || 0);
+      aggregate.totalCost += Number(sale.totalCost || 0);
+      aggregate.grossProfit += Number(sale.grossProfit || 0);
+      aggregate.discountApplied = aggregate.discountApplied || sale.discountApplied;
+
+      if (!aggregate.customerName) {
+        aggregate.customerName = sale.customerName || sale.warehouseCustomer?.name || null;
+      }
+
+      if (!aggregate.customerPhone) {
+        aggregate.customerPhone = sale.customerPhone || sale.warehouseCustomer?.phone || null;
+      }
+
+      if (!aggregate.warehouseCustomer && sale.warehouseCustomer) {
+        aggregate.warehouseCustomer = sale.warehouseCustomer;
+      }
+
+      aggregate.items.push({
+        id: sale.id,
+        productId: sale.productId,
+        product: sale.product,
+        quantity: sale.quantity,
+        unitType: sale.unitType,
+        unitPrice: Number(sale.unitPrice),
+        totalAmount: Number(sale.totalAmount),
+        totalDiscountAmount: sale.totalDiscountAmount ? Number(sale.totalDiscountAmount) : 0,
+        discountApplied: sale.discountApplied,
+        discountPercentage: sale.discountPercentage ? Number(sale.discountPercentage) : null,
+        originalUnitPrice: sale.originalUnitPrice ? Number(sale.originalUnitPrice) : null,
+        costPerUnit: Number(sale.costPerUnit || 0),
+        totalCost: Number(sale.totalCost || 0),
+        grossProfit: Number(sale.grossProfit || 0)
+      });
+
+      aggregateMap.set(key, aggregate);
+    }
+
+    const aggregatedSales = receiptNumbers
+      .map(receipt => aggregateMap.get(receipt))
+      .filter(Boolean)
+      .map(aggregate => ({
+        ...aggregate,
+        totalQuantity: aggregate.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
+        itemsCount: aggregate.items.length
+      }));
 
     res.json({
       success: true,
       data: {
-        sales,
+        sales: aggregatedSales,
         pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
+          page: pageNumber,
+          limit: pageSize,
           total,
-          totalPages: Math.ceil(total / parseInt(limit))
+          totalPages: Math.ceil(total / pageSize)
         }
       }
     });
@@ -361,10 +522,10 @@ router.post('/sales',
     const grossProfit = parseFloat((totalAmount - totalCost).toFixed(2));
     const profitMargin = totalAmount > 0 ? (grossProfit / totalAmount) * 100 : 0;
 
-    // Generate receipt number
-    const receiptNumber = `WHS-${Date.now()}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+    const providedReceiptNumber = req.body.receiptNumber;
+    const receiptNumber = providedReceiptNumber || await generateReceiptNumber();
 
-    const sale = await prisma.$transaction(async (tx) => {
+    const createSaleOperation = () => prisma.$transaction(async (tx) => {
       // Create warehouse sale
       const warehouseSale = await tx.warehouseSale.create({
         data: {
@@ -432,6 +593,8 @@ router.post('/sales',
 
       return warehouseSale;
     });
+
+    const sale = await withReceiptConflictRetry(() => createSaleOperation());
 
     res.status(201).json({
       success: true,
@@ -579,10 +742,10 @@ router.post('/sales',
     const grossProfit = parseFloat((totalAmount - totalCost).toFixed(2));
     const profitMargin = totalAmount > 0 ? (grossProfit / totalAmount) * 100 : 0;
 
-    // Generate receipt number
-    const receiptNumber = `WHS-${Date.now()}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+    const providedReceiptNumber = req.body.receiptNumber;
+    const receiptNumber = providedReceiptNumber || await generateReceiptNumber();
 
-    const sale = await prisma.$transaction(async (tx) => {
+    const createSaleOperation = () => prisma.$transaction(async (tx) => {
       // Create warehouse sale with discount tracking
       const warehouseSale = await tx.warehouseSale.create({
         data: {
@@ -687,6 +850,8 @@ router.post('/sales',
       return warehouseSale;
     });
 
+    const sale = await withReceiptConflictRetry(() => createSaleOperation());
+
     const response = {
       success: true,
       message: 'Warehouse sale recorded successfully',
@@ -705,13 +870,14 @@ router.post('/sales',
 
 // Helper function to check customer discounts
 async function checkCustomerDiscount(customerId, productId, quantity, unitPrice) {
+  // ✅ Only check approved customer discounts
   const applicableDiscounts = await prisma.warehouseCustomerDiscount.findMany({
     where: {
       warehouseCustomerId: customerId,
-      status: 'APPROVED',
+      status: 'APPROVED', // ignore pending requests
       OR: [
-        { productId }, // Product-specific discount
-        { productId: null } // General discount
+        { productId },
+        { productId: null }
       ],
       minimumQuantity: { lte: quantity },
       validFrom: { lte: new Date() },
@@ -719,18 +885,13 @@ async function checkCustomerDiscount(customerId, productId, quantity, unitPrice)
         { validUntil: null },
         { validUntil: { gte: new Date() } }
       ],
-      // Check usage limits
-      OR: [
-        { usageLimit: null },
-        { usageCount: { lt: prisma.raw('usage_limit') } }
-      ]
     },
     include: {
       product: { select: { name: true } }
     },
     orderBy: [
-      { productId: 'desc' }, // Product-specific discounts first
-      { discountValue: 'desc' } // Higher discounts first
+      { productId: 'desc' },
+      { discountValue: 'desc' }
     ]
   });
 
@@ -744,7 +905,7 @@ async function checkCustomerDiscount(customerId, productId, quantity, unitPrice)
     };
   }
 
-  // Apply the best discount
+  // ✅ Apply best active discount
   const bestDiscount = applicableDiscounts[0];
   let discountAmount = 0;
 
@@ -773,6 +934,107 @@ async function checkCustomerDiscount(customerId, productId, quantity, unitPrice)
     }
   };
 }
+
+
+// @route   GET /api/v1/warehouse/sales/by-receipt/:receiptNumber
+// @desc    Get all sale items grouped by receipt number
+// @access  Private (Warehouse module access)
+router.get('/sales/by-receipt/:receiptNumber',
+  authorizeModule('warehouse'),
+  param('receiptNumber').isString().trim().notEmpty(),
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
+    const { receiptNumber } = req.params;
+    const where = { receiptNumber };
+
+    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+      where.salesOfficer = req.user.id;
+    }
+
+    const sales = await prisma.warehouseSale.findMany({
+      where,
+      include: {
+        product: { select: { name: true, productNo: true } },
+        warehouseCustomer: { select: { id: true, name: true, phone: true } },
+        salesOfficerUser: { select: { id: true, username: true, role: true } }
+      },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    if (sales.length === 0) {
+      throw new NotFoundError('Sale not found');
+    }
+
+    const aggregatedSale = {
+      receiptNumber,
+      saleIds: [],
+      warehouseCustomerId: sales[0].warehouseCustomerId,
+      customerName: sales[0].customerName || sales[0].warehouseCustomer?.name || null,
+      customerPhone: sales[0].customerPhone || sales[0].warehouseCustomer?.phone || null,
+      paymentMethod: sales[0].paymentMethod,
+      salesOfficer: sales[0].salesOfficer,
+      salesOfficerUser: sales[0].salesOfficerUser,
+      warehouseCustomer: sales[0].warehouseCustomer,
+      discountApplied: false,
+      totalAmount: 0,
+      totalDiscountAmount: 0,
+      totalCost: 0,
+      grossProfit: 0,
+      createdAt: sales[sales.length - 1].createdAt,
+      items: []
+    };
+
+    for (const sale of sales) {
+      aggregatedSale.saleIds.push(sale.id);
+      aggregatedSale.totalAmount += Number(sale.totalAmount);
+      aggregatedSale.totalDiscountAmount += Number(sale.totalDiscountAmount || 0);
+      aggregatedSale.totalCost += Number(sale.totalCost || 0);
+      aggregatedSale.grossProfit += Number(sale.grossProfit || 0);
+      aggregatedSale.discountApplied = aggregatedSale.discountApplied || sale.discountApplied;
+
+      if (!aggregatedSale.customerName) {
+        aggregatedSale.customerName = sale.customerName || sale.warehouseCustomer?.name || null;
+      }
+
+      if (!aggregatedSale.customerPhone) {
+        aggregatedSale.customerPhone = sale.customerPhone || sale.warehouseCustomer?.phone || null;
+      }
+
+      if (!aggregatedSale.warehouseCustomer && sale.warehouseCustomer) {
+        aggregatedSale.warehouseCustomer = sale.warehouseCustomer;
+      }
+
+      aggregatedSale.items.push({
+        id: sale.id,
+        productId: sale.productId,
+        product: sale.product,
+        quantity: sale.quantity,
+        unitType: sale.unitType,
+        unitPrice: Number(sale.unitPrice),
+        totalAmount: Number(sale.totalAmount),
+        totalDiscountAmount: sale.totalDiscountAmount ? Number(sale.totalDiscountAmount) : 0,
+        discountApplied: sale.discountApplied,
+        discountPercentage: sale.discountPercentage ? Number(sale.discountPercentage) : null,
+        originalUnitPrice: sale.originalUnitPrice ? Number(sale.originalUnitPrice) : null,
+        costPerUnit: Number(sale.costPerUnit || 0),
+        totalCost: Number(sale.totalCost || 0),
+        grossProfit: Number(sale.grossProfit || 0)
+      });
+    }
+
+    aggregatedSale.totalQuantity = aggregatedSale.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+    aggregatedSale.itemsCount = aggregatedSale.items.length;
+
+    res.json({
+      success: true,
+      data: { sale: aggregatedSale }
+    });
+  })
+);
 
 // @route   GET /api/v1/warehouse/sales/:id
 // @desc    Get single warehouse sale

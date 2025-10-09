@@ -624,7 +624,7 @@ model WarehouseSale {
   customerName  String? @map("customer_name")
   customerPhone String? @map("customer_phone")
 
-  receiptNumber String @unique @map("receipt_number")
+  receiptNumber String @map("receipt_number")
 
   salesOfficer String   @map("sales_officer")
   createdAt    DateTime @default(now()) @map("created_at")
