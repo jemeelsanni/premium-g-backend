@@ -211,6 +211,7 @@ router.put('/discounts/requests/:id/review',
             productId: request.productId,
             discountType: request.requestedDiscountType,
             discountValue: parseFloat(request.requestedDiscountValue.toString()),
+            approvalRequestId: request.id, // Add this field to schema
             minimumQuantity: request.minimumQuantity,
             maximumDiscountAmount: request.maximumDiscountAmount 
               ? parseFloat(request.maximumDiscountAmount.toString()) 
@@ -318,28 +319,31 @@ router.post('/discounts/check',
 async function checkCustomerDiscount(customerId, productId, quantity, unitPrice) {
   // Step 1: Try to find a product-specific discount
   const productSpecificDiscount = await prisma.warehouseCustomerDiscount.findFirst({
-    where: {
-      warehouseCustomerId: customerId,
-      productId: productId,
-      status: 'APPROVED',
-      minimumQuantity: { lte: quantity },
-      validFrom: { lte: new Date() },
-      OR: [
-        { validUntil: null },
-        { validUntil: { gte: new Date() } }
-      ]
-    },
-    include: {
-      product: { select: { name: true } },
-      approvedByUser: { select: { username: true } }
-    },
-    orderBy: {
-      discountValue: 'desc'
-    }
-  });
+  where: {
+    warehouseCustomerId: customerId,
+    productId: productId,
+    status: 'APPROVED',
+    minimumQuantity: { lte: quantity },
+    validFrom: { lte: new Date() },
+    OR: [
+      { validUntil: null },
+      { validUntil: { gte: new Date() } }
+    ]
+  },
+  include: {
+    product: { select: { name: true } },
+    approvedByUser: { select: { username: true } }
+  },
+  orderBy: [
+    { priority: 'desc' },
+    { createdAt: 'desc' },
+    { discountValue: 'desc' }
+  ]
+});
 
   // Step 2: If no product-specific discount, try general discount
-  const generalDiscount = !productSpecificDiscount ? await prisma.warehouseCustomerDiscount.findFirst({
+  const generalDiscount = !productSpecificDiscount ?
+  await prisma.warehouseCustomerDiscount.findFirst({
     where: {
       warehouseCustomerId: customerId,
       productId: null,
@@ -355,9 +359,11 @@ async function checkCustomerDiscount(customerId, productId, quantity, unitPrice)
       product: { select: { name: true } },
       approvedByUser: { select: { username: true } }
     },
-    orderBy: {
-      discountValue: 'desc'
-    }
+    orderBy: [
+      { priority: 'desc' },
+      { createdAt: 'desc' },
+      { discountValue: 'desc' }
+    ]
   }) : null;
 
   const bestDiscount = productSpecificDiscount || generalDiscount;
@@ -433,6 +439,33 @@ async function checkCustomerDiscount(customerId, productId, quantity, unitPrice)
     }
   };
 }
+
+// Get discount request that created a customer discount
+router.get('/discounts/customer-discount/:id/request',
+  authorizeModule('warehouse'),
+  param('id').custom(validateCuid('customer discount ID')),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    
+    const customerDiscount = await prisma.warehouseCustomerDiscount.findUnique({
+      where: { id },
+      include: {
+        // Add relation to approval request if you add the field
+        approvalRequest: {
+          include: {
+            requestedByUser: { select: { username: true } },
+            approvedByUser: { select: { username: true } }
+          }
+        }
+      }
+    });
+    
+    res.json({
+      success: true,
+      data: { customerDiscount }
+    });
+  })
+);
 
 module.exports = { router, checkCustomerDiscount };
 
