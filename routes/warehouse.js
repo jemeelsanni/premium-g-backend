@@ -17,11 +17,36 @@ const warehouseExpensesRouter = require('./warehouse-expenses');
 router.use('/', warehouseExpensesRouter);
 
 // Include discount management routes (if created)
+let checkCustomerDiscount;
 try {
-  const warehouseDiscountsRouter = require('./warehouse-discounts');
-  router.use('/', warehouseDiscountsRouter);
+  const warehouseDiscountsModule = require('./warehouse-discounts');
+  
+  // Check if it's exported as an object or directly as router
+  if (warehouseDiscountsModule.router) {
+    router.use('/', warehouseDiscountsModule.router);
+    checkCustomerDiscount = warehouseDiscountsModule.checkCustomerDiscount;
+  } else {
+    // It's exported directly as router
+    router.use('/', warehouseDiscountsModule);
+    checkCustomerDiscount = async () => ({
+      hasDiscount: false,
+      originalPrice: 0,
+      finalPrice: 0,
+      discountAmount: 0,
+      discountPercentage: 0
+    });
+  }
+  console.log('✅ Warehouse discounts router loaded successfully');
 } catch (error) {
-  console.log('Warehouse discounts router not found, skipping...');
+  console.log('⚠️  Warehouse discounts router not found, skipping...', error.message);
+  // Fallback checkCustomerDiscount function
+  checkCustomerDiscount = async () => ({
+    hasDiscount: false,
+    originalPrice: 0,
+    finalPrice: 0,
+    discountAmount: 0,
+    discountPercentage: 0
+  });
 }
 
 
@@ -449,7 +474,7 @@ router.get('/sales',
 );
 
 // @route   POST /api/v1/warehouse/sales
-// @desc    Create warehouse sale with cost tracking and profit calculation
+// @desc    Create warehouse sale with automatic discount application
 // @access  Private (Warehouse Sales Officer, Admin)
 router.post('/sales',
   authorizeModule('warehouse', 'write'),
@@ -459,9 +484,9 @@ router.post('/sales',
     body('unitType').isIn(['PALLETS', 'PACKS', 'UNITS']).withMessage('Invalid unit type'),
     body('unitPrice').isFloat({ min: 0 }).withMessage('Unit price must be 0 or greater'),
     body('paymentMethod').isIn(['CASH', 'BANK_TRANSFER', 'CHECK', 'CARD', 'MOBILE_MONEY']),
-   body('warehouseCustomerId').optional().custom(validateCuid('warehouse customer ID')),
-    body('customerName').optional().trim(), // For backward compatibility
-    body('customerPhone').optional().trim(), // For backward compatibility
+    body('warehouseCustomerId').optional().custom(validateCuid('warehouse customer ID')),
+    body('customerName').optional().trim(),
+    body('customerPhone').optional().trim(),
   ],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -482,8 +507,8 @@ router.post('/sales',
 
     let customerId = warehouseCustomerId;
     
+    // Handle customer creation/lookup if needed
     if (!customerId && customerName) {
-      // Check if customer exists by name/phone
       let existingCustomer = await prisma.warehouseCustomer.findFirst({
         where: {
           name: customerName,
@@ -492,7 +517,6 @@ router.post('/sales',
       });
 
       if (!existingCustomer) {
-        // Create new customer
         existingCustomer = await prisma.warehouseCustomer.create({
           data: {
             name: customerName,
@@ -515,8 +539,38 @@ router.post('/sales',
       throw new NotFoundError('Product not found');
     }
 
-    // Calculate costs and profit
-    const totalAmount = parseFloat((quantity * unitPrice).toFixed(2));
+    // Check for automatic discount application
+    let finalUnitPrice = unitPrice;
+    let discountAmount = 0;
+    let discountPercentage = 0;
+    let originalUnitPrice = unitPrice;
+    let applicableDiscount = null;
+
+    if (customerId) {
+      const discountCheck = await checkCustomerDiscount(customerId, productId, quantity, unitPrice);
+      
+      // ✅ Only apply discount if hasDiscount is true
+      if (discountCheck.hasDiscount === true) {
+        originalUnitPrice = unitPrice;
+        finalUnitPrice = discountCheck.finalPrice;
+        discountAmount = discountCheck.discountAmount;
+        discountPercentage = discountCheck.discountPercentage;
+        applicableDiscount = discountCheck.discount;
+        
+        console.log('✅ Discount applied:', {
+          quantity,
+          minimumRequired: applicableDiscount?.minimumQuantity,
+          discountPercentage: discountPercentage.toFixed(2) + '%',
+          savings: (quantity * discountAmount).toFixed(2)
+        });
+      } else {
+        console.log('❌ No discount applied - conditions not met');
+      }
+    }
+
+    // Calculate ALL amounts using the FINAL (discounted) price
+    const totalAmount = parseFloat((quantity * finalUnitPrice).toFixed(2));
+    const totalDiscountAmount = parseFloat((quantity * discountAmount).toFixed(2));
     const costPerUnit = parseFloat(product.costPerPack || 0);
     const totalCost = parseFloat((quantity * costPerUnit).toFixed(2));
     const grossProfit = parseFloat((totalAmount - totalCost).toFixed(2));
@@ -526,13 +580,13 @@ router.post('/sales',
     const receiptNumber = providedReceiptNumber || await generateReceiptNumber();
 
     const createSaleOperation = () => prisma.$transaction(async (tx) => {
-      // Create warehouse sale
+      // Create warehouse sale with discount tracking
       const warehouseSale = await tx.warehouseSale.create({
         data: {
           productId,
           quantity,
           unitType,
-          unitPrice,
+          unitPrice: finalUnitPrice,
           totalAmount,
           costPerUnit,
           totalCost,
@@ -543,7 +597,14 @@ router.post('/sales',
           customerName,
           customerPhone,
           receiptNumber,
-          salesOfficer: req.user.id
+          salesOfficer: req.user.id,
+          // Discount tracking
+          originalUnitPrice: discountAmount > 0 ? originalUnitPrice : null,
+          discountApplied: discountAmount > 0,
+          totalDiscountAmount: discountAmount > 0 ? totalDiscountAmount : null,
+          discountPercentage: discountAmount > 0 ? parseFloat(discountPercentage.toFixed(2)) : null,
+          discountReason: discountAmount > 0 ? 'Customer discount applied' : null,
+          approvedBy: discountAmount > 0 && applicableDiscount ? req.user.id : null
         },
         include: {
           product: true,
@@ -554,7 +615,18 @@ router.post('/sales',
         }
       });
 
-      // Update inventory (if tracking by packs)
+      // Track discount usage if applied
+      if (applicableDiscount && discountAmount > 0) {
+        await tx.warehouseCustomerDiscount.update({
+          where: { id: applicableDiscount.id },
+          data: {
+            usageCount: { increment: 1 },
+            totalDiscountGiven: { increment: totalDiscountAmount }
+          }
+        });
+      }
+
+      // Update inventory
       if (unitType === 'PACKS') {
         await tx.warehouseInventory.updateMany({
           where: { productId },
@@ -564,6 +636,7 @@ router.post('/sales',
         });
       }
 
+      // Update customer stats
       if (customerId) {
         const customerStats = await tx.warehouseCustomer.update({
           where: { id: customerId },
@@ -598,342 +671,80 @@ router.post('/sales',
 
     res.status(201).json({
       success: true,
-      message: 'Warehouse sale recorded successfully',
+      message: discountAmount > 0 
+        ? `Sale recorded successfully with ${discountPercentage.toFixed(1)}% discount applied! Customer saved ₦${totalDiscountAmount.toLocaleString()}`
+        : 'Warehouse sale recorded successfully',
       data: { sale }
     });
   })
 );
 
-// @route   GET /api/v1/warehouse/sales
-// @desc    Get warehouse sales with filtering and pagination
-// @access  Private (Warehouse module access)
-router.post('/sales',
-  authorizeModule('warehouse', 'write'),
-  [
-    body('warehouseCustomerId').optional().custom(validateCuid('warehouse customer ID')),
-    body('productId').custom(validateCuid('product ID')),
-    body('quantity').isInt({ min: 1 }),
-    body('unitType').isIn(['PALLETS', 'PACKS', 'UNITS']),
-    body('unitPrice').isFloat({ min: 0 }),
-    body('applyDiscount').optional().isBoolean(),
-    body('requestDiscountApproval').optional().isBoolean(), // For on-the-spot discount requests
-    body('discountReason').optional().trim()
-  ],
-  asyncHandler(async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      throw new ValidationError('Invalid input data', errors.array());
-    }
+// // Helper function to check customer discounts
+// async function checkCustomerDiscount(customerId, productId, quantity, unitPrice) {
+//   // ✅ Only check approved customer discounts
+//   const applicableDiscounts = await prisma.warehouseCustomerDiscount.findMany({
+//     where: {
+//       warehouseCustomerId: customerId,
+//       status: 'APPROVED', // ignore pending requests
+//       OR: [
+//         { productId },
+//         { productId: null }
+//       ],
+//       minimumQuantity: { lte: quantity },
+//       validFrom: { lte: new Date() },
+//       OR: [
+//         { validUntil: null },
+//         { validUntil: { gte: new Date() } }
+//       ],
+//     },
+//     include: {
+//       product: { select: { name: true } }
+//     },
+//     orderBy: [
+//       { productId: 'desc' },
+//       { discountValue: 'desc' }
+//     ]
+//   });
 
-    const {
-      productId,
-      quantity,
-      unitType,
-      unitPrice,
-      paymentMethod,
-      warehouseCustomerId,
-      customerName,
-      customerPhone,
-      applyDiscount = false,
-      requestDiscountApproval = false,
-      discountReason
-    } = req.body;
+//   if (applicableDiscounts.length === 0) {
+//     return {
+//       hasDiscount: false,
+//       originalPrice: unitPrice,
+//       finalPrice: unitPrice,
+//       discountAmount: 0,
+//       discountPercentage: 0
+//     };
+//   }
 
-    // Handle customer creation if needed
-    let customerId = warehouseCustomerId;
-    
-    if (!customerId && customerName) {
-      // Check if customer exists by name/phone
-      let existingCustomer = await prisma.warehouseCustomer.findFirst({
-        where: {
-          name: customerName,
-          phone: customerPhone || null
-        }
-      });
+//   // ✅ Apply best active discount
+//   const bestDiscount = applicableDiscounts[0];
+//   let discountAmount = 0;
 
-      if (!existingCustomer) {
-        // Create new customer
-        existingCustomer = await prisma.warehouseCustomer.create({
-          data: {
-            name: customerName,
-            phone: customerPhone,
-            customerType: 'INDIVIDUAL',
-            createdBy: req.user.id
-          }
-        });
-      }
-      
-      customerId = existingCustomer.id;
-    }
+//   if (bestDiscount.discountType === 'PERCENTAGE') {
+//     discountAmount = (unitPrice * bestDiscount.discountValue) / 100;
+//     if (bestDiscount.maximumDiscountAmount && discountAmount > bestDiscount.maximumDiscountAmount) {
+//       discountAmount = bestDiscount.maximumDiscountAmount;
+//     }
+//   } else if (bestDiscount.discountType === 'FIXED_AMOUNT') {
+//     discountAmount = Math.min(bestDiscount.discountValue, unitPrice);
+//   }
 
-    // Get product for cost calculation
-    const product = await prisma.product.findUnique({
-      where: { id: productId }
-    });
+//   const discountedPrice = Math.max(0, unitPrice - discountAmount);
 
-    if (!product) {
-      throw new NotFoundError('Product not found');
-    }
-
-    // Initialize pricing
-    let originalUnitPrice = unitPrice;
-    let finalUnitPrice = unitPrice;
-    let discountAmount = 0;
-    let discountPercentage = 0;
-    let applicableDiscount = null;
-    let requiresApproval = false;
-
-    // Check for applicable discounts if customer exists and applyDiscount is true
-    if (customerId && applyDiscount) {
-      const discountCheck = await checkCustomerDiscount(
-        customerId, 
-        productId, 
-        quantity, 
-        unitPrice
-      );
-
-      if (discountCheck.hasDiscount) {
-        finalUnitPrice = discountCheck.finalPrice;
-        discountAmount = discountCheck.discountAmount;
-        discountPercentage = discountCheck.discountPercentage;
-        applicableDiscount = discountCheck.discount;
-      }
-    }
-
-    // Handle on-the-spot discount approval requests
-    if (requestDiscountApproval && req.user.role === 'SUPER_ADMIN') {
-      // Super admin can approve discounts immediately
-      if (discountReason && customerId) {
-        // Apply manual discount (requires justification)
-        const manualDiscountPercent = parseFloat(req.body.manualDiscountPercent || 0);
-        if (manualDiscountPercent > 0 && manualDiscountPercent <= 50) { // Max 50% discount
-          originalUnitPrice = unitPrice;
-          discountAmount = (unitPrice * manualDiscountPercent) / 100;
-          finalUnitPrice = unitPrice - discountAmount;
-          discountPercentage = manualDiscountPercent;
-          requiresApproval = false; // Already approved by super admin
-        }
-      }
-    } else if (requestDiscountApproval && customerId) {
-      // Non-admin users must request approval
-      requiresApproval = true;
-      // Create pending discount request
-      await prisma.discountApprovalRequest.create({
-        data: {
-          warehouseCustomerId: customerId,
-          productId,
-          requestedDiscountType: 'PERCENTAGE',
-          requestedDiscountValue: parseFloat(req.body.requestedDiscountPercent || 5),
-          minimumQuantity: quantity,
-          validFrom: new Date(),
-          validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
-          reason: discountReason || 'Customer requested discount',
-          businessJustification: `Requested during sale of ${quantity} ${unitType} of ${product.name}`,
-          requestedBy: req.user.id
-        }
-      });
-    }
-
-    // Calculate final amounts
-    const totalAmount = parseFloat((quantity * finalUnitPrice).toFixed(2));
-    const totalDiscountAmount = parseFloat((quantity * discountAmount).toFixed(2));
-    const costPerUnit = parseFloat(product.costPerPack || 0);
-    const totalCost = parseFloat((quantity * costPerUnit).toFixed(2));
-    const grossProfit = parseFloat((totalAmount - totalCost).toFixed(2));
-    const profitMargin = totalAmount > 0 ? (grossProfit / totalAmount) * 100 : 0;
-
-    const providedReceiptNumber = req.body.receiptNumber;
-    const receiptNumber = providedReceiptNumber || await generateReceiptNumber();
-
-    const createSaleOperation = () => prisma.$transaction(async (tx) => {
-      // Create warehouse sale with discount tracking
-      const warehouseSale = await tx.warehouseSale.create({
-        data: {
-          productId,
-          quantity,
-          unitType,
-          unitPrice: finalUnitPrice,
-          totalAmount,
-          costPerUnit,
-          totalCost,
-          grossProfit,
-          profitMargin: parseFloat(profitMargin.toFixed(2)),
-          paymentMethod,
-          warehouseCustomerId: customerId,
-          customerName: customerName, // Keep for backward compatibility
-          customerPhone: customerPhone, // Keep for backward compatibility
-          receiptNumber,
-          salesOfficer: req.user.id,
-          
-          // NEW: Discount tracking
-          originalUnitPrice: discountAmount > 0 ? originalUnitPrice : null,
-          discountApplied: discountAmount > 0,
-          totalDiscountAmount,
-          discountPercentage: parseFloat(discountPercentage.toFixed(2)),
-          discountReason: discountAmount > 0 ? (discountReason || 'Customer discount applied') : null,
-          approvedBy: req.user.role === 'SUPER_ADMIN' && discountAmount > 0 ? req.user.id : null
-        },
-        include: {
-          product: true,
-          warehouseCustomer: true,
-          salesOfficerUser: {
-            select: { id: true, username: true }
-          },
-          discountApprover: {
-            select: { username: true }
-          }
-        }
-      });
-
-      // If discount was applied, track it and update usage
-      if (applicableDiscount && discountAmount > 0) {
-        // Create sale discount record
-        await tx.warehouseSaleDiscount.create({
-          data: {
-            warehouseSaleId: warehouseSale.id,
-            customerDiscountId: applicableDiscount.id,
-            originalUnitPrice,
-            discountedUnitPrice: finalUnitPrice,
-            discountAmountPerUnit: discountAmount,
-            totalDiscountAmount,
-            quantityApplied: quantity
-          }
-        });
-
-        // Update discount usage
-        await tx.warehouseCustomerDiscount.update({
-          where: { id: applicableDiscount.id },
-          data: {
-            usageCount: { increment: 1 },
-            totalDiscountGiven: { increment: totalDiscountAmount }
-          }
-        });
-      }
-
-      // Update inventory if tracking by packs
-      if (unitType === 'PACKS') {
-        await tx.warehouseInventory.updateMany({
-          where: { productId },
-          data: {
-            packs: { decrement: quantity }
-          }
-        });
-      }
-
-      if (customerId) {
-        const customerStats = await tx.warehouseCustomer.update({
-          where: { id: customerId },
-          data: {
-            totalPurchases: { increment: 1 },
-            totalSpent: { increment: totalAmount },
-            lastPurchaseDate: new Date()
-          },
-          select: {
-            totalPurchases: true,
-            totalSpent: true
-          }
-        });
-
-        const totalSpentValue = parseFloat(customerStats.totalSpent.toString());
-        const averageOrderValue = customerStats.totalPurchases > 0
-          ? parseFloat((totalSpentValue / customerStats.totalPurchases).toFixed(2))
-          : 0;
-
-        await tx.warehouseCustomer.update({
-          where: { id: customerId },
-          data: {
-            averageOrderValue
-          }
-        });
-      }
-
-      return warehouseSale;
-    });
-
-    const sale = await withReceiptConflictRetry(() => createSaleOperation());
-
-    const response = {
-      success: true,
-      message: 'Warehouse sale recorded successfully',
-      data: { sale }
-    };
-
-    // Add discount approval message if applicable
-    if (requiresApproval) {
-      response.message = 'Sale recorded and discount approval request submitted';
-      response.pendingApproval = true;
-    }
-
-    res.status(201).json(response);
-  })
-);
-
-// Helper function to check customer discounts
-async function checkCustomerDiscount(customerId, productId, quantity, unitPrice) {
-  // ✅ Only check approved customer discounts
-  const applicableDiscounts = await prisma.warehouseCustomerDiscount.findMany({
-    where: {
-      warehouseCustomerId: customerId,
-      status: 'APPROVED', // ignore pending requests
-      OR: [
-        { productId },
-        { productId: null }
-      ],
-      minimumQuantity: { lte: quantity },
-      validFrom: { lte: new Date() },
-      OR: [
-        { validUntil: null },
-        { validUntil: { gte: new Date() } }
-      ],
-    },
-    include: {
-      product: { select: { name: true } }
-    },
-    orderBy: [
-      { productId: 'desc' },
-      { discountValue: 'desc' }
-    ]
-  });
-
-  if (applicableDiscounts.length === 0) {
-    return {
-      hasDiscount: false,
-      originalPrice: unitPrice,
-      finalPrice: unitPrice,
-      discountAmount: 0,
-      discountPercentage: 0
-    };
-  }
-
-  // ✅ Apply best active discount
-  const bestDiscount = applicableDiscounts[0];
-  let discountAmount = 0;
-
-  if (bestDiscount.discountType === 'PERCENTAGE') {
-    discountAmount = (unitPrice * bestDiscount.discountValue) / 100;
-    if (bestDiscount.maximumDiscountAmount && discountAmount > bestDiscount.maximumDiscountAmount) {
-      discountAmount = bestDiscount.maximumDiscountAmount;
-    }
-  } else if (bestDiscount.discountType === 'FIXED_AMOUNT') {
-    discountAmount = Math.min(bestDiscount.discountValue, unitPrice);
-  }
-
-  const discountedPrice = Math.max(0, unitPrice - discountAmount);
-
-  return {
-    hasDiscount: true,
-    originalPrice: parseFloat(unitPrice.toFixed(2)),
-    finalPrice: parseFloat(discountedPrice.toFixed(2)),
-    discountAmount: parseFloat(discountAmount.toFixed(2)),
-    discountPercentage: parseFloat(((discountAmount / unitPrice) * 100).toFixed(2)),
-    discount: {
-      id: bestDiscount.id,
-      type: bestDiscount.discountType,
-      value: bestDiscount.discountValue,
-      reason: bestDiscount.reason
-    }
-  };
-}
+//   return {
+//     hasDiscount: true,
+//     originalPrice: parseFloat(unitPrice.toFixed(2)),
+//     finalPrice: parseFloat(discountedPrice.toFixed(2)),
+//     discountAmount: parseFloat(discountAmount.toFixed(2)),
+//     discountPercentage: parseFloat(((discountAmount / unitPrice) * 100).toFixed(2)),
+//     discount: {
+//       id: bestDiscount.id,
+//       type: bestDiscount.discountType,
+//       value: bestDiscount.discountValue,
+//       reason: bestDiscount.reason
+//     }
+//   };
+// }
 
 
 // @route   GET /api/v1/warehouse/sales/by-receipt/:receiptNumber

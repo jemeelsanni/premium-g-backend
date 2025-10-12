@@ -15,7 +15,9 @@ const prisma = new PrismaClient();
 // DISCOUNT APPROVAL REQUEST ROUTES
 // ================================
 
-// Request discount approval
+// @route   POST /api/v1/warehouse/discounts/request
+// @desc    Request discount approval
+// @access  Private (Warehouse module access)
 router.post('/discounts/request',
   authorizeModule('warehouse', 'write'),
   [
@@ -25,11 +27,10 @@ router.post('/discounts/request',
     body('requestedDiscountValue').isFloat({ min: 0 }),
     body('minimumQuantity').optional().isInt({ min: 1 }),
     body('maximumDiscountAmount').optional().isFloat({ min: 0 }),
-    body('validFrom').isISO8601(),
+    body('validFrom').isISO8601().withMessage('Valid from date is required'),
     body('validUntil').optional().isISO8601(),
     body('reason').trim().notEmpty().withMessage('Reason is required'),
     body('businessJustification').optional().trim(),
-    body('estimatedImpact').optional().isFloat()
   ],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -37,9 +38,41 @@ router.post('/discounts/request',
       throw new ValidationError('Invalid input data', errors.array());
     }
 
+    const {
+      warehouseCustomerId,
+      productId,
+      requestedDiscountType,
+      requestedDiscountValue,
+      minimumQuantity,
+      maximumDiscountAmount,
+      validFrom,
+      validUntil,
+      reason,
+      businessJustification
+    } = req.body;
+
+    // Convert date strings to ISO DateTime format
+    const validFromDate = new Date(validFrom);
+    validFromDate.setHours(0, 0, 0, 0); // Start of day
+
+    let validUntilDate = null;
+    if (validUntil) {
+      validUntilDate = new Date(validUntil);
+      validUntilDate.setHours(23, 59, 59, 999); // End of day
+    }
+
     const discountRequest = await prisma.discountApprovalRequest.create({
       data: {
-        ...req.body,
+        warehouseCustomerId,
+        productId: productId || null,
+        requestedDiscountType,
+        requestedDiscountValue: parseFloat(requestedDiscountValue),
+        minimumQuantity: minimumQuantity || 1,
+        maximumDiscountAmount: maximumDiscountAmount ? parseFloat(maximumDiscountAmount) : null,
+        validFrom: validFromDate.toISOString(),
+        validUntil: validUntilDate ? validUntilDate.toISOString() : null,
+        reason,
+        businessJustification: businessJustification || null,
         requestedBy: req.user.id
       },
       include: {
@@ -114,7 +147,9 @@ const [requests, total] = await Promise.all([
   })
 );
 
-// Approve/Reject discount request (Super Admin only)
+// @route   PUT /api/v1/warehouse/discounts/requests/:id/review
+// @desc    Approve/Reject discount request (Super Admin only)
+// @access  Private (Super Admin)
 router.put('/discounts/requests/:id/review',
   authorizeRole(['SUPER_ADMIN']),
   param('id').custom(validateCuid('request ID')),
@@ -163,16 +198,25 @@ router.put('/discounts/requests/:id/review',
 
       // If approved, create the customer discount
       if (action === 'approve') {
+        // Convert dates properly
+        const validFromDate = new Date(request.validFrom);
+        let validUntilDate = null;
+        if (request.validUntil) {
+          validUntilDate = new Date(request.validUntil);
+        }
+
         await tx.warehouseCustomerDiscount.create({
           data: {
             warehouseCustomerId: request.warehouseCustomerId,
             productId: request.productId,
             discountType: request.requestedDiscountType,
-            discountValue: request.requestedDiscountValue,
+            discountValue: parseFloat(request.requestedDiscountValue.toString()),
             minimumQuantity: request.minimumQuantity,
-            maximumDiscountAmount: request.maximumDiscountAmount,
-            validFrom: request.validFrom,
-            validUntil: request.validUntil,
+            maximumDiscountAmount: request.maximumDiscountAmount 
+              ? parseFloat(request.maximumDiscountAmount.toString()) 
+              : null,
+            validFrom: validFromDate.toISOString(),
+            validUntil: validUntilDate ? validUntilDate.toISOString() : null,
             reason: request.reason,
             notes: adminNotes,
             status: 'APPROVED',
@@ -229,7 +273,9 @@ router.get('/customers/:customerId/discounts',
   })
 );
 
-// Check if customer qualifies for discount
+// @route   POST /api/v1/warehouse/discounts/check
+// @desc    Check discount eligibility for a sale
+// @access  Private (Warehouse module access)
 router.post('/discounts/check',
   authorizeModule('warehouse'),
   [
@@ -239,87 +285,155 @@ router.post('/discounts/check',
     body('unitPrice').isFloat({ min: 0 })
   ],
   asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
     const { warehouseCustomerId, productId, quantity, unitPrice } = req.body;
 
-    // Find applicable discounts
-    const applicableDiscounts = await prisma.warehouseCustomerDiscount.findMany({
-      where: {
-        warehouseCustomerId,
-        status: 'APPROVED',
-        OR: [
-          { productId }, // Product-specific discount
-          { productId: null } // General discount
-        ],
-        minimumQuantity: { lte: quantity },
-        validFrom: { lte: new Date() },
-        OR: [
-          { validUntil: null },
-          { validUntil: { gte: new Date() } }
-        ],
-        // Check usage limits
-        OR: [
-          { usageLimit: null },
-          { usageCount: { lt: prisma.raw('usage_limit') } }
-        ]
-      },
-      include: {
-        product: { select: { name: true } }
-      },
-      orderBy: [
-        { productId: 'desc' }, // Product-specific discounts first
-        { discountValue: 'desc' } // Higher discounts first
-      ]
-    });
+    const discountCheck = await checkCustomerDiscount(
+      warehouseCustomerId,
+      productId,
+      quantity,
+      unitPrice
+    );
 
-    if (applicableDiscounts.length === 0) {
-      return res.json({
-        success: true,
-        data: {
-          hasDiscount: false,
-          originalPrice: unitPrice,
-          finalPrice: unitPrice,
-          discountAmount: 0,
-          message: 'No applicable discounts found'
-        }
-      });
-    }
-
-    // Apply the best discount (first in sorted order)
-    const bestDiscount = applicableDiscounts[0];
-    let discountAmount = 0;
-    let discountedPrice = unitPrice;
-
-    if (bestDiscount.discountType === 'PERCENTAGE') {
-      discountAmount = (unitPrice * bestDiscount.discountValue) / 100;
-      // Apply maximum discount cap if set
-      if (bestDiscount.maximumDiscountAmount && discountAmount > bestDiscount.maximumDiscountAmount) {
-        discountAmount = bestDiscount.maximumDiscountAmount;
-      }
-    } else if (bestDiscount.discountType === 'FIXED_AMOUNT') {
-      discountAmount = Math.min(bestDiscount.discountValue, unitPrice);
-    }
-
-    discountedPrice = Math.max(0, unitPrice - discountAmount);
+    // ✅ Calculate total savings based on quantity
+    const totalSavings = discountCheck.hasDiscount 
+      ? parseFloat((quantity * discountCheck.discountAmount).toFixed(2))
+      : 0;
 
     res.json({
       success: true,
       data: {
-        hasDiscount: true,
-        originalPrice: parseFloat(unitPrice.toFixed(2)),
-        finalPrice: parseFloat(discountedPrice.toFixed(2)),
-        discountAmount: parseFloat(discountAmount.toFixed(2)),
-        discountPercentage: parseFloat(((discountAmount / unitPrice) * 100).toFixed(2)),
-        totalSavings: parseFloat((discountAmount * quantity).toFixed(2)),
-        discount: {
-          id: bestDiscount.id,
-          type: bestDiscount.discountType,
-          value: bestDiscount.discountValue,
-          reason: bestDiscount.reason,
-          productSpecific: bestDiscount.productId !== null
-        }
+        ...discountCheck,
+        totalSavings // ✅ Add totalSavings to response
       }
     });
   })
 );
+
+// Helper function for discount checking
+async function checkCustomerDiscount(customerId, productId, quantity, unitPrice) {
+  // Step 1: Try to find a product-specific discount
+  const productSpecificDiscount = await prisma.warehouseCustomerDiscount.findFirst({
+    where: {
+      warehouseCustomerId: customerId,
+      productId: productId,
+      status: 'APPROVED',
+      minimumQuantity: { lte: quantity },
+      validFrom: { lte: new Date() },
+      OR: [
+        { validUntil: null },
+        { validUntil: { gte: new Date() } }
+      ]
+    },
+    include: {
+      product: { select: { name: true } },
+      approvedByUser: { select: { username: true } }
+    },
+    orderBy: {
+      discountValue: 'desc'
+    }
+  });
+
+  // Step 2: If no product-specific discount, try general discount
+  const generalDiscount = !productSpecificDiscount ? await prisma.warehouseCustomerDiscount.findFirst({
+    where: {
+      warehouseCustomerId: customerId,
+      productId: null,
+      status: 'APPROVED',
+      minimumQuantity: { lte: quantity },
+      validFrom: { lte: new Date() },
+      OR: [
+        { validUntil: null },
+        { validUntil: { gte: new Date() } }
+      ]
+    },
+    include: {
+      product: { select: { name: true } },
+      approvedByUser: { select: { username: true } }
+    },
+    orderBy: {
+      discountValue: 'desc'
+    }
+  }) : null;
+
+  const bestDiscount = productSpecificDiscount || generalDiscount;
+
+  if (!bestDiscount) {
+    return {
+      hasDiscount: false,
+      originalPrice: parseFloat(unitPrice.toFixed(2)),
+      finalPrice: parseFloat(unitPrice.toFixed(2)),
+      discountAmount: 0,
+      discountPercentage: 0
+    };
+  }
+
+  // Validate minimum quantity
+  if (bestDiscount.minimumQuantity && quantity < bestDiscount.minimumQuantity) {
+    return {
+      hasDiscount: false,
+      originalPrice: parseFloat(unitPrice.toFixed(2)),
+      finalPrice: parseFloat(unitPrice.toFixed(2)),
+      discountAmount: 0,
+      discountPercentage: 0
+    };
+  }
+
+  // Validate expiry
+  if (bestDiscount.validUntil && new Date(bestDiscount.validUntil) < new Date()) {
+    return {
+      hasDiscount: false,
+      originalPrice: parseFloat(unitPrice.toFixed(2)),
+      finalPrice: parseFloat(unitPrice.toFixed(2)),
+      discountAmount: 0,
+      discountPercentage: 0
+    };
+  }
+
+  let discountAmount = 0;
+
+  if (bestDiscount.discountType === 'PERCENTAGE') {
+    discountAmount = (unitPrice * parseFloat(bestDiscount.discountValue.toString())) / 100;
+    if (bestDiscount.maximumDiscountAmount) {
+      const maxDiscount = parseFloat(bestDiscount.maximumDiscountAmount.toString());
+      if (discountAmount > maxDiscount) {
+        discountAmount = maxDiscount;
+      }
+    }
+  } else if (bestDiscount.discountType === 'FIXED_AMOUNT') {
+    discountAmount = Math.min(parseFloat(bestDiscount.discountValue.toString()), unitPrice);
+  }
+
+  const discountedPrice = Math.max(0, unitPrice - discountAmount);
+
+  return {
+    hasDiscount: true,
+    originalPrice: parseFloat(unitPrice.toFixed(2)),
+    finalPrice: parseFloat(discountedPrice.toFixed(2)),
+    discountAmount: parseFloat(discountAmount.toFixed(2)),
+    discountPercentage: parseFloat(((discountAmount / unitPrice) * 100).toFixed(2)),
+    discount: {
+      id: bestDiscount.id,
+      type: bestDiscount.discountType,
+      value: parseFloat(bestDiscount.discountValue.toString()),
+      reason: bestDiscount.reason,
+      minimumQuantity: bestDiscount.minimumQuantity,
+      maximumDiscountAmount: bestDiscount.maximumDiscountAmount 
+        ? parseFloat(bestDiscount.maximumDiscountAmount.toString()) 
+        : null,
+      validFrom: bestDiscount.validFrom,
+      validUntil: bestDiscount.validUntil,
+      isProductSpecific: bestDiscount.productId !== null,
+      productId: bestDiscount.productId,
+      approvedBy: bestDiscount.approvedByUser?.username
+    }
+  };
+}
+
+module.exports = { router, checkCustomerDiscount };
 
 module.exports = router;
