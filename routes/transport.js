@@ -799,17 +799,45 @@ router.get('/expenses/:id',
   asyncHandler(async (req, res) => {
     const { id } = req.params;
 
-    const expense = await prisma.transportExpense.findUnique({
+    const expense = await prisma.expense.findUnique({
       where: { id },
       include: {
-        truck: true,
-        location: true,
-        createdByUser: { select: { username: true, role: true } },
-        approvedByUser: { select: { username: true, role: true } }
+        truck: { 
+          select: { 
+            truckId: true, 
+            registrationNumber: true,
+            make: true,
+            model: true 
+          } 
+        },
+        location: { 
+          select: { 
+            id: true,
+            name: true 
+          } 
+        },
+        createdByUser: {
+          select: { 
+            username: true, 
+            role: true 
+          } 
+        },
+        approver: {
+          select: { 
+            username: true, 
+            role: true 
+          } 
+        }
       }
     });
 
     if (!expense) {
+      throw new NotFoundError('Expense not found');
+    }
+
+    // Filter to only return transport-related expenses
+    const transportExpenseTypes = ['TRANSPORT_EXPENSE', 'MAINTENANCE', 'FUEL_COST', 'SALARY_WAGES'];
+    if (!transportExpenseTypes.includes(expense.expenseType)) {
       throw new NotFoundError('Expense not found');
     }
 
@@ -820,64 +848,18 @@ router.get('/expenses/:id',
   })
 );
 
-// @route   PUT /api/v1/transport/expenses/:id
-// @desc    Update expense
-// @access  Private (Creator or Admin)
-router.put('/expenses/:id',
-  param('id').custom(validateCuid('expense ID')),
-  asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    const updateData = req.body;
-    const userId = req.user.id;
-
-    const existingExpense = await prisma.transportExpense.findUnique({
-      where: { id }
-    });
-
-    if (!existingExpense) {
-      throw new NotFoundError('Expense not found');
-    }
-
-    // Only creator or admin can update
-    if (existingExpense.createdBy !== userId && !req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
-      throw new BusinessError('Permission denied', 'PERMISSION_DENIED');
-    }
-
-    // Cannot update approved/rejected expenses
-    if (existingExpense.status !== 'PENDING') {
-      throw new BusinessError('Cannot update expense that has been approved or rejected', 'INVALID_STATUS');
-    }
-
-    const updatedExpense = await prisma.transportExpense.update({
-      where: { id },
-      data: updateData,
-      include: {
-        truck: true,
-        location: true
-      }
-    });
-
-    res.json({
-      success: true,
-      message: 'Expense updated successfully',
-      data: { expense: updatedExpense }
-    });
-  })
-);
-
 // @route   PUT /api/v1/transport/expenses/:id/approve
 // @desc    Approve expense
 // @access  Private (Admin only)
 router.put('/expenses/:id/approve',
   param('id').custom(validateCuid('expense ID')),
   authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
-  body('notes').optional().trim(),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     const { notes } = req.body;
     const userId = req.user.id;
 
-    const expense = await prisma.transportExpense.findUnique({
+    const expense = await prisma.expense.findUnique({
       where: { id }
     });
 
@@ -889,17 +871,22 @@ router.put('/expenses/:id/approve',
       throw new BusinessError('Expense has already been processed', 'INVALID_STATUS');
     }
 
-    const updatedExpense = await prisma.transportExpense.update({
+    // ✅ Use connect to link the approver relation
+    const updatedExpense = await prisma.expense.update({
       where: { id },
       data: {
         status: 'APPROVED',
-        approvedBy: userId,
         approvedAt: new Date(),
-        approvalNotes: notes
+        approver: {
+          connect: { id: userId }
+        }
+        // Note: approvalNotes field doesn't exist in the schema either
       },
       include: {
-        truck: true,
-        createdByUser: { select: { username: true } }
+        truck: { select: { truckId: true, registrationNumber: true } },
+        location: { select: { name: true } },
+        createdByUser: { select: { username: true } },
+        approver: { select: { username: true } }
       }
     });
 
@@ -923,7 +910,7 @@ router.put('/expenses/:id/reject',
     const { reason } = req.body;
     const userId = req.user.id;
 
-    const expense = await prisma.transportExpense.findUnique({
+    const expense = await prisma.expense.findUnique({
       where: { id }
     });
 
@@ -935,17 +922,21 @@ router.put('/expenses/:id/reject',
       throw new BusinessError('Expense has already been processed', 'INVALID_STATUS');
     }
 
-    const updatedExpense = await prisma.transportExpense.update({
+    // ✅ For rejected expenses, we still use approver relation
+    const updatedExpense = await prisma.expense.update({
       where: { id },
       data: {
         status: 'REJECTED',
-        rejectedBy: userId,
-        rejectedAt: new Date(),
-        approvalNotes: reason
+        approver: {
+          connect: { id: userId }
+        }
+        // Note: The schema doesn't have rejectedAt, rejectedBy, or approvalNotes fields
       },
       include: {
-        truck: true,
-        createdByUser: { select: { username: true } }
+        truck: { select: { truckId: true, registrationNumber: true } },
+        location: { select: { name: true } },
+        createdByUser: { select: { username: true } },
+        approver: { select: { username: true } }
       }
     });
 
