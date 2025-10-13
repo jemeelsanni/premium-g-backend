@@ -64,13 +64,28 @@ const updateTransportOrderValidation = [
 ];
 
 const createExpenseValidation = [
-  body('truckId').optional().custom(validateCuid('truck ID')),
-  body('locationId').optional().custom(validateCuid('location ID')),
+  body('truckId')
+    .optional({ nullable: true, checkFalsy: true })  // ✅ Allow empty strings
+    .custom((value) => {
+      if (!value || value === '') return true;  // Allow empty
+      // If provided, validate it's a reasonable truck ID format
+      if (typeof value === 'string' && value.length >= 3 && value.length <= 50) {
+        return true;
+      }
+      throw new Error('Invalid truck ID format');
+    }),
+  body('locationId')
+    .optional({ nullable: true, checkFalsy: true })  // ✅ Allow empty strings
+    .custom((value) => {
+      if (!value || value === '') return true;  // Allow empty
+      return validateCuid('location ID')(value);  // Validate if provided
+    }),
   body('expenseType').isIn(['TRIP', 'NON_TRIP']).withMessage('Invalid expense type'),
   body('category').notEmpty().withMessage('Category is required'),
   body('amount').isFloat({ min: 0 }).withMessage('Amount must be positive'),
   body('description').notEmpty().withMessage('Description is required'),
-  body('expenseDate').isISO8601().withMessage('Invalid date format')
+  body('expenseDate').isISO8601().withMessage('Invalid date format'),
+  body('receiptNumber').optional({ nullable: true, checkFalsy: true }).trim()
 ];
 
 // ================================
@@ -600,34 +615,103 @@ router.post('/expenses',
       category,
       amount,
       description,
-      expenseDate
+      expenseDate,
+      receiptNumber
     } = req.body;
 
     const userId = req.user.id;
 
-    const expense = await prisma.transportExpense.create({
-      data: {
-        truckId,
-        locationId,
-        expenseType,
-        category,
-        amount,
-        description,
-        expenseDate: new Date(expenseDate),
-        status: 'PENDING',
-        createdBy: userId
-      },
+    // Map TRIP/NON_TRIP to actual ExpenseType enum
+    const mappedExpenseType = expenseType === 'TRIP' ? 'TRANSPORT_EXPENSE' : 'MAINTENANCE';
+
+    // Normalize category text to enum value
+    const normalizeCategory = (cat) => {
+      const normalized = cat.trim().toUpperCase().replace(/\s+/g, '_');
+      
+      const categoryMap = {
+        'FUEL': 'FUEL',
+        'MAINTENANCE': 'MAINTENANCE',
+        'REPAIRS': 'REPAIRS',
+        'REPAIR': 'REPAIRS',
+        'INSURANCE': 'INSURANCE',
+        'DRIVER_WAGES': 'DRIVER_WAGES',
+        'DRIVER_WAGE': 'DRIVER_WAGES',
+        'WAGES': 'DRIVER_WAGES',
+        'SERVICE_CHARGES': 'SERVICE_CHARGES',
+        'SERVICE_CHARGE': 'SERVICE_CHARGES',
+        'EQUIPMENT': 'EQUIPMENT',
+        'UTILITIES': 'UTILITIES',
+        'UTILITY': 'UTILITIES',
+        'RENT': 'RENT',
+        'OFFICE_SUPPLIES': 'OFFICE_SUPPLIES',
+        'OFFICE_SUPPLY': 'OFFICE_SUPPLIES',
+        'MARKETING': 'MARKETING',
+        'TRANSPORT_SERVICE_FEE': 'TRANSPORT_SERVICE_FEE',
+        'TOLL': 'OTHER',
+        'TOLLS': 'OTHER',
+        'PARKING': 'OTHER',
+        'TRIP_ALLOWANCE': 'OTHER',
+        'MOTOR_BOY_WAGES': 'DRIVER_WAGES',
+        'OTHER': 'OTHER'
+      };
+
+      return categoryMap[normalized] || 'OTHER';
+    };
+
+    const mappedCategory = normalizeCategory(category);
+
+    // Build data object conditionally - only include foreign keys if they're provided AND not empty
+    const expenseData = {
+      expenseType: mappedExpenseType,
+      category: mappedCategory,
+      amount: parseFloat(amount),
+      description,
+      expenseDate: new Date(expenseDate),
+      status: 'PENDING',
+      createdBy: userId
+    };
+
+    // Only add truckId if it's provided and not empty
+    if (truckId && truckId.trim() !== '') {
+      expenseData.truckId = truckId;
+    }
+
+    // Only add locationId if it's provided and not empty
+    if (locationId && locationId.trim() !== '') {
+      expenseData.locationId = locationId;
+    }
+
+    // Only add receiptNumber if provided
+    if (receiptNumber && receiptNumber.trim() !== '') {
+      expenseData.receiptNumber = receiptNumber;
+    }
+
+    const expense = await prisma.expense.create({
+      data: expenseData,
       include: {
-        truck: { select: { truckId: true, registrationNumber: true } },
-        location: { select: { name: true } },
-        createdByUser: { select: { username: true } }
+        truck: { 
+          select: { 
+            truckId: true, 
+            registrationNumber: true 
+          } 
+        },
+        location: { 
+          select: { 
+            name: true 
+          } 
+        },
+        createdByUser: { 
+          select: { 
+            username: true 
+          } 
+        }
       }
     });
 
     // Audit log
     await logDataChange(
       userId,
-      'transportExpense',
+      'expense',
       expense.id,
       'CREATE',
       null,
@@ -662,10 +746,11 @@ router.get('/expenses',
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const take = parseInt(limit);
 
-    const where = {};
+    const where = {
+      expenseType: { in: ['TRANSPORT_EXPENSE', 'MAINTENANCE', 'FUEL_COST', 'SALARY_WAGES'] } // Filter for transport-related expenses
+    };
     
     if (status) where.status = status;
-    if (expenseType) where.expenseType = expenseType;
     if (category) where.category = category;
     if (truckId) where.truckId = truckId;
     
@@ -676,7 +761,7 @@ router.get('/expenses',
     }
 
     const [expenses, total] = await Promise.all([
-      prisma.transportExpense.findMany({
+      prisma.expense.findMany({  // ✅ Changed from transportExpense to expense
         where,
         include: {
           truck: { select: { truckId: true, registrationNumber: true } },
@@ -687,7 +772,7 @@ router.get('/expenses',
         skip,
         take
       }),
-      prisma.transportExpense.count({ where })
+      prisma.expense.count({ where })  // ✅ Changed from transportExpense to expense
     ]);
 
     res.json({

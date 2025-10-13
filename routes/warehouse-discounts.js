@@ -317,36 +317,20 @@ router.post('/discounts/check',
 
 // Helper function for discount checking
 async function checkCustomerDiscount(customerId, productId, quantity, unitPrice) {
+  console.log('🔍 ===== DISCOUNT CHECK START =====');
+  console.log('🔍 Input params:', {
+    customerId,
+    productId,
+    quantity,
+    unitPrice,
+    currentTime: new Date()
+  });
+
   // Step 1: Try to find a product-specific discount
   const productSpecificDiscount = await prisma.warehouseCustomerDiscount.findFirst({
-  where: {
-    warehouseCustomerId: customerId,
-    productId: productId,
-    status: 'APPROVED',
-    minimumQuantity: { lte: quantity },
-    validFrom: { lte: new Date() },
-    OR: [
-      { validUntil: null },
-      { validUntil: { gte: new Date() } }
-    ]
-  },
-  include: {
-    product: { select: { name: true } },
-    approvedByUser: { select: { username: true } }
-  },
-  orderBy: [
-    { priority: 'desc' },
-    { createdAt: 'desc' },
-    { discountValue: 'desc' }
-  ]
-});
-
-  // Step 2: If no product-specific discount, try general discount
-  const generalDiscount = !productSpecificDiscount ?
-  await prisma.warehouseCustomerDiscount.findFirst({
     where: {
       warehouseCustomerId: customerId,
-      productId: null,
+      productId: productId,
       status: 'APPROVED',
       minimumQuantity: { lte: quantity },
       validFrom: { lte: new Date() },
@@ -364,11 +348,43 @@ async function checkCustomerDiscount(customerId, productId, quantity, unitPrice)
       { createdAt: 'desc' },
       { discountValue: 'desc' }
     ]
-  }) : null;
+  });
+
+  console.log('🔍 Product-specific discount query result:', productSpecificDiscount);
+
+  // Step 2: If no product-specific discount, try general discount
+  const generalDiscount = !productSpecificDiscount ?
+    await prisma.warehouseCustomerDiscount.findFirst({
+      where: {
+        warehouseCustomerId: customerId,
+        productId: null,
+        status: 'APPROVED',
+        minimumQuantity: { lte: quantity },
+        validFrom: { lte: new Date() },
+        OR: [
+          { validUntil: null },
+          { validUntil: { gte: new Date() } }
+        ]
+      },
+      include: {
+        product: { select: { name: true } },
+        approvedByUser: { select: { username: true } }
+      },
+      orderBy: [
+        { priority: 'desc' },
+        { createdAt: 'desc' },
+        { discountValue: 'desc' }
+      ]
+    }) : null;
+
+  console.log('🔍 General discount query result:', generalDiscount);
 
   const bestDiscount = productSpecificDiscount || generalDiscount;
+  console.log('🔍 Best discount selected:', bestDiscount);
 
   if (!bestDiscount) {
+    console.log('❌ No discount found in database');
+    console.log('🔍 ===== DISCOUNT CHECK END =====');
     return {
       hasDiscount: false,
       originalPrice: parseFloat(unitPrice.toFixed(2)),
@@ -380,6 +396,11 @@ async function checkCustomerDiscount(customerId, productId, quantity, unitPrice)
 
   // Validate minimum quantity
   if (bestDiscount.minimumQuantity && quantity < bestDiscount.minimumQuantity) {
+    console.log('❌ Minimum quantity not met:', {
+      required: bestDiscount.minimumQuantity,
+      provided: quantity
+    });
+    console.log('🔍 ===== DISCOUNT CHECK END =====');
     return {
       hasDiscount: false,
       originalPrice: parseFloat(unitPrice.toFixed(2)),
@@ -391,6 +412,11 @@ async function checkCustomerDiscount(customerId, productId, quantity, unitPrice)
 
   // Validate expiry
   if (bestDiscount.validUntil && new Date(bestDiscount.validUntil) < new Date()) {
+    console.log('❌ Discount expired:', {
+      validUntil: bestDiscount.validUntil,
+      now: new Date()
+    });
+    console.log('🔍 ===== DISCOUNT CHECK END =====');
     return {
       hasDiscount: false,
       originalPrice: parseFloat(unitPrice.toFixed(2)),
@@ -415,6 +441,16 @@ async function checkCustomerDiscount(customerId, productId, quantity, unitPrice)
   }
 
   const discountedPrice = Math.max(0, unitPrice - discountAmount);
+
+  console.log('✅ Discount calculated successfully:', {
+    discountType: bestDiscount.discountType,
+    discountValue: bestDiscount.discountValue,
+    discountAmount,
+    originalPrice: unitPrice,
+    discountedPrice,
+    percentage: ((discountAmount / unitPrice) * 100).toFixed(2) + '%'
+  });
+  console.log('🔍 ===== DISCOUNT CHECK END =====');
 
   return {
     hasDiscount: true,

@@ -21,13 +21,28 @@ let checkCustomerDiscount;
 try {
   const warehouseDiscountsModule = require('./warehouse-discounts');
   
-  // Check if it's exported as an object or directly as router
-  if (warehouseDiscountsModule.router) {
+  console.log('🔍 Warehouse discounts module structure:', {
+    hasRouter: !!warehouseDiscountsModule.router,
+    hasCheckFunction: !!warehouseDiscountsModule.checkCustomerDiscount,
+    isFunction: typeof warehouseDiscountsModule.checkCustomerDiscount === 'function'
+  });
+  
+  // Check if it's exported as an object with router and function
+  if (warehouseDiscountsModule.router && warehouseDiscountsModule.checkCustomerDiscount) {
     router.use('/', warehouseDiscountsModule.router);
     checkCustomerDiscount = warehouseDiscountsModule.checkCustomerDiscount;
+    console.log('✅ Warehouse discounts router and function loaded successfully');
+  } else if (warehouseDiscountsModule.checkCustomerDiscount) {
+    // Has function but no router property
+    checkCustomerDiscount = warehouseDiscountsModule.checkCustomerDiscount;
+    if (typeof warehouseDiscountsModule === 'function') {
+      router.use('/', warehouseDiscountsModule);
+    }
+    console.log('✅ Warehouse discounts function loaded successfully');
   } else {
-    // It's exported directly as router
+    // Fallback - assume it's just a router
     router.use('/', warehouseDiscountsModule);
+    console.log('⚠️  checkCustomerDiscount function not found, using fallback');
     checkCustomerDiscount = async () => ({
       hasDiscount: false,
       originalPrice: 0,
@@ -36,7 +51,6 @@ try {
       discountPercentage: 0
     });
   }
-  console.log('✅ Warehouse discounts router loaded successfully');
 } catch (error) {
   console.log('⚠️  Warehouse discounts router not found, skipping...', error.message);
   // Fallback checkCustomerDiscount function
@@ -332,6 +346,39 @@ router.post('/sales',
       customerId = existingCustomer.id;
     }
 
+    if (customerId) {
+  console.log('🔍 BEFORE checkCustomerDiscount:', {
+    customerId,
+    productId,
+    quantity,
+    unitPrice
+  });
+  
+  const discountCheck = await checkCustomerDiscount(customerId, productId, quantity, unitPrice);
+  
+  console.log('🔍 AFTER checkCustomerDiscount:', discountCheck);
+  
+  // ✅ Only apply discount if hasDiscount is true
+  if (discountCheck.hasDiscount === true) {
+    originalUnitPrice = unitPrice;
+    finalUnitPrice = discountCheck.finalPrice;
+    discountAmount = discountCheck.discountAmount;
+    discountPercentage = discountCheck.discountPercentage;
+    applicableDiscount = discountCheck.discount;
+    
+    console.log('✅ Discount applied:', {
+      quantity,
+      minimumRequired: applicableDiscount?.minimumQuantity,
+      discountPercentage: discountPercentage.toFixed(2) + '%',
+      savings: (quantity * discountAmount).toFixed(2)
+    });
+  } else {
+    console.log('❌ No discount applied - conditions not met');
+  }
+} else {
+  console.log('⚠️ No customerId provided');
+}
+
     // Get product for cost calculation
     const product = await prisma.product.findUnique({
       where: { id: productId }
@@ -401,7 +448,7 @@ router.post('/sales',
           receiptNumber,
           salesOfficer: req.user.id,
           // Discount tracking
-          originalUnitPrice: discountAmount > 0 ? originalUnitPrice : null,
+          originalUnitPrice: discountAmount > 0 ? originalUnitPrice : null,  
           discountApplied: discountAmount > 0,
           totalDiscountAmount: discountAmount > 0 ? totalDiscountAmount : null,
           discountPercentage: discountAmount > 0 ? parseFloat(discountPercentage.toFixed(2)) : null,
