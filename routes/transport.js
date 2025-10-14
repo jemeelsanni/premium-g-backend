@@ -152,8 +152,10 @@ async function calculateOrderCosts(
 // ================================
 
 // @route   POST /api/v1/transport/orders
-// @desc    Create transport order with auto-calculated costs
+// @desc    Create transport order (with automatic cash flow)
+// @access  Private (Transport module access)
 router.post('/orders',
+  authorizeModule('transport', 'write'),
   createTransportOrderValidation,
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -162,7 +164,6 @@ router.post('/orders',
     }
 
     const {
-      orderNumber,
       clientName,
       clientPhone,
       pickupLocation,
@@ -176,56 +177,33 @@ router.post('/orders',
       motorBoyWages,
       truckId,
       driverDetails,
-      invoiceNumber
+      invoiceNumber,
+      paymentMethod // ✨ ADD THIS to accept payment method
     } = req.body;
 
     const userId = req.user.id;
 
-    // ✅ FIX: Wrap in transaction and use correct field names
+    // Generate order number
+    const orderCount = await prisma.transportOrder.count();
+    const orderNumber = `TO-${new Date().getFullYear()}-${String(orderCount + 1).padStart(4, '0')}`;
+
+    // Calculate costs
+    const totalFuelCost = parseFloat(fuelRequired) * parseFloat(fuelPricePerLiter);
+    const serviceChargePercent = 10.0;
+    const serviceChargeExpense = (parseFloat(totalOrderAmount) * serviceChargePercent) / 100;
+    const totalTripExpenses = totalFuelCost + parseFloat(driverWages) + parseFloat(tripAllowance) + parseFloat(motorBoyWages) + serviceChargeExpense;
+    const grossProfit = parseFloat(totalOrderAmount) - totalTripExpenses;
+    const netProfit = grossProfit;
+    const profitMargin = totalOrderAmount > 0 ? (grossProfit / totalOrderAmount) * 100 : 0;
+
+    // ✨ USE TRANSACTION to create order + cash flow atomically
     const result = await prisma.$transaction(async (tx) => {
-      // Check if order number already exists
-      const existingOrder = await tx.transportOrder.findUnique({
-        where: { orderNumber }
-      });
-
-      if (existingOrder) {
-        throw new BusinessError('Order number already exists', 'ORDER_NUMBER_EXISTS');
-      }
-
-      // Validate truck if provided
-      if (truckId) {
-        const truck = await tx.truckCapacity.findUnique({
-          where: { truckId: truckId }
-        });
-
-        if (!truck) {
-          throw new NotFoundError('Truck not found');
-        }
-      }
-
-      // Validate location
-      const location = await tx.location.findUnique({
-        where: { id: locationId }
-      });
-
-      if (!location) {
-        throw new NotFoundError('Location not found');
-      }
-
-      // Calculate all expenses
-      const totalFuelCost = parseFloat(fuelRequired * fuelPricePerLiter);
-      const serviceChargeExpense = parseFloat(totalOrderAmount * 0.10); // 10% service charge
-      const totalTripExpenses = totalFuelCost + parseFloat(driverWages) + parseFloat(tripAllowance) + parseFloat(motorBoyWages) + serviceChargeExpense;
-      const grossProfit = parseFloat(totalOrderAmount) - totalTripExpenses;
-      const netProfit = grossProfit;
-      const profitMargin = totalOrderAmount > 0 ? (grossProfit / totalOrderAmount) * 100 : 0;
-
-      // ✅ CREATE ORDER - Based on actual schema usage in your codebase
+      // 1. CREATE ORDER
       const order = await tx.transportOrder.create({
         data: {
           orderNumber,
-          name: clientName, // Changed from clientName to name
-          phone: clientPhone, // Changed from clientPhone to phone
+          name: clientName,
+          phone: clientPhone,
           pickupLocation,
           deliveryAddress,
           locationId,
@@ -250,7 +228,6 @@ router.post('/orders',
           truckExpenses: 0.0,
           baseHaulageRate: parseFloat(totalOrderAmount),
           totalExpenses: totalTripExpenses,
-          // Optional fields
           deliveryDate: null,
           truckExpensesDescription: null,
           distributionOrderId: null
@@ -266,98 +243,113 @@ router.post('/orders',
         }
       });
 
-      return order;
+      // 2. ✨ AUTOMATICALLY CREATE CASH FLOW ENTRY ✨
+      const cashFlowDescription = `Transport Order: ${clientName} - ${pickupLocation} to ${deliveryAddress}`;
+
+      const cashFlowEntry = await tx.cashFlow.create({
+        data: {
+          transactionType: 'CASH_IN',
+          amount: parseFloat(totalOrderAmount),
+          paymentMethod: paymentMethod || 'BANK_TRANSFER', // Default to bank transfer for transport
+          description: cashFlowDescription,
+          referenceNumber: orderNumber,
+          cashier: userId,
+    module: 'TRANSPORT'
+        }
+      });
+
+      console.log('✅ Cash flow entry created for transport order:', {
+        transactionType: 'CASH_IN',
+        amount: totalOrderAmount,
+        orderNumber,
+        client: clientName
+      });
+
+      return { order, cashFlowEntry };
     });
 
     // Log the creation
     await logDataChange(
       userId,
       'transport_order',
-      result.id,
+      result.order.id,
       'CREATE',
       null,
-      result,
+      result.order,
       getClientIP(req)
     );
 
     res.status(201).json({
       success: true,
-      message: 'Transport order created successfully',
-      data: { order: result }
+      message: 'Transport order created successfully. Cash flow entry recorded.',
+      data: { 
+        order: result.order,
+        cashFlowRecorded: true
+      }
     });
   })
 );
 
-// @route   GET /api/v1/transport/orders
-// @desc    Get transport orders with filtering
+// @route   GET /api/v1/transport/cash-flow
+// @desc    Get transport cash flow entries with filtering
 // @access  Private (Transport module access)
-router.get('/orders',
+router.get('/cash-flow',
+  authorizeModule('transport'),
   asyncHandler(async (req, res) => {
     const {
       page = 1,
       limit = 20,
-      status,
-      clientName,
-      locationId,
-      truckId,
+      transactionType,
+      paymentMethod,
       startDate,
       endDate,
-      search
+      isReconciled
     } = req.query;
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const take = parseInt(limit);
 
-    const where = {};
+    const where = {
+      module: 'TRANSPORT'  // ✨ CRITICAL: This line filters to transport only
+    };
+
+    if (transactionType) where.transactionType = transactionType;
+    if (paymentMethod) where.paymentMethod = paymentMethod;
     
-    if (status) where.deliveryStatus = status;
-    if (clientName) where.clientName = { contains: clientName, mode: 'insensitive' };
-    if (locationId) where.locationId = locationId;
-    if (truckId) where.truckId = truckId;
-    
+    if (isReconciled !== undefined) {
+      where.isReconciled = isReconciled === 'true';
+    }
+
     if (startDate || endDate) {
       where.createdAt = {};
       if (startDate) where.createdAt.gte = new Date(startDate);
       if (endDate) where.createdAt.lte = new Date(endDate);
     }
 
-    if (search) {
-      where.OR = [
-        { orderNumber: { contains: search, mode: 'insensitive' } },
-        { clientName: { contains: search, mode: 'insensitive' } },
-        { invoiceNumber: { contains: search, mode: 'insensitive' } }
-      ];
-    }
-
-    // Role-based filtering
-    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
-      where.createdBy = req.user.id;
-    }
-
-    const [orders, total] = await Promise.all([
-      prisma.transportOrder.findMany({
+    const [entries, total] = await Promise.all([
+      prisma.cashFlow.findMany({
         where,
         include: {
-          location: { select: { id: true, name: true } },
-          truck: { select: { truckId: true, registrationNumber: true } },
-          createdByUser: { select: { username: true } }
+          cashierUser: {
+            select: { username: true }
+          }
         },
         orderBy: { createdAt: 'desc' },
         skip,
         take
       }),
-      prisma.transportOrder.count({ where })
+      prisma.cashFlow.count({ where })
     ]);
 
     res.json({
       success: true,
       data: {
-        orders,
+        cashFlowEntries: entries,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
           total,
-          pages: Math.ceil(total / parseInt(limit))
+          totalPages: Math.ceil(total / parseInt(limit))
         }
       }
     });
@@ -849,7 +841,7 @@ router.get('/expenses/:id',
 );
 
 // @route   PUT /api/v1/transport/expenses/:id/approve
-// @desc    Approve expense
+// @desc    Approve expense (with automatic cash flow)
 // @access  Private (Admin only)
 router.put('/expenses/:id/approve',
   param('id').custom(validateCuid('expense ID')),
@@ -860,7 +852,11 @@ router.put('/expenses/:id/approve',
     const userId = req.user.id;
 
     const expense = await prisma.expense.findUnique({
-      where: { id }
+      where: { id },
+      include: {
+        truck: { select: { truckId: true, registrationNumber: true } },
+        location: { select: { name: true } }
+      }
     });
 
     if (!expense) {
@@ -871,29 +867,60 @@ router.put('/expenses/:id/approve',
       throw new BusinessError('Expense has already been processed', 'INVALID_STATUS');
     }
 
-    // ✅ Use connect to link the approver relation
-    const updatedExpense = await prisma.expense.update({
-      where: { id },
-      data: {
-        status: 'APPROVED',
-        approvedAt: new Date(),
-        approver: {
-          connect: { id: userId }
+    // ✨ USE TRANSACTION to approve expense + create cash flow atomically
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Update expense status
+      const updatedExpense = await tx.expense.update({
+        where: { id },
+        data: {
+          status: 'APPROVED',
+          approvedAt: new Date(),
+          approver: {
+            connect: { id: userId }
+          }
+        },
+        include: {
+          truck: { select: { truckId: true, registrationNumber: true } },
+          location: { select: { name: true } },
+          createdByUser: { select: { username: true } },
+          approver: { select: { username: true } }
         }
-        // Note: approvalNotes field doesn't exist in the schema either
-      },
-      include: {
-        truck: { select: { truckId: true, registrationNumber: true } },
-        location: { select: { name: true } },
-        createdByUser: { select: { username: true } },
-        approver: { select: { username: true } }
-      }
+      });
+
+      // 2. ✨ AUTOMATICALLY CREATE CASH FLOW ENTRY ✨
+      const cashFlowDescription = expense.truck
+        ? `Transport Expense: ${expense.category} - Truck ${expense.truck.registrationNumber} (${expense.expenseType.replace(/_/g, ' ')})`
+        : `Transport Expense: ${expense.category} - ${expense.location?.name || 'General'} (${expense.expenseType.replace(/_/g, ' ')})`;
+
+      const cashFlowEntry = await tx.cashFlow.create({
+        data: {
+          transactionType: 'CASH_OUT',
+          amount: expense.amount,
+          paymentMethod: 'CASH', // Default for transport expenses
+          description: cashFlowDescription,
+          referenceNumber: expense.receiptNumber || `EXP-${id.slice(0, 8)}`,
+          cashier: userId,
+    module: 'TRANSPORT'
+        }
+      });
+
+      console.log('✅ Cash flow entry created for approved transport expense:', {
+        transactionType: 'CASH_OUT',
+        amount: expense.amount,
+        expenseId: id,
+        category: expense.category
+      });
+
+      return { updatedExpense, cashFlowEntry };
     });
 
     res.json({
       success: true,
-      message: 'Expense approved successfully',
-      data: { expense: updatedExpense }
+      message: 'Expense approved successfully. Cash flow entry created.',
+      data: { 
+        expense: result.updatedExpense,
+        cashFlowRecorded: true
+      }
     });
   })
 );
@@ -949,34 +976,228 @@ router.put('/expenses/:id/reject',
 );
 
 // @route   POST /api/v1/transport/expenses/bulk-approve
-// @desc    Bulk approve expenses
-// @access  Private (Admin only)
+// @desc    Bulk approve expenses (with automatic cash flow)
+// @access  Private (Transport Admin only)
 router.post('/expenses/bulk-approve',
   authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
-  body('expenseIds').isArray({ min: 1 }).withMessage('Must provide at least one expense ID'),
-  body('expenseIds.*').custom(validateCuid('expense ID')),
-  body('notes').optional().trim(),
+  [
+    body('expenseIds').isArray({ min: 1 }).withMessage('Expense IDs array is required'),
+    body('action').isIn(['approve', 'reject']).withMessage('Action must be approve or reject'),
+    body('rejectionReason').optional().trim()
+  ],
   asyncHandler(async (req, res) => {
-    const { expenseIds, notes } = req.body;
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
+    const { expenseIds, action, rejectionReason } = req.body;
     const userId = req.user.id;
 
-    const updatedExpenses = await prisma.transportExpense.updateMany({
-      where: {
-        id: { in: expenseIds },
-        status: 'PENDING'
-      },
-      data: {
-        status: 'APPROVED',
-        approvedBy: userId,
-        approvedAt: new Date(),
-        approvalNotes: notes
+    // ✨ USE TRANSACTION to update expenses and create cash flows atomically
+    const result = await prisma.$transaction(async (tx) => {
+      // Fetch expenses first
+      const expenses = await tx.expense.findMany({
+        where: {
+          id: { in: expenseIds },
+          status: 'PENDING',
+          expenseType: { in: ['TRANSPORT_EXPENSE', 'MAINTENANCE', 'FUEL_COST', 'SALARY_WAGES'] }
+        },
+        include: {
+          truck: { select: { truckId: true, registrationNumber: true } },
+          location: { select: { name: true } }
+        }
+      });
+
+      if (expenses.length === 0) {
+        throw new BusinessError('No pending transport expenses found to update', 'NO_PENDING_EXPENSES');
       }
+
+      // Update all expenses
+      await tx.expense.updateMany({
+        where: {
+          id: { in: expenseIds },
+          status: 'PENDING'
+        },
+        data: {
+          status: action === 'approve' ? 'APPROVED' : 'REJECTED',
+          approvedAt: new Date()
+        }
+      });
+
+      // Link approver to each expense individually
+      for (const expense of expenses) {
+        await tx.expense.update({
+          where: { id: expense.id },
+          data: {
+            approver: { connect: { id: userId } }
+          }
+        });
+      }
+
+      // Create cash flow entries only for approved expenses
+      let cashFlowEntries = [];
+      if (action === 'approve') {
+        for (const expense of expenses) {
+          const cashFlowDescription = expense.truck
+            ? `Transport Expense: ${expense.category} - Truck ${expense.truck.registrationNumber}`
+            : `Transport Expense: ${expense.category} - ${expense.location?.name || 'General'}`;
+
+          const cashFlowEntry = await tx.cashFlow.create({
+            data: {
+              transactionType: 'CASH_OUT',
+              amount: expense.amount,
+              paymentMethod: 'CASH',
+              description: cashFlowDescription,
+              referenceNumber: expense.receiptNumber || `EXP-${expense.id.slice(0, 8)}`,
+              cashier: userId,
+    module: 'TRANSPORT'
+            }
+          });
+
+          cashFlowEntries.push(cashFlowEntry);
+        }
+
+        console.log(`✅ Created ${cashFlowEntries.length} cash flow entries for bulk approved transport expenses`);
+      }
+
+      return { 
+        updatedCount: expenses.length,
+        cashFlowEntries 
+      };
     });
+
+    const successMessage = action === 'approve'
+      ? `${result.updatedCount} expense(s) approved successfully. ${result.cashFlowEntries.length} cash flow entry(ies) created.`
+      : `${result.updatedCount} expense(s) rejected successfully`;
 
     res.json({
       success: true,
-      message: `${updatedExpenses.count} expenses approved successfully`,
-      data: { count: updatedExpenses.count }
+      message: successMessage,
+      data: {
+        updatedCount: result.updatedCount,
+        action,
+        cashFlowRecorded: action === 'approve'
+      }
+    });
+  })
+);
+
+
+// ================================
+// CASH FLOW ROUTES (TRANSPORT)
+// ================================
+
+// @route   POST /api/v1/transport/cash-flow
+// @desc    Create cash flow entry
+// @access  Private (Transport Staff, Admin)
+router.post('/cash-flow',
+  authorizeModule('transport', 'write'),
+  [
+    body('transactionType').isIn(['CASH_IN', 'CASH_OUT']),
+    body('amount').isFloat({ min: 0.01 }),
+    body('paymentMethod').isIn(['CASH', 'BANK_TRANSFER', 'CHECK', 'CARD', 'MOBILE_MONEY']),
+    body('description').optional().trim(),
+    body('referenceNumber').optional().trim()
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
+    const {
+      transactionType,
+      amount,
+      paymentMethod,
+      description,
+      referenceNumber
+    } = req.body;
+
+    const cashFlow = await prisma.cashFlow.create({
+      data: {
+        transactionType,
+        amount: parseFloat(amount),
+        paymentMethod,
+        description,
+        referenceNumber,
+        cashier: req.user.id
+      },
+      include: {
+        cashierUser: {
+          select: { username: true }
+        }
+      }
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Cash flow entry created successfully',
+      data: { cashFlow }
+    });
+  })
+);
+
+// @route   GET /api/v1/transport/cash-flow
+// @desc    Get cash flow entries with filtering
+// @access  Private (Transport module access)
+router.get('/cash-flow',
+  authorizeModule('transport'),
+  asyncHandler(async (req, res) => {
+    const {
+      page = 1,
+      limit = 20,
+      transactionType,
+      paymentMethod,
+      startDate,
+      endDate,
+      isReconciled
+    } = req.query;
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
+
+    const where = {};
+
+    if (transactionType) where.transactionType = transactionType;
+    if (paymentMethod) where.paymentMethod = paymentMethod;
+    
+    if (isReconciled !== undefined) {
+      where.isReconciled = isReconciled === 'true';
+    }
+
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = new Date(endDate);
+    }
+
+    const [entries, total] = await Promise.all([
+      prisma.cashFlow.findMany({
+        where,
+        include: {
+          cashierUser: {
+            select: { username: true }
+          }
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take
+      }),
+      prisma.cashFlow.count({ where })
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        cashFlowEntries: entries,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total,
+          totalPages: Math.ceil(total / parseInt(limit))
+        }
+      }
     });
   })
 );

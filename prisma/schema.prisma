@@ -775,6 +775,7 @@ model CashFlow {
   paymentMethod   PaymentMethod   @map("payment_method")
   description     String?
   referenceNumber String?         @map("reference_number")
+  module          String?         @default("WAREHOUSE") // ✨ ADD THIS
 
   reconciliationDate DateTime? @map("reconciliation_date") @db.Date
   isReconciled       Boolean   @default(false) @map("is_reconciled")
@@ -784,6 +785,9 @@ model CashFlow {
 
   cashierUser User @relation(fields: [cashier], references: [id])
 
+  @@index([module]) // ✨ ADD THIS INDEX
+  @@index([cashier])
+  @@index([createdAt])
   @@map("cash_flow")
 }
 

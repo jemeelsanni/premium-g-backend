@@ -346,39 +346,6 @@ router.post('/sales',
       customerId = existingCustomer.id;
     }
 
-    if (customerId) {
-  console.log('🔍 BEFORE checkCustomerDiscount:', {
-    customerId,
-    productId,
-    quantity,
-    unitPrice
-  });
-  
-  const discountCheck = await checkCustomerDiscount(customerId, productId, quantity, unitPrice);
-  
-  console.log('🔍 AFTER checkCustomerDiscount:', discountCheck);
-  
-  // ✅ Only apply discount if hasDiscount is true
-  if (discountCheck.hasDiscount === true) {
-    originalUnitPrice = unitPrice;
-    finalUnitPrice = discountCheck.finalPrice;
-    discountAmount = discountCheck.discountAmount;
-    discountPercentage = discountCheck.discountPercentage;
-    applicableDiscount = discountCheck.discount;
-    
-    console.log('✅ Discount applied:', {
-      quantity,
-      minimumRequired: applicableDiscount?.minimumQuantity,
-      discountPercentage: discountPercentage.toFixed(2) + '%',
-      savings: (quantity * discountAmount).toFixed(2)
-    });
-  } else {
-    console.log('❌ No discount applied - conditions not met');
-  }
-} else {
-  console.log('⚠️ No customerId provided');
-}
-
     // Get product for cost calculation
     const product = await prisma.product.findUnique({
       where: { id: productId }
@@ -388,48 +355,61 @@ router.post('/sales',
       throw new NotFoundError('Product not found');
     }
 
-    // Check for automatic discount application
+    // Check for discount
     let finalUnitPrice = unitPrice;
     let discountAmount = 0;
     let discountPercentage = 0;
-    let originalUnitPrice = unitPrice;
+    let originalUnitPrice = null;
     let applicableDiscount = null;
+    let totalDiscountAmount = 0;
 
-    if (customerId) {
-      const discountCheck = await checkCustomerDiscount(customerId, productId, quantity, unitPrice);
+    // Check if discount was applied by comparing with product's base price
+    if (customerId && product.pricePerPack) {
+      const basePrice = parseFloat(product.pricePerPack);
       
-      // ✅ Only apply discount if hasDiscount is true
-      if (discountCheck.hasDiscount === true) {
-        originalUnitPrice = unitPrice;
-        finalUnitPrice = discountCheck.finalPrice;
-        discountAmount = discountCheck.discountAmount;
-        discountPercentage = discountCheck.discountPercentage;
-        applicableDiscount = discountCheck.discount;
+      // If the unitPrice is less than base price, a discount was applied
+      if (unitPrice < basePrice) {
+        originalUnitPrice = basePrice;
+        finalUnitPrice = unitPrice;
+        discountAmount = basePrice - unitPrice;
+        discountPercentage = ((discountAmount / basePrice) * 100);
+        totalDiscountAmount = discountAmount * quantity;
         
-        console.log('✅ Discount applied:', {
-          quantity,
-          minimumRequired: applicableDiscount?.minimumQuantity,
+        // Try to find the applicable discount for tracking
+        const discountCheck = await checkCustomerDiscount(
+          customerId, 
+          productId, 
+          quantity, 
+          basePrice
+        );
+        
+        if (discountCheck.hasDiscount) {
+          applicableDiscount = discountCheck.discount;
+        }
+        
+        console.log('✅ Discount detected and saved:', {
+          originalPrice: basePrice,
+          finalPrice: unitPrice,
+          discountAmount,
           discountPercentage: discountPercentage.toFixed(2) + '%',
-          savings: (quantity * discountAmount).toFixed(2)
+          totalSavings: totalDiscountAmount.toFixed(2)
         });
-      } else {
-        console.log('❌ No discount applied - conditions not met');
       }
     }
 
     // Calculate ALL amounts using the FINAL (discounted) price
     const totalAmount = parseFloat((quantity * finalUnitPrice).toFixed(2));
-    const totalDiscountAmount = parseFloat((quantity * discountAmount).toFixed(2));
     const costPerUnit = parseFloat(product.costPerPack || 0);
     const totalCost = parseFloat((quantity * costPerUnit).toFixed(2));
     const grossProfit = parseFloat((totalAmount - totalCost).toFixed(2));
-    const profitMargin = totalAmount > 0 ? (grossProfit / totalAmount) * 100 : 0;
+    const profitMargin = totalAmount > 0 ? 
+      (grossProfit / totalAmount) * 100 : 0;
 
     const providedReceiptNumber = req.body.receiptNumber;
     const receiptNumber = providedReceiptNumber || await generateReceiptNumber();
 
     const createSaleOperation = () => prisma.$transaction(async (tx) => {
-      // Create warehouse sale with discount tracking
+      // 1. Create warehouse sale with discount tracking
       const warehouseSale = await tx.warehouseSale.create({
         data: {
           productId,
@@ -464,7 +444,32 @@ router.post('/sales',
         }
       });
 
-      // Track discount usage if applied
+      // 2. ✨ AUTOMATICALLY CREATE CASH FLOW ENTRY ✨
+      const cashFlowDescription = discountAmount > 0
+        ? `Sale: ${product.name} - ${customerName || 'Walk-in'} (Discount: ${discountPercentage.toFixed(1)}%)`
+        : `Sale: ${product.name} - ${customerName || 'Walk-in'}`;
+
+      const cashFlowEntry = await tx.cashFlow.create({
+  data: {
+    transactionType: 'CASH_IN',
+    amount: totalAmount,
+    paymentMethod: paymentMethod,
+    description: cashFlowDescription,
+    referenceNumber: receiptNumber,
+    cashier: req.user.id,
+    module: 'WAREHOUSE'  // ✨ ADD THIS
+  }
+});
+      
+
+      console.log('✅ Cash flow entry created:', {
+        transactionType: 'CASH_IN',
+        amount: totalAmount,
+        paymentMethod,
+        receiptNumber
+      });
+
+      // 3. Track discount usage if applied
       if (applicableDiscount && discountAmount > 0) {
         await tx.warehouseCustomerDiscount.update({
           where: { id: applicableDiscount.id },
@@ -475,7 +480,7 @@ router.post('/sales',
         });
       }
 
-      // Update inventory
+      // 4. Update inventory
       if (unitType === 'PACKS') {
         await tx.warehouseInventory.updateMany({
           where: { productId },
@@ -485,7 +490,7 @@ router.post('/sales',
         });
       }
 
-      // Update customer stats
+      // 5. Update customer stats
       if (customerId) {
         const customerStats = await tx.warehouseCustomer.update({
           where: { id: customerId },
@@ -513,17 +518,22 @@ router.post('/sales',
         });
       }
 
-      return warehouseSale;
+      return { warehouseSale, cashFlowEntry };
     });
 
-    const sale = await withReceiptConflictRetry(() => createSaleOperation());
+    const result = await withReceiptConflictRetry(() => createSaleOperation());
+
+    const successMessage = discountAmount > 0 
+      ? `Sale recorded successfully with ${discountPercentage.toFixed(1)}% discount applied! Customer saved ₦${totalDiscountAmount.toLocaleString()}. Cash flow entry created.`
+      : 'Warehouse sale recorded successfully. Cash flow entry created.';
 
     res.status(201).json({
       success: true,
-      message: discountAmount > 0 
-        ? `Sale recorded successfully with ${discountPercentage.toFixed(1)}% discount applied! Customer saved ₦${totalDiscountAmount.toLocaleString()}`
-        : 'Warehouse sale recorded successfully',
-      data: { sale }
+      message: successMessage,
+      data: { 
+        sale: result.warehouseSale,
+        cashFlowRecorded: true
+      }
     });
   })
 );
@@ -649,23 +659,25 @@ router.get('/sales',
     for (const sale of sales) {
       const key = sale.receiptNumber;
       const aggregate = aggregateMap.get(key) || {
-        receiptNumber: key,
-        saleIds: [],
-        warehouseCustomerId: sale.warehouseCustomerId,
-        customerName: sale.customerName || sale.warehouseCustomer?.name || null,
-        customerPhone: sale.customerPhone || sale.warehouseCustomer?.phone || null,
-        paymentMethod: sale.paymentMethod,
-        salesOfficer: sale.salesOfficer,
-        salesOfficerUser: sale.salesOfficerUser,
-        warehouseCustomer: sale.warehouseCustomer,
-        totalAmount: 0,
-        totalDiscountAmount: 0,
-        totalCost: 0,
-        grossProfit: 0,
-        discountApplied: false,
-        createdAt: latestCreatedMap.get(key) || sale.createdAt,
-        items: []
-      };
+  receiptNumber: key,
+  saleIds: [],
+  warehouseCustomerId: sale.warehouseCustomerId,
+  customerName: sale.customerName || sale.warehouseCustomer?.name || null,
+  customerPhone: sale.customerPhone || sale.warehouseCustomer?.phone || null,
+  paymentMethod: sale.paymentMethod,
+  salesOfficer: sale.salesOfficer,
+  salesOfficerUser: sale.salesOfficerUser,
+  warehouseCustomer: sale.warehouseCustomer,
+  totalAmount: 0,
+  totalDiscountAmount: 0,
+  totalCost: 0,
+  grossProfit: 0,
+  discountApplied: false,
+  discountPercentage: 0,        // ✅ ADD THIS LINE
+  discountReason: null,          // ✅ ADD THIS LINE
+  createdAt: latestCreatedMap.get(key) || sale.createdAt,
+  items: []
+};
 
       aggregate.saleIds.push(sale.id);
       aggregate.totalAmount += Number(sale.totalAmount);
@@ -674,9 +686,18 @@ router.get('/sales',
       aggregate.grossProfit += Number(sale.grossProfit || 0);
       aggregate.discountApplied = aggregate.discountApplied || sale.discountApplied;
 
-      if (!aggregate.customerName) {
-        aggregate.customerName = sale.customerName || sale.warehouseCustomer?.name || null;
-      }
+        // ✅ ADD THESE 7 LINES:
+        if (sale.discountPercentage && sale.discountPercentage > (aggregate.discountPercentage || 0)) {
+          aggregate.discountPercentage = Number(sale.discountPercentage);
+        }
+
+        if (sale.discountReason && !aggregate.discountReason) {
+          aggregate.discountReason = sale.discountReason;
+        }
+
+        if (!aggregate.customerName) {
+          aggregate.customerName = sale.customerName || sale.warehouseCustomer?.name || null;
+        }
 
       if (!aggregate.customerPhone) {
         aggregate.customerPhone = sale.customerPhone || sale.warehouseCustomer?.phone || null;
@@ -764,23 +785,25 @@ router.get('/sales/receipt/:receiptNumber',  // ✅ Changed from /sales/by-recei
     }
 
     const aggregatedSale = {
-      receiptNumber,
-      saleIds: [],
-      warehouseCustomerId: sales[0].warehouseCustomerId,
-      customerName: sales[0].customerName || sales[0].warehouseCustomer?.name || null,
-      customerPhone: sales[0].customerPhone || sales[0].warehouseCustomer?.phone || null,
-      paymentMethod: sales[0].paymentMethod,
-      salesOfficer: sales[0].salesOfficer,
-      salesOfficerUser: sales[0].salesOfficerUser,
-      warehouseCustomer: sales[0].warehouseCustomer,
-      discountApplied: false,
-      totalAmount: 0,
-      totalDiscountAmount: 0,
-      totalCost: 0,
-      grossProfit: 0,
-      createdAt: sales[sales.length - 1].createdAt,
-      items: []
-    };
+  receiptNumber,
+  saleIds: [],
+  warehouseCustomerId: sales[0].warehouseCustomerId,
+  customerName: sales[0].customerName || sales[0].warehouseCustomer?.name || null,
+  customerPhone: sales[0].customerPhone || sales[0].warehouseCustomer?.phone || null,
+  paymentMethod: sales[0].paymentMethod,
+  salesOfficer: sales[0].salesOfficer,
+  salesOfficerUser: sales[0].salesOfficerUser,
+  warehouseCustomer: sales[0].warehouseCustomer,
+  discountApplied: false,
+  discountPercentage: 0,        // ✅ ADD THIS LINE
+  discountReason: null,          // ✅ ADD THIS LINE
+  totalAmount: 0,
+  totalDiscountAmount: 0,
+  totalCost: 0,
+  grossProfit: 0,
+  createdAt: sales[sales.length - 1].createdAt,
+  items: []
+};
 
     for (const sale of sales) {
       aggregatedSale.saleIds.push(sale.id);
@@ -790,9 +813,18 @@ router.get('/sales/receipt/:receiptNumber',  // ✅ Changed from /sales/by-recei
       aggregatedSale.grossProfit += Number(sale.grossProfit || 0);
       aggregatedSale.discountApplied = aggregatedSale.discountApplied || sale.discountApplied;
 
-      if (!aggregatedSale.customerName) {
-        aggregatedSale.customerName = sale.customerName || sale.warehouseCustomer?.name || null;
-      }
+// ✅ ADD THESE 7 LINES:
+if (sale.discountPercentage && sale.discountPercentage > (aggregatedSale.discountPercentage || 0)) {
+  aggregatedSale.discountPercentage = Number(sale.discountPercentage);
+}
+
+if (sale.discountReason && !aggregatedSale.discountReason) {
+  aggregatedSale.discountReason = sale.discountReason;
+}
+
+if (!aggregatedSale.customerName) {
+  aggregatedSale.customerName = sale.customerName || sale.warehouseCustomer?.name || null;
+}
 
       if (!aggregatedSale.customerPhone) {
         aggregatedSale.customerPhone = sale.customerPhone || sale.warehouseCustomer?.phone || null;
@@ -939,7 +971,9 @@ router.get('/cash-flow', asyncHandler(async (req, res) => {
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const take = parseInt(limit);
 
-  const where = {};
+  const where = {
+    module: 'WAREHOUSE'
+  };
 
   if (transactionType) where.transactionType = transactionType;
   if (paymentMethod) where.paymentMethod = paymentMethod;

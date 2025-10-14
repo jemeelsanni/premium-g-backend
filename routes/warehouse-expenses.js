@@ -222,7 +222,7 @@ router.get('/expenses/:id',
 );
 
 // @route   PUT /api/v1/warehouse/expenses/:id
-// @desc    Update warehouse expense
+// @desc    Update warehouse expense (with automatic cash flow on approval)
 // @access  Private (Warehouse Admin or creator)
 router.put('/expenses/:id',
   param('id').custom(validateCuid('expense ID')),
@@ -237,7 +237,11 @@ router.put('/expenses/:id',
     const updateData = req.body;
 
     const expense = await prisma.warehouseExpense.findUnique({
-      where: { id }
+      where: { id },
+      include: {
+        product: { select: { name: true, productNo: true } },
+        createdByUser: { select: { username: true } }
+      }
     });
 
     if (!expense) {
@@ -269,26 +273,71 @@ router.put('/expenses/:id',
       updateData.paymentDate = new Date();
     }
 
-    const updatedExpense = await prisma.warehouseExpense.update({
-      where: { id },
-      data: updateData,
-      include: {
-        product: { select: { name: true, productNo: true } },
-        createdByUser: { select: { username: true } },
-        approver: { select: { username: true } }
+    // ✨ Check if we need to create cash flow (expense is being approved)
+    const isBeingApproved = updateData.status === 'APPROVED' && expense.status === 'PENDING';
+
+    // Use transaction if creating cash flow
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Update the expense
+      const updatedExpense = await tx.warehouseExpense.update({
+        where: { id },
+        data: updateData,
+        include: {
+          product: { select: { name: true, productNo: true } },
+          createdByUser: { select: { username: true } },
+          approver: { select: { username: true } }
+        }
+      });
+
+      let cashFlowEntry = null;
+
+      // 2. ✨ AUTOMATICALLY CREATE CASH FLOW ENTRY ON APPROVAL ✨
+      if (isBeingApproved) {
+        const cashFlowDescription = expense.product
+          ? `Expense: ${expense.category} - ${expense.product.name} (${expense.expenseType.replace(/_/g, ' ')})`
+          : `Expense: ${expense.category} - ${expense.expenseType.replace(/_/g, ' ')}`;
+
+        cashFlowEntry = await tx.cashFlow.create({
+          data: {
+            transactionType: 'CASH_OUT',
+            amount: expense.amount,
+            paymentMethod: expense.paymentMethod || 'CASH', // Default to CASH if not specified
+            description: cashFlowDescription,
+            referenceNumber: expense.receiptNumber || `EXP-${id.slice(0, 8)}`,
+            cashier: req.user.id,
+            module: 'WAREHOUSE'  // ✨ ADD THIS
+
+          }
+        });
+
+        console.log('✅ Cash flow entry created for approved expense:', {
+          transactionType: 'CASH_OUT',
+          amount: expense.amount,
+          expenseId: id,
+          category: expense.category
+        });
       }
+
+      return { updatedExpense, cashFlowEntry };
     });
+
+    const successMessage = isBeingApproved
+      ? 'Warehouse expense approved successfully. Cash flow entry created.'
+      : 'Warehouse expense updated successfully';
 
     res.json({
       success: true,
-      message: 'Warehouse expense updated successfully',
-      data: { expense: updatedExpense }
+      message: successMessage,
+      data: { 
+        expense: result.updatedExpense,
+        cashFlowRecorded: isBeingApproved
+      }
     });
   })
 );
 
 // @route   POST /api/v1/warehouse/expenses/bulk-approve
-// @desc    Bulk approve warehouse expenses
+// @desc    Bulk approve warehouse expenses (with automatic cash flow)
 // @access  Private (Warehouse Admin only)
 router.post('/expenses/bulk-approve',
   authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
@@ -308,25 +357,81 @@ router.post('/expenses/bulk-approve',
     const updateData = {
       status: action === 'approve' ? 'APPROVED' : 'REJECTED',
       approvedBy: req.user.id,
-      approvedAt: new Date()
+      approvedAt: new Date(),
+      ...(action === 'reject' && rejectionReason && { rejectionReason })
     };
 
-    if (action === 'reject' && rejectionReason) {
-      updateData.rejectionReason = rejectionReason;
-    }
+    // ✨ Use transaction to update expenses and create cash flows atomically
+    const result = await prisma.$transaction(async (tx) => {
+      // Fetch expenses first to get details for cash flow
+      const expenses = await tx.warehouseExpense.findMany({
+        where: {
+          id: { in: expenseIds },
+          status: 'PENDING' // Only update pending expenses
+        },
+        include: {
+          product: { select: { name: true, productNo: true } }
+        }
+      });
 
-    const updatedExpenses = await prisma.warehouseExpense.updateMany({
-      where: {
-        id: { in: expenseIds },
-        status: 'PENDING'
-      },
-      data: updateData
+      if (expenses.length === 0) {
+        throw new BusinessError('No pending expenses found to update', 'NO_PENDING_EXPENSES');
+      }
+
+      // Update all expenses
+      await tx.warehouseExpense.updateMany({
+        where: {
+          id: { in: expenseIds },
+          status: 'PENDING'
+        },
+        data: updateData
+      });
+
+      // Create cash flow entries only for approved expenses
+      let cashFlowEntries = [];
+      if (action === 'approve') {
+        for (const expense of expenses) {
+          const cashFlowDescription = expense.product
+            ? `Expense: ${expense.category} - ${expense.product.name} (${expense.expenseType.replace(/_/g, ' ')})`
+            : `Expense: ${expense.category} - ${expense.expenseType.replace(/_/g, ' ')}`;
+
+          const cashFlowEntry = await tx.cashFlow.create({
+            data: {
+              transactionType: 'CASH_OUT',
+              amount: expense.amount,
+              paymentMethod: expense.paymentMethod || 'CASH',
+              description: cashFlowDescription,
+              referenceNumber: expense.receiptNumber || `EXP-${expense.id.slice(0, 8)}`,
+              cashier: req.user.id,
+              module: 'WAREHOUSE'  // ✨ ADD THIS
+
+            }
+          });
+
+          cashFlowEntries.push(cashFlowEntry);
+        }
+
+        console.log(`✅ Created ${cashFlowEntries.length} cash flow entries for bulk approved expenses`);
+      }
+
+      return { 
+        updatedCount: expenses.length,
+        cashFlowEntries 
+      };
     });
+
+    const successMessage = action === 'approve'
+      ? `${result.updatedCount} expense(s) approved successfully. ${result.cashFlowEntries.length} cash flow entry(ies) created.`
+      : `${result.updatedCount} expense(s) rejected successfully`;
 
     res.json({
       success: true,
-      message: `Successfully ${action}ed ${updatedExpenses.count} warehouse expenses`,
-      data: { updatedCount: updatedExpenses.count }
+      message: successMessage,
+      data: {
+        updatedCount: result.updatedCount,
+        action,
+        cashFlowRecorded: action === 'approve'
+      }
     });
   })
 );

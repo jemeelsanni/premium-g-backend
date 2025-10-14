@@ -2646,6 +2646,70 @@ router.get('/orders/:id/export/pdf',
   })
 );
 
+// @route   GET /api/v1/distribution/dashboard/analytics
+// @desc    Get dashboard analytics summary
+// @access  Private (Distribution access)
+router.get('/dashboard/analytics',
+  authorizeModule('distribution'),
+  asyncHandler(async (req, res) => {
+    const { days = 30 } = req.query;
+    
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - parseInt(days));
+
+    // Get orders with filters
+    const allOrders = await prisma.distributionOrder.findMany({
+      where: {
+        createdAt: {
+          gte: startDate,
+          lte: endDate
+        }
+      },
+      include: {
+        customer: {
+          select: { name: true }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // Calculate stats
+    let totalRevenue = 0;
+    let totalPacks = 0;
+    const customerIds = new Set();
+
+    allOrders.forEach(order => {
+      totalRevenue += parseFloat(order.finalAmount?.toString() || '0');
+      totalPacks += parseInt(order.totalPacks?.toString() || '0');
+      if (order.customerId) {
+        customerIds.add(order.customerId);
+      }
+    });
+
+    // Format recent orders
+    const recentOrders = allOrders.slice(0, 10).map(order => ({
+      id: order.id,
+      orderNumber: order.id.slice(-8).toUpperCase(),
+      customer: order.customer?.name || 'Unknown',
+      finalAmount: parseFloat(order.finalAmount?.toString() || '0'),
+      status: order.status || 'PENDING',
+      createdAt: order.createdAt.toISOString()
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        totalRevenue: parseFloat(totalRevenue.toFixed(2)),
+        totalOrders: allOrders.length,
+        totalPacks,
+        activeCustomers: customerIds.size,
+        recentOrders
+      }
+    });
+  })
+);
+
 // Helper function to calculate distribution COGS
 const calculateDistributionCOGS = async (orderItems) => {
   let totalCOGS = 0;
