@@ -290,6 +290,114 @@ router.post('/orders',
   })
 );
 
+// @route   GET /api/v1/transport/orders
+// @desc    Get transport orders with filtering and pagination
+// @access  Private (Transport module access)
+router.get('/orders',
+  authorizeModule('transport'),
+  [
+    query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+    query('status').optional(),
+    query('clientName').optional().trim(),
+    query('locationId').optional(),
+    query('truckId').optional(),
+    query('startDate').optional().isISO8601().withMessage('Invalid start date'),
+    query('endDate').optional().isISO8601().withMessage('Invalid end date'),
+    query('search').optional().trim()
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid query parameters', errors.array());
+    }
+
+    const {
+      page = 1,
+      limit = 20,
+      status,
+      clientName,
+      locationId,
+      truckId,
+      startDate,
+      endDate,
+      search
+    } = req.query;
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
+
+    // Build where clause
+    const where = {};
+
+    // Role-based filtering - non-admins see only their own orders
+    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+      where.createdBy = req.user.id;
+    }
+
+    if (status) where.deliveryStatus = status;
+    if (locationId) where.locationId = locationId;
+    if (truckId) where.truckId = truckId;
+
+    // Date range filtering
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = new Date(endDate);
+    }
+
+    // Search functionality
+    if (search) {
+      where.OR = [
+        { clientName: { contains: search, mode: 'insensitive' } },
+        { orderNumber: { contains: search, mode: 'insensitive' } },
+        { clientPhone: { contains: search, mode: 'insensitive' } },
+        { pickupLocation: { contains: search, mode: 'insensitive' } },
+        { deliveryAddress: { contains: search, mode: 'insensitive' } }
+      ];
+    }
+
+    if (clientName) {
+      where.clientName = { contains: clientName, mode: 'insensitive' };
+    }
+
+    // Fetch orders with pagination
+    const [orders, total] = await Promise.all([
+      prisma.transportOrder.findMany({
+        where,
+        include: {
+          location: {
+            select: { id: true, name: true, address: true }
+          },
+          truck: {
+            select: { id: true, truckId: true, registrationNumber: true }
+          },
+          createdByUser: {
+            select: { id: true, username: true, role: true }
+          }
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take
+      }),
+      prisma.transportOrder.count({ where })
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        orders,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total,
+          totalPages: Math.ceil(total / parseInt(limit))
+        }
+      }
+    });
+  })
+);
+
 // @route   GET /api/v1/transport/cash-flow
 // @desc    Get transport cash flow entries with filtering
 // @access  Private (Transport module access)
