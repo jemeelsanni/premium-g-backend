@@ -152,7 +152,7 @@ async function calculateOrderCosts(
 // ================================
 
 // @route   POST /api/v1/transport/orders
-// @desc    Create transport order (with automatic cash flow)
+// @desc    Create transport order (with automatic cash flow for revenue + trip expenses)
 // @access  Private (Transport module access)
 router.post('/orders',
   authorizeModule('transport', 'write'),
@@ -178,7 +178,7 @@ router.post('/orders',
       truckId,
       driverDetails,
       invoiceNumber,
-      paymentMethod // ✨ ADD THIS to accept payment method
+      paymentMethod // Payment method for the revenue
     } = req.body;
 
     const userId = req.user.id;
@@ -191,14 +191,18 @@ router.post('/orders',
     const totalFuelCost = parseFloat(fuelRequired) * parseFloat(fuelPricePerLiter);
     const serviceChargePercent = 10.0;
     const serviceChargeExpense = (parseFloat(totalOrderAmount) * serviceChargePercent) / 100;
-    const totalTripExpenses = totalFuelCost + parseFloat(driverWages) + parseFloat(tripAllowance) + parseFloat(motorBoyWages) + serviceChargeExpense;
+    
+    // Total wages (driver + trip allowance + motor boy)
+    const totalWages = parseFloat(driverWages) + parseFloat(tripAllowance) + parseFloat(motorBoyWages);
+    
+    const totalTripExpenses = totalFuelCost + totalWages + serviceChargeExpense;
     const grossProfit = parseFloat(totalOrderAmount) - totalTripExpenses;
     const netProfit = grossProfit;
     const profitMargin = totalOrderAmount > 0 ? (grossProfit / totalOrderAmount) * 100 : 0;
 
-    // ✨ USE TRANSACTION to create order + cash flow atomically
+    // ✨ USE TRANSACTION to create order + ALL cash flow entries atomically
     const result = await prisma.$transaction(async (tx) => {
-      // 1. CREATE ORDER
+      // 1. CREATE TRANSPORT ORDER
       const order = await tx.transportOrder.create({
         data: {
           orderNumber,
@@ -236,36 +240,84 @@ router.post('/orders',
           location: true,
           truck: true,
           createdByUser: {
-            select: {
-              username: true
-            }
+            select: { username: true }
           }
         }
       });
 
-      // 2. ✨ AUTOMATICALLY CREATE CASH FLOW ENTRY ✨
-      const cashFlowDescription = `Transport Order: ${clientName} - ${pickupLocation} to ${deliveryAddress}`;
-
-      const cashFlowEntry = await tx.cashFlow.create({
+      // 2. ✨ CREATE REVENUE CASH FLOW ENTRY (CASH_IN) ✨
+      const revenueCashFlow = await tx.cashFlow.create({
         data: {
           transactionType: 'CASH_IN',
           amount: parseFloat(totalOrderAmount),
-          paymentMethod: paymentMethod || 'BANK_TRANSFER', // Default to bank transfer for transport
-          description: cashFlowDescription,
+          paymentMethod: paymentMethod || 'BANK_TRANSFER',
+          description: `Transport Revenue: ${clientName} - ${pickupLocation} to ${deliveryAddress}`,
           referenceNumber: orderNumber,
           cashier: userId,
-    module: 'TRANSPORT'
+          module: 'TRANSPORT'
         }
       });
 
-      console.log('✅ Cash flow entry created for transport order:', {
-        transactionType: 'CASH_IN',
-        amount: totalOrderAmount,
-        orderNumber,
-        client: clientName
+      // 3. ✨ CREATE FUEL EXPENSE CASH FLOW ENTRY (CASH_OUT) ✨
+      const fuelCashFlow = await tx.cashFlow.create({
+        data: {
+          transactionType: 'CASH_OUT',
+          amount: totalFuelCost,
+          paymentMethod: 'CASH', // Fuel typically paid in cash
+          description: `Fuel Cost: ${orderNumber} - ${fuelRequired}L @ ₦${fuelPricePerLiter}/L`,
+          referenceNumber: `${orderNumber}-FUEL`,
+          cashier: userId,
+          module: 'TRANSPORT'
+        }
       });
 
-      return { order, cashFlowEntry };
+      // 4. ✨ CREATE WAGES EXPENSE CASH FLOW ENTRY (CASH_OUT) ✨
+      const wagesCashFlow = await tx.cashFlow.create({
+        data: {
+          transactionType: 'CASH_OUT',
+          amount: totalWages,
+          paymentMethod: 'CASH', // Wages typically paid in cash
+          description: `Wages & Allowances: ${orderNumber} - Driver: ₦${driverWages}, Trip: ₦${tripAllowance}, Motor Boy: ₦${motorBoyWages}`,
+          referenceNumber: `${orderNumber}-WAGES`,
+          cashier: userId,
+          module: 'TRANSPORT'
+        }
+      });
+
+      // 5. ✨ CREATE SERVICE CHARGE EXPENSE CASH FLOW ENTRY (CASH_OUT) ✨
+      const serviceChargeCashFlow = await tx.cashFlow.create({
+        data: {
+          transactionType: 'CASH_OUT',
+          amount: serviceChargeExpense,
+          paymentMethod: 'BANK_TRANSFER', // Service charges typically via transfer
+          description: `Service Charge (10%): ${orderNumber} - ₦${totalOrderAmount.toLocaleString()} × 10%`,
+          referenceNumber: `${orderNumber}-SERVICE`,
+          cashier: userId,
+          module: 'TRANSPORT'
+        }
+      });
+
+      console.log('✅ Transport order & cash flow entries created:', {
+        orderNumber,
+        revenue: totalOrderAmount,
+        expenses: {
+          fuel: totalFuelCost,
+          wages: totalWages,
+          serviceCharge: serviceChargeExpense,
+          total: totalTripExpenses
+        },
+        profit: netProfit
+      });
+
+      return { 
+        order, 
+        cashFlowEntries: {
+          revenue: revenueCashFlow,
+          fuel: fuelCashFlow,
+          wages: wagesCashFlow,
+          serviceCharge: serviceChargeCashFlow
+        }
+      };
     });
 
     // Log the creation
@@ -281,10 +333,20 @@ router.post('/orders',
 
     res.status(201).json({
       success: true,
-      message: 'Transport order created successfully. Cash flow entry recorded.',
+      message: 'Transport order created successfully. All cash flow entries recorded automatically.',
       data: { 
         order: result.order,
-        cashFlowRecorded: true
+        cashFlowRecorded: true,
+        cashFlowSummary: {
+          revenueRecorded: parseFloat(totalOrderAmount),
+          expensesRecorded: {
+            fuel: totalFuelCost,
+            wages: totalWages,
+            serviceCharge: serviceChargeExpense,
+            total: totalTripExpenses
+          },
+          netCashFlow: parseFloat(totalOrderAmount) - totalTripExpenses
+        }
       }
     });
   })

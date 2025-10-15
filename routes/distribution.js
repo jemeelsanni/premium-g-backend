@@ -826,9 +826,9 @@ router.post('/orders/:id/price-adjustments',
     const { id: orderId } = req.params;
     const { adjustedAmount, adjustmentType, reason, riteFoodsInvoiceReference } = req.body;
 
-    // Get existing order - FIX: Use 'orderId' not 'id'
+    // Get existing order
     const order = await prisma.distributionOrder.findUnique({
-      where: { id: orderId },  // ✅ FIXED: Use orderId
+      where: { id: orderId },
       include: {
         customer: true,
         location: true,
@@ -844,11 +844,33 @@ router.post('/orders/:id/price-adjustments',
       throw new NotFoundError('Order not found');
     }
 
-    // Validate order status
+    // ✅ VALIDATION 1: Check if payment is confirmed
     if (order.paymentStatus !== 'CONFIRMED') {
       throw new BusinessError(
         'Price adjustments only allowed after payment is confirmed',
         'INVALID_ORDER_STATE'
+      );
+    }
+
+    // ✨ NEW VALIDATION 2: Check if order has been raised by Rite Foods
+    if (order.orderRaisedByRFL === true) {
+      throw new BusinessError(
+        `Price adjustment not permitted. This order was raised by Rite Foods on ${
+          order.orderRaisedAt 
+            ? new Date(order.orderRaisedAt).toLocaleDateString() 
+            : 'a previous date'
+        }. Once an order is raised, the pricing is locked and cannot be modified.`,
+        'ORDER_ALREADY_RAISED'
+      );
+    }
+
+    // ✨ ADDITIONAL CHECK: Prevent adjustment if Rite Foods status indicates processing
+    const lockedStatuses = ['ORDER_RAISED', 'PROCESSING', 'LOADED', 'DISPATCHED'];
+    if (lockedStatuses.includes(order.riteFoodsStatus)) {
+      throw new BusinessError(
+        `Price adjustment not permitted. Order status is "${order.riteFoodsStatus}". ` +
+        `Price adjustments are only allowed before the order is raised to Rite Foods.`,
+        'ORDER_STATUS_LOCKED'
       );
     }
 
@@ -862,7 +884,7 @@ router.post('/orders/:id/price-adjustments',
           adjustmentType,
           reason,
           riteFoodsInvoiceReference: riteFoodsInvoiceReference || null,
-          adjustedBy: req.user.id  // ✅ ADDED: Required field from schema
+          adjustedBy: req.user.id
         }
       });
 
@@ -886,6 +908,24 @@ router.post('/orders/:id/price-adjustments',
           priceAdjustments: { 
             orderBy: { createdAt: 'desc' },
             include: { adjuster: true }
+          }
+        }
+      });
+
+      // Log the adjustment in audit trail
+      await tx.auditLog.create({
+        data: {
+          userId: req.user.id,
+          action: 'PRICE_ADJUSTMENT',
+          entity: 'DistributionOrder',
+          entityId: orderId,
+          oldValues: {
+            originalAmount: order.finalAmount
+          },
+          newValues: {
+            adjustedAmount: newFinalAmount,
+            reason,
+            adjustmentType
           }
         }
       });
