@@ -2,6 +2,9 @@ const express = require('express');
 const { body, query, param, validationResult } = require('express-validator');
 const { PrismaClient } = require('@prisma/client');
 
+const PDFDocument = require('pdfkit');
+const { Parser } = require('json2csv');
+
 const { asyncHandler, ValidationError, NotFoundError, BusinessError } = require('../middleware/errorHandler');
 const { authorizeModule, authorizeRole } = require('../middleware/auth');
 const { validateCuid } = require('../utils/validators');
@@ -1145,6 +1148,846 @@ router.get('/analytics/profit-summary',
         profitByProduct: profitAnalysis
       }
     });
+  })
+);
+
+// ================================
+// SALES EXPORT ROUTES
+// ================================
+
+// @route   GET /api/v1/warehouse/sales/export/csv
+// @desc    Export warehouse sales to CSV with filters
+// @access  Private (Warehouse module access)
+router.get('/sales/export/csv',
+  [
+    query('period').optional().isIn(['day', 'week', 'month', 'year', 'custom']),
+    query('startDate').optional().isISO8601(),
+    query('endDate').optional().isISO8601(),
+    query('customerId').optional(),
+    query('productId').optional()
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid query parameters', errors.array());
+    }
+
+    const { period, startDate, endDate, customerId, productId } = req.query;
+    
+    const where = {};
+    
+    // Date filtering based on period
+    if (period && period !== 'custom') {
+      const now = new Date();
+      where.createdAt = {};
+      
+      switch(period) {
+        case 'day':
+          where.createdAt.gte = new Date(now.setHours(0,0,0,0));
+          break;
+        case 'week':
+          const weekStart = new Date(now);
+          weekStart.setDate(now.getDate() - now.getDay());
+          weekStart.setHours(0,0,0,0);
+          where.createdAt.gte = weekStart;
+          break;
+        case 'month':
+          where.createdAt.gte = new Date(now.getFullYear(), now.getMonth(), 1);
+          break;
+        case 'year':
+          where.createdAt.gte = new Date(now.getFullYear(), 0, 1);
+          break;
+      }
+    } else if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = new Date(endDate);
+    }
+    
+    if (customerId) where.customerId = customerId;
+    if (productId) where.productId = productId;
+
+    // Role-based access
+    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+      where.salesOfficer = req.user.id;
+    }
+
+    const sales = await prisma.warehouseSale.findMany({
+      where,
+      include: {
+        product: { select: { name: true, productNo: true } },
+        customer: { select: { name: true, phone: true } },
+        salesOfficerUser: { select: { username: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const fields = [
+      { label: 'Sale ID', value: 'saleId' },
+      { label: 'Product Name', value: 'productName' },
+      { label: 'Product No', value: 'productNo' },
+      { label: 'Customer Name', value: 'customerName' },
+      { label: 'Customer Phone', value: 'customerPhone' },
+      { label: 'Quantity', value: 'quantity' },
+      { label: 'Unit Price (NGN)', value: 'unitPrice' },
+      { label: 'Total Amount (NGN)', value: 'totalAmount' },
+      { label: 'Discount Applied', value: 'discountApplied' },
+      { label: 'Discount Amount (NGN)', value: 'discountAmount' },
+      { label: 'Discount %', value: 'discountPercentage' },
+      { label: 'Cost Per Unit (NGN)', value: 'costPerUnit' },
+      { label: 'Total Cost (NGN)', value: 'totalCost' },
+      { label: 'Gross Profit (NGN)', value: 'grossProfit' },
+      { label: 'Sales Officer', value: 'salesOfficer' },
+      { label: 'Created At', value: 'createdAt' }
+    ];
+
+    const csvData = sales.map(sale => ({
+      saleId: `WS-${sale.id.slice(-8)}`,
+      productName: sale.product?.name || 'N/A',
+      productNo: sale.product?.productNo || 'N/A',
+      customerName: sale.customer?.name || 'Walk-in Customer',
+      customerPhone: sale.customer?.phone || 'N/A',
+      quantity: sale.quantity,
+      unitPrice: parseFloat(sale.unitPrice).toFixed(2),
+      totalAmount: parseFloat(sale.totalAmount).toFixed(2),
+      discountApplied: sale.discountApplied ? 'Yes' : 'No',
+      discountAmount: parseFloat(sale.totalDiscountAmount || 0).toFixed(2),
+      discountPercentage: sale.discountPercentage ? parseFloat(sale.discountPercentage).toFixed(2) : '0.00',
+      costPerUnit: parseFloat(sale.costPerUnit || 0).toFixed(2),
+      totalCost: parseFloat(sale.totalCost || 0).toFixed(2),
+      grossProfit: parseFloat(sale.grossProfit || 0).toFixed(2),
+      salesOfficer: sale.salesOfficerUser?.username || 'N/A',
+      createdAt: new Date(sale.createdAt).toLocaleString('en-NG')
+    }));
+
+    const parser = new Parser({ fields });
+    const csv = parser.parse(csvData);
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename=warehouse-sales-${new Date().toISOString().split('T')[0]}.csv`);
+    res.send('\uFEFF' + csv);
+  })
+);
+
+// @route   GET /api/v1/warehouse/sales/export/pdf
+// @desc    Export warehouse sales list to PDF
+// @access  Private (Warehouse module access)
+router.get('/sales/export/pdf',
+  [
+    query('period').optional().isIn(['day', 'week', 'month', 'year', 'custom']),
+    query('startDate').optional().isISO8601(),
+    query('endDate').optional().isISO8601(),
+    query('customerId').optional(),
+    query('productId').optional(),
+    query('limit').optional().isInt({ min: 1, max: 1000 })
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid query parameters', errors.array());
+    }
+
+    const { period, startDate, endDate, customerId, productId, limit = 100 } = req.query;
+    
+    const where = {};
+    
+    // Date filtering based on period
+    if (period && period !== 'custom') {
+      const now = new Date();
+      where.createdAt = {};
+      
+      switch(period) {
+        case 'day':
+          where.createdAt.gte = new Date(now.setHours(0,0,0,0));
+          break;
+        case 'week':
+          const weekStart = new Date(now);
+          weekStart.setDate(now.getDate() - now.getDay());
+          weekStart.setHours(0,0,0,0);
+          where.createdAt.gte = weekStart;
+          break;
+        case 'month':
+          where.createdAt.gte = new Date(now.getFullYear(), now.getMonth(), 1);
+          break;
+        case 'year':
+          where.createdAt.gte = new Date(now.getFullYear(), 0, 1);
+          break;
+      }
+    } else if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = new Date(endDate);
+    }
+    
+    if (customerId) where.customerId = customerId;
+    if (productId) where.productId = productId;
+
+    // Role-based access
+    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+      where.salesOfficer = req.user.id;
+    }
+
+    const sales = await prisma.warehouseSale.findMany({
+      where,
+      take: parseInt(limit),
+      include: {
+        product: { select: { name: true, productNo: true } },
+        customer: { select: { name: true } },
+        salesOfficerUser: { select: { username: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const doc = new PDFDocument({ 
+      margin: 30, 
+      size: 'A4', 
+      layout: 'landscape'
+    });
+    
+    const filename = `warehouse-sales-${new Date().toISOString().split('T')[0]}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+    
+    doc.pipe(res);
+
+    // Header
+    doc.fontSize(20)
+       .font('Helvetica-Bold')
+       .fillColor('#1e40af')
+       .text('WAREHOUSE SALES REPORT', { align: 'center' });
+    
+    doc.fontSize(10)
+       .font('Helvetica')
+       .fillColor('#666')
+       .text(`Generated on ${new Date().toLocaleString('en-NG')}`, { align: 'center' });
+
+    if (period || startDate || endDate) {
+      let periodText = '';
+      if (period && period !== 'custom') {
+        periodText = `Period: ${period.charAt(0).toUpperCase() + period.slice(1)}`;
+      } else if (startDate || endDate) {
+        periodText = `Period: ${startDate ? new Date(startDate).toLocaleDateString() : 'Start'} - ${endDate ? new Date(endDate).toLocaleDateString() : 'End'}`;
+      }
+      doc.text(periodText, { align: 'center' });
+    }
+
+    doc.moveDown(1.5);
+
+    // Calculate totals
+    let totalRevenue = 0;
+    let totalCost = 0;
+    let totalProfit = 0;
+    let totalDiscounts = 0;
+    
+    sales.forEach(sale => {
+      totalRevenue += parseFloat(sale.totalAmount || 0);
+      totalCost += parseFloat(sale.totalCost || 0);
+      totalProfit += parseFloat(sale.grossProfit || 0);
+      totalDiscounts += parseFloat(sale.totalDiscountAmount || 0);
+    });
+
+    // Summary Box
+    const summaryY = doc.y;
+    doc.fontSize(12)
+       .font('Helvetica-Bold')
+       .fillColor('#1e40af')
+       .text('SUMMARY', 50, summaryY);
+    
+    doc.fontSize(10)
+       .font('Helvetica')
+       .fillColor('#000');
+    
+    const summaryData = [
+      ['Total Sales:', sales.length],
+      ['Total Revenue:', `NGN ${totalRevenue.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`],
+      ['Total Cost:', `NGN ${totalCost.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`],
+      ['Gross Profit:', `NGN ${totalProfit.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`],
+      ['Total Discounts:', `NGN ${totalDiscounts.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`],
+      ['Profit Margin:', `${totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(2) : 0}%`]
+    ];
+
+    let yPos = summaryY + 20;
+    summaryData.forEach(([label, value]) => {
+      doc.font('Helvetica-Bold').text(label, 50, yPos, { width: 150, continued: true });
+      doc.font('Helvetica').text(String(value), { width: 200 });
+      yPos += 15;
+    });
+
+    doc.moveDown(2);
+
+    // Table
+    const tableData = {
+      headers: [
+        'Sale ID',
+        'Product',
+        'Customer',
+        'Qty',
+        'Amount (NGN)',
+        'Discount (NGN)',
+        'Profit (NGN)',
+        'Date'
+      ],
+      rows: sales.map(sale => [
+        `WS-${sale.id.slice(-8)}`,
+        (sale.product?.name || 'N/A').substring(0, 20),
+        (sale.customer?.name || 'Walk-in').substring(0, 15),
+        sale.quantity,
+        parseFloat(sale.totalAmount || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
+        parseFloat(sale.totalDiscountAmount || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
+        parseFloat(sale.grossProfit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
+        new Date(sale.createdAt).toLocaleDateString('en-NG')
+      ])
+    };
+
+    const tableTop = doc.y;
+    const colWidths = [70, 100, 90, 40, 85, 85, 85, 75];
+    const rowHeight = 25;
+    let currentY = tableTop;
+
+    // Table Header
+    doc.fontSize(9)
+       .font('Helvetica-Bold')
+       .fillColor('#fff');
+    
+    doc.rect(30, currentY, colWidths.reduce((a, b) => a + b, 0), rowHeight)
+       .fill('#1e40af');
+
+    let xPos = 35;
+    tableData.headers.forEach((header, i) => {
+      doc.text(header, xPos, currentY + 8, { 
+        width: colWidths[i] - 10, 
+        align: 'left' 
+      });
+      xPos += colWidths[i];
+    });
+
+    currentY += rowHeight;
+
+    // Table Rows
+    doc.font('Helvetica')
+       .fontSize(8)
+       .fillColor('#000');
+
+    tableData.rows.forEach((row, rowIndex) => {
+      if (currentY > 500) {
+        doc.addPage({ layout: 'landscape' });
+        currentY = 50;
+      }
+
+      // Alternating row colors
+      if (rowIndex % 2 === 0) {
+        doc.rect(30, currentY, colWidths.reduce((a, b) => a + b, 0), rowHeight)
+           .fill('#f3f4f6');
+      }
+
+      xPos = 35;
+      row.forEach((cell, i) => {
+        doc.fillColor('#000')
+           .text(String(cell), xPos, currentY + 8, { 
+             width: colWidths[i] - 10, 
+             align: i >= 3 && i <= 6 ? 'right' : 'left' 
+           });
+        xPos += colWidths[i];
+      });
+
+      currentY += rowHeight;
+    });
+
+    // Footer
+    const footerY = doc.page.height - 80;
+    doc.fontSize(8)
+       .font('Helvetica')
+       .fillColor('#666')
+       .text('Premium G Enterprise - Warehouse Division', 50, footerY, { 
+         align: 'center', 
+         width: doc.page.width - 100 
+       });
+    
+    doc.text('This is a computer-generated document', 50, footerY + 15, { 
+      align: 'center', 
+      width: doc.page.width - 100 
+    });
+
+    doc.end();
+  })
+);
+
+// @route   GET /api/v1/warehouse/sales/:id/export/pdf
+// @desc    Export individual sale detail to PDF
+// @access  Private (Warehouse module access)
+router.get('/sales/:id/export/pdf',
+  param('id').custom(validateCuid('sale ID')),
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
+    const { id } = req.params;
+    const where = { id };
+
+    // Role-based access
+    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+      where.salesOfficer = req.user.id;
+    }
+
+    const sale = await prisma.warehouseSale.findFirst({
+      where,
+      include: {
+        product: true,
+        customer: true,
+        salesOfficerUser: {
+          select: { username: true, role: true }
+        }
+      }
+    });
+
+    if (!sale) {
+      throw new NotFoundError('Sale not found');
+    }
+
+    const doc = new PDFDocument({ 
+      margin: 50, 
+      size: 'A4'
+    });
+    
+    const filename = `warehouse-sale-${sale.id.slice(-8)}-${new Date().toISOString().split('T')[0]}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+    
+    doc.pipe(res);
+
+    // ===== HEADER SECTION =====
+    doc.rect(0, 0, doc.page.width, 120)
+       .fill('#1e40af');
+
+    doc.fontSize(28)
+       .font('Helvetica-Bold')
+       .fillColor('#ffffff')
+       .text('PREMIUM G ENTERPRISE', 50, 30);
+    
+    doc.fontSize(11)
+       .font('Helvetica')
+       .fillColor('#e0e7ff')
+       .text('Warehouse Sale Receipt', 50, 65);
+    
+    // Sale ID and date on right
+    doc.fontSize(10)
+       .fillColor('#ffffff')
+       .text(`Sale ID: WS-${sale.id.slice(-8)}`, 400, 40, { align: 'right' });
+    
+    doc.fontSize(9)
+       .fillColor('#e0e7ff')
+       .text(`Date: ${new Date(sale.createdAt).toLocaleDateString('en-NG', { 
+         year: 'numeric', 
+         month: 'long', 
+         day: 'numeric' 
+       })}`, 400, 60, { align: 'right' });
+
+    let yPos = 150;
+
+    // ===== CUSTOMER INFORMATION =====
+    doc.fontSize(14)
+       .font('Helvetica-Bold')
+       .fillColor('#1e40af')
+       .text('CUSTOMER INFORMATION', 50, yPos);
+    
+    yPos += 25;
+
+    doc.fontSize(10)
+       .font('Helvetica')
+       .fillColor('#000');
+
+    const customerInfo = [
+      ['Customer Name:', sale.customer?.name || 'Walk-in Customer'],
+      ['Phone:', sale.customer?.phone || 'N/A'],
+      ['Email:', sale.customer?.email || 'N/A']
+    ];
+
+    customerInfo.forEach(([label, value]) => {
+      doc.font('Helvetica-Bold').text(label, 50, yPos, { width: 150, continued: true });
+      doc.font('Helvetica').text(value, { width: 350 });
+      yPos += 20;
+    });
+
+    yPos += 20;
+
+    // ===== PRODUCT INFORMATION =====
+    doc.fontSize(14)
+       .font('Helvetica-Bold')
+       .fillColor('#1e40af')
+       .text('PRODUCT DETAILS', 50, yPos);
+    
+    yPos += 25;
+
+    doc.fontSize(10)
+       .font('Helvetica')
+       .fillColor('#000');
+
+    const productInfo = [
+      ['Product Name:', sale.product?.name || 'N/A'],
+      ['Product Number:', sale.product?.productNo || 'N/A'],
+      ['Quantity:', `${sale.quantity} packs`],
+      ['Unit Price:', `NGN ${parseFloat(sale.unitPrice).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`]
+    ];
+
+    productInfo.forEach(([label, value]) => {
+      doc.font('Helvetica-Bold').text(label, 50, yPos, { width: 150, continued: true });
+      doc.font('Helvetica').text(String(value), { width: 350 });
+      yPos += 20;
+    });
+
+    yPos += 20;
+
+    // ===== PRICING BREAKDOWN =====
+    doc.fontSize(14)
+       .font('Helvetica-Bold')
+       .fillColor('#1e40af')
+       .text('PRICING BREAKDOWN', 50, yPos);
+    
+    yPos += 25;
+
+    doc.fontSize(10)
+       .font('Helvetica')
+       .fillColor('#000');
+
+    const subtotal = sale.originalUnitPrice 
+      ? parseFloat(sale.originalUnitPrice) * sale.quantity 
+      : parseFloat(sale.unitPrice) * sale.quantity;
+
+    const pricingInfo = [];
+    
+    if (sale.discountApplied) {
+      pricingInfo.push(['Subtotal (Before Discount):', `NGN ${subtotal.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`]);
+      pricingInfo.push(['Discount Applied:', `${parseFloat(sale.discountPercentage || 0).toFixed(2)}%`]);
+      pricingInfo.push(['Discount Amount:', `NGN ${parseFloat(sale.totalDiscountAmount || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`]);
+    }
+    
+    pricingInfo.push(['Total Amount:', `NGN ${parseFloat(sale.totalAmount).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`]);
+
+    pricingInfo.forEach(([label, value]) => {
+      doc.font('Helvetica-Bold').text(label, 50, yPos, { width: 200, continued: true });
+      doc.font('Helvetica').text(value, { width: 300 });
+      yPos += 20;
+    });
+
+    yPos += 20;
+
+    // ===== COST & PROFIT ANALYSIS =====
+    if (req.user.role.includes('ADMIN') || req.user.role === 'SUPER_ADMIN') {
+      doc.fontSize(14)
+         .font('Helvetica-Bold')
+         .fillColor('#1e40af')
+         .text('COST & PROFIT ANALYSIS', 50, yPos);
+      
+      yPos += 25;
+
+      doc.fontSize(10)
+         .font('Helvetica')
+         .fillColor('#000');
+
+      const profitInfo = [
+        ['Cost Per Unit:', `NGN ${parseFloat(sale.costPerUnit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`],
+        ['Total Cost:', `NGN ${parseFloat(sale.totalCost || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`],
+        ['Gross Profit:', `NGN ${parseFloat(sale.grossProfit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`],
+        ['Profit Margin:', `${parseFloat(sale.totalAmount) > 0 ? ((parseFloat(sale.grossProfit || 0) / parseFloat(sale.totalAmount)) * 100).toFixed(2) : 0}%`]
+      ];
+
+      profitInfo.forEach(([label, value]) => {
+        doc.font('Helvetica-Bold').text(label, 50, yPos, { width: 150, continued: true });
+        doc.font('Helvetica').text(value, { width: 350 });
+        yPos += 20;
+      });
+
+      yPos += 20;
+    }
+
+    // ===== ADDITIONAL INFORMATION =====
+    if (yPos > 650) {
+      doc.addPage();
+      yPos = 50;
+    }
+
+    doc.fontSize(14)
+       .font('Helvetica-Bold')
+       .fillColor('#1e40af')
+       .text('ADDITIONAL INFORMATION', 50, yPos);
+    
+    yPos += 25;
+
+    doc.fontSize(10)
+       .font('Helvetica')
+       .fillColor('#000');
+
+    const additionalInfo = [
+      ['Sales Officer:', sale.salesOfficerUser?.username || 'N/A'],
+      ['Created At:', new Date(sale.createdAt).toLocaleString('en-NG')],
+      ['Last Updated:', new Date(sale.updatedAt).toLocaleString('en-NG')]
+    ];
+
+    additionalInfo.forEach(([label, value]) => {
+      doc.font('Helvetica-Bold').text(label, 50, yPos, { width: 150, continued: true });
+      doc.font('Helvetica').text(value, { width: 350 });
+      yPos += 20;
+    });
+
+    // ===== FOOTER =====
+    const footerY = doc.page.height - 80;
+    
+    doc.fontSize(8)
+       .font('Helvetica')
+       .fillColor('#666')
+       .text('Premium G Enterprise - Warehouse Division', 50, footerY, { align: 'center', width: doc.page.width - 100 });
+    
+    doc.text('This is a computer-generated document', 50, footerY + 15, { align: 'center', width: doc.page.width - 100 });
+    
+    doc.text('Thank you for your business!', 50, footerY + 30, { align: 'center', width: doc.page.width - 100 });
+
+    doc.end();
+  })
+);
+
+// ================================
+// CASH FLOW EXPORT ROUTES (WAREHOUSE)
+// ================================
+
+// @route   GET /api/v1/warehouse/cash-flow/export/csv
+// @desc    Export warehouse cash flow to CSV
+// @access  Private (Warehouse module access)
+router.get('/cash-flow/export/csv',
+  [
+    query('startDate').optional().isISO8601(),
+    query('endDate').optional().isISO8601(),
+    query('transactionType').optional().isIn(['CASH_IN', 'CASH_OUT', 'SALE']),
+    query('paymentMethod').optional()
+  ],
+  asyncHandler(async (req, res) => {
+    const { startDate, endDate, transactionType, paymentMethod } = req.query;
+    
+    const where = { module: 'WAREHOUSE' };
+    
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = new Date(endDate);
+    }
+    
+    if (transactionType) where.transactionType = transactionType;
+    if (paymentMethod) where.paymentMethod = paymentMethod;
+
+    const cashFlows = await prisma.cashFlow.findMany({
+      where,
+      include: {
+        cashierUser: { select: { username: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const fields = [
+      { label: 'Transaction Type', value: 'transactionType' },
+      { label: 'Amount (NGN)', value: 'amount' },
+      { label: 'Payment Method', value: 'paymentMethod' },
+      { label: 'Description', value: 'description' },
+      { label: 'Reference Number', value: 'referenceNumber' },
+      { label: 'Cashier', value: 'cashier' },
+      { label: 'Reconciled', value: 'isReconciled' },
+      { label: 'Created At', value: 'createdAt' }
+    ];
+
+    const csvData = cashFlows.map(cf => ({
+      transactionType: cf.transactionType,
+      amount: parseFloat(cf.amount).toFixed(2),
+      paymentMethod: cf.paymentMethod,
+      description: cf.description || 'N/A',
+      referenceNumber: cf.referenceNumber || 'N/A',
+      cashier: cf.cashierUser?.username || 'N/A',
+      isReconciled: cf.isReconciled ? 'Yes' : 'No',
+      createdAt: new Date(cf.createdAt).toLocaleString('en-NG')
+    }));
+
+    const parser = new Parser({ fields });
+    const csv = parser.parse(csvData);
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename=warehouse-cashflow-${new Date().toISOString().split('T')[0]}.csv`);
+    res.send('\uFEFF' + csv);
+  })
+);
+
+// @route   GET /api/v1/warehouse/cash-flow/export/pdf
+// @desc    Export warehouse cash flow to PDF
+// @access  Private (Warehouse module access)
+router.get('/cash-flow/export/pdf',
+  [
+    query('startDate').optional().isISO8601(),
+    query('endDate').optional().isISO8601(),
+    query('transactionType').optional(),
+    query('paymentMethod').optional()
+  ],
+  asyncHandler(async (req, res) => {
+    const { startDate, endDate, transactionType, paymentMethod } = req.query;
+    
+    const where = { module: 'WAREHOUSE' };
+    
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = new Date(endDate);
+    }
+    
+    if (transactionType) where.transactionType = transactionType;
+    if (paymentMethod) where.paymentMethod = paymentMethod;
+
+    const cashFlows = await prisma.cashFlow.findMany({
+      where,
+      include: {
+        cashierUser: { select: { username: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const doc = new PDFDocument({ 
+      margin: 30, 
+      size: 'A4', 
+      layout: 'portrait'
+    });
+    
+    const filename = `warehouse-cashflow-${new Date().toISOString().split('T')[0]}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+    
+    doc.pipe(res);
+
+    // Header
+    doc.fontSize(20)
+       .font('Helvetica-Bold')
+       .fillColor('#1e40af')
+       .text('WAREHOUSE CASH FLOW REPORT', { align: 'center' });
+    
+    doc.fontSize(10)
+       .font('Helvetica')
+       .fillColor('#666')
+       .text(`Generated on ${new Date().toLocaleString('en-NG')}`, { align: 'center' });
+
+    doc.moveDown(1.5);
+
+    // Calculate totals
+    let totalCashIn = 0;
+    let totalCashOut = 0;
+    
+    cashFlows.forEach(cf => {
+      if (cf.transactionType === 'CASH_IN' || cf.transactionType === 'SALE') {
+        totalCashIn += parseFloat(cf.amount);
+      } else {
+        totalCashOut += parseFloat(cf.amount);
+      }
+    });
+
+    const netCashFlow = totalCashIn - totalCashOut;
+
+    // Summary
+    doc.fontSize(12)
+       .font('Helvetica-Bold')
+       .fillColor('#1e40af')
+       .text('SUMMARY', 50);
+    
+    doc.fontSize(10)
+       .font('Helvetica')
+       .fillColor('#000');
+    
+    let yPos = doc.y + 10;
+    const summaryData = [
+      ['Total Cash In:', `NGN ${totalCashIn.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`],
+      ['Total Cash Out:', `NGN ${totalCashOut.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`],
+      ['Net Cash Flow:', `NGN ${netCashFlow.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`],
+      ['Total Transactions:', cashFlows.length]
+    ];
+
+    summaryData.forEach(([label, value]) => {
+      doc.font('Helvetica-Bold').text(label, 50, yPos, { width: 150, continued: true });
+      doc.font('Helvetica').text(value, { width: 350 });
+      yPos += 20;
+    });
+
+    doc.moveDown(2);
+
+    // Table
+    const tableData = {
+      headers: ['Date', 'Type', 'Amount (NGN)', 'Method', 'Description', 'Cashier'],
+      rows: cashFlows.map(cf => [
+        new Date(cf.createdAt).toLocaleDateString('en-NG'),
+        cf.transactionType,
+        parseFloat(cf.amount).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
+        cf.paymentMethod,
+        (cf.description || 'N/A').substring(0, 30),
+        cf.cashierUser?.username || 'N/A'
+      ])
+    };
+
+    const tableTop = doc.y;
+    const colWidths = [70, 70, 90, 70, 120, 80];
+    const rowHeight = 30;
+    let currentY = tableTop;
+
+    // Table Header
+    doc.fontSize(9)
+       .font('Helvetica-Bold')
+       .fillColor('#fff');
+    
+    doc.rect(30, currentY, colWidths.reduce((a, b) => a + b, 0), rowHeight)
+       .fill('#1e40af');
+
+    let xPos = 35;
+    tableData.headers.forEach((header, i) => {
+      doc.text(header, xPos, currentY + 10, { 
+        width: colWidths[i] - 10, 
+        align: 'left' 
+      });
+      xPos += colWidths[i];
+    });
+
+    currentY += rowHeight;
+
+    // Table Rows
+    doc.font('Helvetica')
+       .fontSize(8)
+       .fillColor('#000');
+
+    tableData.rows.forEach((row, rowIndex) => {
+      if (currentY > 700) {
+        doc.addPage();
+        currentY = 50;
+      }
+
+      if (rowIndex % 2 === 0) {
+        doc.rect(30, currentY, colWidths.reduce((a, b) => a + b, 0), rowHeight)
+           .fill('#f3f4f6');
+      }
+
+      xPos = 35;
+      row.forEach((cell, i) => {
+        doc.fillColor('#000')
+           .text(String(cell), xPos, currentY + 10, { 
+             width: colWidths[i] - 10, 
+             align: i === 2 ? 'right' : 'left' 
+           });
+        xPos += colWidths[i];
+      });
+
+      currentY += rowHeight;
+    });
+
+    // Footer
+    const footerY = doc.page.height - 80;
+    doc.fontSize(8)
+       .font('Helvetica')
+       .fillColor('#666')
+       .text('Premium G Enterprise - Warehouse Division', 50, footerY, { 
+         align: 'center', 
+         width: doc.page.width - 100 
+       });
+
+    doc.end();
   })
 );
 

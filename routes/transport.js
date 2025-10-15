@@ -2182,5 +2182,612 @@ router.get('/expenses/export/pdf',
   })
 );
 
+
+// ================================
+// SALES (ORDERS) EXPORT ROUTES
+// ================================
+
+// @route   GET /api/v1/transport/sales/export/csv
+// @desc    Export transport sales (orders) to CSV with filters
+// @access  Private (Transport module access)
+router.get('/sales/export/csv',
+  authorizeModule('transport'),
+  [
+    query('period').optional().isIn(['day', 'week', 'month', 'year', 'custom']),
+    query('startDate').optional().isISO8601(),
+    query('endDate').optional().isISO8601(),
+    query('status').optional(),
+    query('locationId').optional()
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid query parameters', errors.array());
+    }
+
+    const { period, startDate, endDate, status, locationId } = req.query;
+    
+    const where = {};
+    
+    // Date filtering based on period
+    if (period && period !== 'custom') {
+      const now = new Date();
+      where.createdAt = {};
+      
+      switch(period) {
+        case 'day':
+          where.createdAt.gte = new Date(now.setHours(0,0,0,0));
+          break;
+        case 'week':
+          const weekStart = new Date(now);
+          weekStart.setDate(now.getDate() - now.getDay());
+          weekStart.setHours(0,0,0,0);
+          where.createdAt.gte = weekStart;
+          break;
+        case 'month':
+          where.createdAt.gte = new Date(now.getFullYear(), now.getMonth(), 1);
+          break;
+        case 'year':
+          where.createdAt.gte = new Date(now.getFullYear(), 0, 1);
+          break;
+      }
+    } else if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = new Date(endDate);
+    }
+    
+    if (status) where.deliveryStatus = status;
+    if (locationId) where.locationId = locationId;
+
+    const orders = await prisma.transportOrder.findMany({
+      where,
+      include: {
+        location: { select: { name: true } },
+        truck: { select: { registrationNumber: true } },
+        createdByUser: { select: { username: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const fields = [
+      { label: 'Order Number', value: 'orderNumber' },
+      { label: 'Client Name', value: 'clientName' },
+      { label: 'Client Phone', value: 'clientPhone' },
+      { label: 'Pickup Location', value: 'pickupLocation' },
+      { label: 'Delivery Address', value: 'deliveryAddress' },
+      { label: 'Location', value: 'location' },
+      { label: 'Truck', value: 'truck' },
+      { label: 'Total Amount (NGN)', value: 'totalOrderAmount' },
+      { label: 'Fuel Required (L)', value: 'fuelRequired' },
+      { label: 'Fuel Cost (NGN)', value: 'fuelCost' },
+      { label: 'Driver Wages (NGN)', value: 'driverWages' },
+      { label: 'Trip Allowance (NGN)', value: 'tripAllowance' },
+      { label: 'Motor Boy Wages (NGN)', value: 'motorBoyWages' },
+      { label: 'Service Charge (NGN)', value: 'serviceCharge' },
+      { label: 'Truck Expenses (NGN)', value: 'truckExpenses' },
+      { label: 'Total Expenses (NGN)', value: 'totalExpenses' },
+      { label: 'Net Profit (NGN)', value: 'netProfit' },
+      { label: 'Profit Margin (%)', value: 'profitMargin' },
+      { label: 'Delivery Status', value: 'deliveryStatus' },
+      { label: 'Created By', value: 'createdBy' },
+      { label: 'Created At', value: 'createdAt' }
+    ];
+
+    const csvData = orders.map(order => ({
+      orderNumber: order.orderNumber || `TO-${order.id.slice(-8)}`,
+      clientName: order.clientName,
+      clientPhone: order.clientPhone || 'N/A',
+      pickupLocation: order.pickupLocation,
+      deliveryAddress: order.deliveryAddress,
+      location: order.location?.name || 'N/A',
+      truck: order.truck?.registrationNumber || 'N/A',
+      totalOrderAmount: parseFloat(order.totalOrderAmount || 0).toFixed(2),
+      fuelRequired: parseFloat(order.fuelRequired || 0).toFixed(2),
+      fuelCost: parseFloat(order.fuelCost || 0).toFixed(2),
+      driverWages: parseFloat(order.driverWages || 0).toFixed(2),
+      tripAllowance: parseFloat(order.tripAllowance || 0).toFixed(2),
+      motorBoyWages: parseFloat(order.motorBoyWages || 0).toFixed(2),
+      serviceCharge: parseFloat(order.serviceChargeExpense || 0).toFixed(2),
+      truckExpenses: parseFloat(order.truckExpenses || 0).toFixed(2),
+      totalExpenses: parseFloat(order.totalTripExpenses || 0).toFixed(2),
+      netProfit: parseFloat(order.netProfit || 0).toFixed(2),
+      profitMargin: parseFloat(order.profitMargin || 0).toFixed(2),
+      deliveryStatus: order.deliveryStatus,
+      createdBy: order.createdByUser?.username || 'N/A',
+      createdAt: new Date(order.createdAt).toLocaleString('en-NG')
+    }));
+
+    const parser = new Parser({ fields });
+    const csv = parser.parse(csvData);
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename=transport-sales-${new Date().toISOString().split('T')[0]}.csv`);
+    res.send('\uFEFF' + csv);
+  })
+);
+
+// @route   GET /api/v1/transport/sales/export/pdf
+// @desc    Export transport sales to PDF with filters
+// @access  Private (Transport module access)
+router.get('/sales/export/pdf',
+  authorizeModule('transport'),
+  [
+    query('period').optional().isIn(['day', 'week', 'month', 'year', 'custom']),
+    query('startDate').optional().isISO8601(),
+    query('endDate').optional().isISO8601(),
+    query('status').optional(),
+    query('locationId').optional(),
+    query('limit').optional().isInt({ min: 1, max: 1000 })
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid query parameters', errors.array());
+    }
+
+    const { period, startDate, endDate, status, locationId, limit = 100 } = req.query;
+    
+    const where = {};
+    
+    // Date filtering based on period
+    if (period && period !== 'custom') {
+      const now = new Date();
+      where.createdAt = {};
+      
+      switch(period) {
+        case 'day':
+          where.createdAt.gte = new Date(now.setHours(0,0,0,0));
+          break;
+        case 'week':
+          const weekStart = new Date(now);
+          weekStart.setDate(now.getDate() - now.getDay());
+          weekStart.setHours(0,0,0,0);
+          where.createdAt.gte = weekStart;
+          break;
+        case 'month':
+          where.createdAt.gte = new Date(now.getFullYear(), now.getMonth(), 1);
+          break;
+        case 'year':
+          where.createdAt.gte = new Date(now.getFullYear(), 0, 1);
+          break;
+      }
+    } else if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = new Date(endDate);
+    }
+    
+    if (status) where.deliveryStatus = status;
+    if (locationId) where.locationId = locationId;
+
+    const orders = await prisma.transportOrder.findMany({
+      where,
+      take: parseInt(limit),
+      include: {
+        location: { select: { name: true } },
+        truck: { select: { registrationNumber: true } },
+        createdByUser: { select: { username: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const doc = new PDFDocument({ 
+      margin: 30, 
+      size: 'A4', 
+      layout: 'landscape'
+    });
+    
+    const filename = `transport-sales-${new Date().toISOString().split('T')[0]}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+    
+    doc.pipe(res);
+
+    // Header
+    doc.fontSize(20)
+       .font('Helvetica-Bold')
+       .fillColor('#1e40af')
+       .text('TRANSPORT SALES REPORT', { align: 'center' });
+    
+    doc.fontSize(10)
+       .font('Helvetica')
+       .fillColor('#666')
+       .text(`Generated on ${new Date().toLocaleString('en-NG')}`, { align: 'center' });
+
+    if (period || startDate || endDate) {
+      let periodText = '';
+      if (period && period !== 'custom') {
+        periodText = `Period: ${period.charAt(0).toUpperCase() + period.slice(1)}`;
+      } else if (startDate || endDate) {
+        periodText = `Period: ${startDate ? new Date(startDate).toLocaleDateString() : 'Start'} - ${endDate ? new Date(endDate).toLocaleDateString() : 'End'}`;
+      }
+      doc.text(periodText, { align: 'center' });
+    }
+
+    doc.moveDown(1.5);
+
+    // Calculate totals
+    let totalRevenue = 0;
+    let totalExpenses = 0;
+    let totalProfit = 0;
+    
+    orders.forEach(order => {
+      totalRevenue += parseFloat(order.totalOrderAmount || 0);
+      totalExpenses += parseFloat(order.totalTripExpenses || 0);
+      totalProfit += parseFloat(order.netProfit || 0);
+    });
+
+    // Summary Box
+    const summaryY = doc.y;
+    doc.fontSize(12)
+       .font('Helvetica-Bold')
+       .fillColor('#1e40af')
+       .text('SUMMARY', 50, summaryY);
+    
+    doc.fontSize(10)
+       .font('Helvetica')
+       .fillColor('#000');
+    
+    const summaryData = [
+      ['Total Orders:', orders.length],
+      ['Total Revenue:', `NGN ${totalRevenue.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`],
+      ['Total Expenses:', `NGN ${totalExpenses.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`],
+      ['Net Profit:', `NGN ${totalProfit.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`],
+      ['Profit Margin:', `${totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(2) : 0}%`]
+    ];
+
+    let yPos = summaryY + 20;
+    summaryData.forEach(([label, value]) => {
+      doc.font('Helvetica-Bold').text(label, 50, yPos, { width: 150, continued: true });
+      doc.font('Helvetica').text(String(value), { width: 200 });
+      yPos += 15;
+    });
+
+    doc.moveDown(2);
+
+    // Table
+    const tableData = {
+      headers: [
+        'Order #',
+        'Client',
+        'Location',
+        'Revenue (NGN)',
+        'Expenses (NGN)',
+        'Profit (NGN)',
+        'Margin %',
+        'Status'
+      ],
+      rows: orders.map(order => [
+  order.orderNumber || `TO-${order.id.slice(-8)}`,
+  order.clientName ? order.clientName.substring(0, 20) : 'N/A',  // ✅ FIXED LINE 2463
+  order.location?.name?.substring(0, 15) || 'N/A',
+  parseFloat(order.totalOrderAmount || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
+  parseFloat(order.totalTripExpenses || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
+  parseFloat(order.netProfit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
+  parseFloat(order.profitMargin || 0).toFixed(2),
+  order.deliveryStatus
+])
+    };
+
+    const tableTop = doc.y;
+    const colWidths = [70, 80, 80, 90, 90, 90, 60, 90];
+    const rowHeight = 25;
+    let currentY = tableTop;
+
+    // Table Header
+    doc.fontSize(9)
+       .font('Helvetica-Bold')
+       .fillColor('#fff');
+    
+    doc.rect(30, currentY, colWidths.reduce((a, b) => a + b, 0), rowHeight)
+       .fill('#1e40af');
+
+    let xPos = 35;
+    tableData.headers.forEach((header, i) => {
+      doc.text(header, xPos, currentY + 8, { 
+        width: colWidths[i] - 10, 
+        align: 'left' 
+      });
+      xPos += colWidths[i];
+    });
+
+    currentY += rowHeight;
+
+    // Table Rows
+    doc.font('Helvetica')
+       .fontSize(8)
+       .fillColor('#000');
+
+    tableData.rows.forEach((row, rowIndex) => {
+      if (currentY > 500) {
+        doc.addPage({ layout: 'landscape' });
+        currentY = 50;
+      }
+
+      // Alternating row colors
+      if (rowIndex % 2 === 0) {
+        doc.rect(30, currentY, colWidths.reduce((a, b) => a + b, 0), rowHeight)
+           .fill('#f3f4f6');
+      }
+
+      xPos = 35;
+      row.forEach((cell, i) => {
+        doc.fillColor('#000')
+           .text(String(cell), xPos, currentY + 8, { 
+             width: colWidths[i] - 10, 
+             align: i >= 3 && i <= 6 ? 'right' : 'left' 
+           });
+        xPos += colWidths[i];
+      });
+
+      currentY += rowHeight;
+    });
+
+    // Footer
+    const footerY = doc.page.height - 80;
+    doc.fontSize(8)
+       .font('Helvetica')
+       .fillColor('#666')
+       .text('Premium G Enterprise - Transport Division', 50, footerY, { 
+         align: 'center', 
+         width: doc.page.width - 100 
+       });
+    
+    doc.text('This is a computer-generated document', 50, footerY + 15, { 
+      align: 'center', 
+      width: doc.page.width - 100 
+    });
+
+    doc.end();
+  })
+);
+
+// ================================
+// CASH FLOW EXPORT ROUTES (TRANSPORT)
+// ================================
+
+// @route   GET /api/v1/transport/cash-flow/export/csv
+// @desc    Export transport cash flow to CSV
+// @access  Private (Transport module access)
+router.get('/cash-flow/export/csv',
+  authorizeModule('transport'),
+  [
+    query('startDate').optional().isISO8601(),
+    query('endDate').optional().isISO8601(),
+    query('transactionType').optional().isIn(['CASH_IN', 'CASH_OUT', 'SALE']),
+    query('paymentMethod').optional()
+  ],
+  asyncHandler(async (req, res) => {
+    const { startDate, endDate, transactionType, paymentMethod } = req.query;
+    
+    const where = { module: 'TRANSPORT' };
+    
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = new Date(endDate);
+    }
+    
+    if (transactionType) where.transactionType = transactionType;
+    if (paymentMethod) where.paymentMethod = paymentMethod;
+
+    const cashFlows = await prisma.cashFlow.findMany({
+      where,
+      include: {
+        cashierUser: { select: { username: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const fields = [
+      { label: 'Transaction Type', value: 'transactionType' },
+      { label: 'Amount (NGN)', value: 'amount' },
+      { label: 'Payment Method', value: 'paymentMethod' },
+      { label: 'Description', value: 'description' },
+      { label: 'Reference Number', value: 'referenceNumber' },
+      { label: 'Cashier', value: 'cashier' },
+      { label: 'Reconciled', value: 'isReconciled' },
+      { label: 'Created At', value: 'createdAt' }
+    ];
+
+    const csvData = cashFlows.map(cf => ({
+      transactionType: cf.transactionType,
+      amount: parseFloat(cf.amount).toFixed(2),
+      paymentMethod: cf.paymentMethod,
+      description: cf.description || 'N/A',
+      referenceNumber: cf.referenceNumber || 'N/A',
+      cashier: cf.cashierUser?.username || 'N/A',
+      isReconciled: cf.isReconciled ? 'Yes' : 'No',
+      createdAt: new Date(cf.createdAt).toLocaleString('en-NG')
+    }));
+
+    const parser = new Parser({ fields });
+    const csv = parser.parse(csvData);
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename=transport-cashflow-${new Date().toISOString().split('T')[0]}.csv`);
+    res.send('\uFEFF' + csv);
+  })
+);
+
+// @route   GET /api/v1/transport/cash-flow/export/pdf
+// @desc    Export transport cash flow to PDF
+// @access  Private (Transport module access)
+router.get('/cash-flow/export/pdf',
+  authorizeModule('transport'),
+  [
+    query('startDate').optional().isISO8601(),
+    query('endDate').optional().isISO8601(),
+    query('transactionType').optional(),
+    query('paymentMethod').optional()
+  ],
+  asyncHandler(async (req, res) => {
+    const { startDate, endDate, transactionType, paymentMethod } = req.query;
+    
+    const where = { module: 'TRANSPORT' };
+    
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = new Date(endDate);
+    }
+    
+    if (transactionType) where.transactionType = transactionType;
+    if (paymentMethod) where.paymentMethod = paymentMethod;
+
+    const cashFlows = await prisma.cashFlow.findMany({
+      where,
+      include: {
+        cashierUser: { select: { username: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const doc = new PDFDocument({ 
+      margin: 30, 
+      size: 'A4', 
+      layout: 'portrait'
+    });
+    
+    const filename = `transport-cashflow-${new Date().toISOString().split('T')[0]}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+    
+    doc.pipe(res);
+
+    // Header
+    doc.fontSize(20)
+       .font('Helvetica-Bold')
+       .fillColor('#1e40af')
+       .text('TRANSPORT CASH FLOW REPORT', { align: 'center' });
+    
+    doc.fontSize(10)
+       .font('Helvetica')
+       .fillColor('#666')
+       .text(`Generated on ${new Date().toLocaleString('en-NG')}`, { align: 'center' });
+
+    doc.moveDown(1.5);
+
+    // Calculate totals
+    let totalCashIn = 0;
+    let totalCashOut = 0;
+    
+    cashFlows.forEach(cf => {
+      if (cf.transactionType === 'CASH_IN' || cf.transactionType === 'SALE') {
+        totalCashIn += parseFloat(cf.amount);
+      } else {
+        totalCashOut += parseFloat(cf.amount);
+      }
+    });
+
+    const netCashFlow = totalCashIn - totalCashOut;
+
+    // Summary
+    doc.fontSize(12)
+       .font('Helvetica-Bold')
+       .fillColor('#1e40af')
+       .text('SUMMARY', 50);
+    
+    doc.fontSize(10)
+       .font('Helvetica')
+       .fillColor('#000');
+    
+    let yPos = doc.y + 10;
+    const summaryData = [
+      ['Total Cash In:', `NGN ${totalCashIn.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`],
+      ['Total Cash Out:', `NGN ${totalCashOut.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`],
+      ['Net Cash Flow:', `NGN ${netCashFlow.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`],
+      ['Total Transactions:', cashFlows.length]
+    ];
+
+    summaryData.forEach(([label, value]) => {
+      doc.font('Helvetica-Bold').text(label, 50, yPos, { width: 150, continued: true });
+      doc.font('Helvetica').text(value, { width: 350 });
+      yPos += 20;
+    });
+
+    doc.moveDown(2);
+
+    // Table
+    const tableData = {
+      headers: ['Date', 'Type', 'Amount (NGN)', 'Method', 'Description', 'Cashier'],
+      rows: cashFlows.map(cf => [
+        new Date(cf.createdAt).toLocaleDateString('en-NG'),
+        cf.transactionType,
+        parseFloat(cf.amount).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
+        cf.paymentMethod,
+        (cf.description || 'N/A').substring(0, 30),
+        cf.cashierUser?.username || 'N/A'
+      ])
+    };
+
+    const tableTop = doc.y;
+    const colWidths = [70, 70, 90, 70, 120, 80];
+    const rowHeight = 30;
+    let currentY = tableTop;
+
+    // Table Header
+    doc.fontSize(9)
+       .font('Helvetica-Bold')
+       .fillColor('#fff');
+    
+    doc.rect(30, currentY, colWidths.reduce((a, b) => a + b, 0), rowHeight)
+       .fill('#1e40af');
+
+    let xPos = 35;
+    tableData.headers.forEach((header, i) => {
+      doc.text(header, xPos, currentY + 10, { 
+        width: colWidths[i] - 10, 
+        align: 'left' 
+      });
+      xPos += colWidths[i];
+    });
+
+    currentY += rowHeight;
+
+    // Table Rows
+    doc.font('Helvetica')
+       .fontSize(8)
+       .fillColor('#000');
+
+    tableData.rows.forEach((row, rowIndex) => {
+      if (currentY > 700) {
+        doc.addPage();
+        currentY = 50;
+      }
+
+      if (rowIndex % 2 === 0) {
+        doc.rect(30, currentY, colWidths.reduce((a, b) => a + b, 0), rowHeight)
+           .fill('#f3f4f6');
+      }
+
+      xPos = 35;
+      row.forEach((cell, i) => {
+        doc.fillColor('#000')
+           .text(String(cell), xPos, currentY + 10, { 
+             width: colWidths[i] - 10, 
+             align: i === 2 ? 'right' : 'left' 
+           });
+        xPos += colWidths[i];
+      });
+
+      currentY += rowHeight;
+    });
+
+    // Footer
+    const footerY = doc.page.height - 80;
+    doc.fontSize(8)
+       .font('Helvetica')
+       .fillColor('#666')
+       .text('Premium G Enterprise - Transport Division', 50, footerY, { 
+         align: 'center', 
+         width: doc.page.width - 100 
+       });
+
+    doc.end();
+  })
+);
+
 module.exports = router;
 
