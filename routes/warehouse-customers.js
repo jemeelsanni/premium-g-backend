@@ -1,7 +1,7 @@
 // routes/warehouse-customers.js - Warehouse customer management
 
 const express = require('express');
-const { body, param, validationResult } = require('express-validator');
+const { body, param, query, validationResult } = require('express-validator');
 const { PrismaClient } = require('@prisma/client');
 
 const { asyncHandler, ValidationError, NotFoundError } = require('../middleware/errorHandler');
@@ -56,66 +56,223 @@ router.post('/customers',
 
 // Get warehouse customers
 router.get('/customers',
-  authorizeModule('warehouse'),
+  authorizeModule('warehouse', 'read'),
+  [
+    query('sortBy').optional().isIn([
+      'name', 'recent', 'topSpender', 'topPurchases', 'creditScore'
+    ]),
+    query('customerType').optional().isIn(['INDIVIDUAL', 'BUSINESS']),
+    query('hasOutstandingDebt').optional().isBoolean(),
+    query('page').optional().isInt({ min: 1 }),
+    query('limit').optional().isInt({ min: 1, max: 100 })
+  ],
   asyncHandler(async (req, res) => {
     const {
+      sortBy = 'name',
       customerType,
-      isActive = 'true'
+      hasOutstandingDebt,
+      page = 1,
+      limit = 20
     } = req.query;
 
-    const search = typeof req.query.search === 'string' ? req.query.search.trim() : undefined;
-    const page = Math.max(1, parseInt(req.query.page || '1', 10));
-    const limitRaw = parseInt(req.query.limit || '20', 10);
-    const limit = Math.min(Math.max(1, limitRaw), 100);
-
-    const skip = (page - 1) * limit;
-    const take = limit;
-
     const where = {};
-    
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { phone: { contains: search, mode: 'insensitive' } },
-        { businessName: { contains: search, mode: 'insensitive' } }
-      ];
-    }
-    
     if (customerType) where.customerType = customerType;
-    if (isActive !== 'all') where.isActive = isActive === 'true';
+    if (hasOutstandingDebt === 'true') {
+      where.outstandingDebt = { gt: 0 }; // ✨ NEW: Filter by debt
+    }
 
-    const [customers, total] = await Promise.all([
+    // ✨ NEW: Dynamic sorting
+    let orderBy = {};
+    switch (sortBy) {
+      case 'recent':
+        orderBy = { lastPurchaseDate: 'desc' };
+        break;
+      case 'topSpender':
+        orderBy = { totalSpent: 'desc' };
+        break;
+      case 'topPurchases':
+        orderBy = { totalPurchases: 'desc' };
+        break;
+      case 'creditScore':
+        orderBy = { paymentReliabilityScore: 'desc' };
+        break;
+      default:
+        orderBy = { name: 'asc' };
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const [customers, total, analytics] = await Promise.all([
       prisma.warehouseCustomer.findMany({
         where,
+        skip,
+        take: parseInt(limit),
+        orderBy,
         include: {
           _count: {
             select: {
               sales: true,
-              discountRequests: true,
-              discounts: true
+              debtors: true // ✨ NEW: Count debt records
             }
           }
-        },
-        orderBy: { name: 'asc' },
-        skip,
-        take
+        }
       }),
-      prisma.warehouseCustomer.count({ where })
+
+      prisma.warehouseCustomer.count({ where }),
+
+      // ✨ NEW: Performance analytics
+      prisma.warehouseCustomer.aggregate({
+        where,
+        _count: true,
+        _sum: {
+          totalSpent: true,
+          totalPurchases: true,
+          outstandingDebt: true // ✨ NEW
+        },
+        _avg: {
+          averageOrderValue: true,
+          paymentReliabilityScore: true // ✨ NEW
+        }
+      })
     ]);
+
+    // ✨ NEW: Identify VIP customers (top 20% by spending)
+    const topCustomers = await prisma.warehouseCustomer.findMany({
+      where,
+      orderBy: { totalSpent: 'desc' },
+      take: Math.ceil(total * 0.2),
+      select: { id: true }
+    });
+
+    const vipIds = topCustomers.map(c => c.id);
+
+    // ✨ NEW: Mark recent customers (purchased in last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const enrichedCustomers = customers.map(customer => ({
+      ...customer,
+      isVIP: vipIds.includes(customer.id), // ✨ NEW
+      isRecent: customer.lastPurchaseDate && 
+                customer.lastPurchaseDate >= thirtyDaysAgo, // ✨ NEW
+      hasDebt: parseFloat(customer.outstandingDebt || 0) > 0, // ✨ NEW
+      debtCount: customer._count.debtors // ✨ NEW
+    }));
 
     res.json({
       success: true,
       data: {
-        customers,
+        customers: enrichedCustomers,
         pagination: {
-          page,
-          limit,
+          page: parseInt(page),
+          limit: parseInt(limit),
           total,
-          totalPages: Math.ceil(total / limit)
+          pages: Math.ceil(total / parseInt(limit))
+        },
+        // ✨ NEW: Analytics section
+        analytics: {
+          totalCustomers: analytics._count,
+          totalRevenue: analytics._sum.totalSpent || 0,
+          totalPurchases: analytics._sum.totalPurchases || 0,
+          totalOutstandingDebt: analytics._sum.outstandingDebt || 0,
+          averageOrderValue: analytics._avg.averageOrderValue || 0,
+          averageCreditScore: analytics._avg.paymentReliabilityScore || 0
         }
       }
+    });
+  })
+);
+
+router.get('/customers/:id',
+  authorizeModule('warehouse', 'read'),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+
+    const customer = await prisma.warehouseCustomer.findUnique({
+      where: { id },
+      include: {
+        sales: {
+          orderBy: { createdAt: 'desc' },
+          take: 10, // Last 10 sales
+          include: {
+            product: {
+              select: {
+                name: true,
+                productNo: true
+              }
+            }
+          }
+        },
+        debtors: {
+          where: {
+            status: { in: ['OUTSTANDING', 'PARTIAL', 'OVERDUE'] }
+          },
+          include: {
+            sale: {
+              select: {
+                receiptNumber: true,
+                totalAmount: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        error: 'Customer not found'
       });
+    }
+
+    // ✨ NEW: Purchase patterns analysis
+    const purchaseAnalysis = await prisma.$queryRaw`
+      SELECT 
+        p.name as product_name,
+        p.product_no,
+        COUNT(*) as purchase_count,
+        SUM(ws.quantity) as total_quantity,
+        SUM(ws.total_amount) as total_spent,
+        AVG(ws.unit_price) as avg_price
+      FROM warehouse_sales ws
+      JOIN products p ON ws.product_id = p.id
+      WHERE ws.warehouse_customer_id = ${id}
+      GROUP BY p.id, p.name, p.product_no
+      ORDER BY total_spent DESC
+      LIMIT 5
+    `;
+
+    // ✨ NEW: Monthly spending trend (last 12 months)
+    const spendingTrend = await prisma.$queryRaw`
+      SELECT 
+        DATE_TRUNC('month', created_at) as month,
+        COUNT(*) as purchase_count,
+        SUM(total_amount) as total_spent
+      FROM warehouse_sales
+      WHERE warehouse_customer_id = ${id}
+        AND created_at >= NOW() - INTERVAL '12 months'
+      GROUP BY DATE_TRUNC('month', created_at)
+      ORDER BY month DESC
+    `;
+
+    res.json({
+      success: true,
+      data: {
+        customer,
+        insights: {
+          topProducts: purchaseAnalysis,
+          spendingTrend,
+          debtSummary: {
+            activeDebts: customer.debtors.length,
+            totalOutstanding: customer.debtors.reduce(
+              (sum, d) => sum + parseFloat(d.amountDue),
+              0
+            )
+          }
+        }
+      }
+    });
   })
 );
 

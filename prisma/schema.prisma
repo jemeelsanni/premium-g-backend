@@ -44,6 +44,8 @@ model User {
   warehouseSalesApproved     WarehouseSale[]             @relation("WarehouseSaleApprovedBy")
   warehouseExpensesCreated   WarehouseExpense[]          @relation("WarehouseExpensesCreatedBy")
   warehouseExpensesApproved  WarehouseExpense[]          @relation("WarehouseExpensesApprovedBy")
+  warehouseProductPurchases  WarehouseProductPurchase[]  @relation("WarehousePurchasesCreatedBy")
+  debtorPayments             DebtorPayment[]             @relation("DebtorPaymentsReceivedBy")
 
   @@map("users")
 }
@@ -136,6 +138,9 @@ model Product {
   module         ProductModule @default(DISTRIBUTION)
   isActive       Boolean       @default(true) @map("is_active")
 
+  minSellingPrice Decimal? @map("min_selling_price") @db.Decimal(10, 2)
+  maxSellingPrice Decimal? @map("max_selling_price") @db.Decimal(10, 2)
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -146,6 +151,7 @@ model Product {
   WarehouseCustomerDiscount WarehouseCustomerDiscount[]
   DiscountApprovalRequest   DiscountApprovalRequest[]
   warehouseExpenses         WarehouseExpense[]
+  productPurchases          WarehouseProductPurchase[]
 
   @@map("products")
 }
@@ -568,6 +574,13 @@ model WarehouseCustomer {
   averageOrderValue Decimal   @default(0) @map("average_order_value") @db.Decimal(12, 2)
   lastPurchaseDate  DateTime? @map("last_purchase_date")
 
+  // Credit tracking
+  totalCreditPurchases    Int       @default(0) @map("total_credit_purchases")
+  totalCreditAmount       Decimal   @default(0) @map("total_credit_amount") @db.Decimal(15, 2)
+  outstandingDebt         Decimal   @default(0) @map("outstanding_debt") @db.Decimal(15, 2)
+  lastPaymentDate         DateTime? @map("last_payment_date")
+  paymentReliabilityScore Decimal   @default(100.00) @map("payment_reliability_score") @db.Decimal(5, 2)
+
   notes    String?
   isActive Boolean @default(true) @map("is_active")
 
@@ -580,6 +593,7 @@ model WarehouseCustomer {
   sales            WarehouseSale[]
   discountRequests DiscountApprovalRequest[]
   discounts        WarehouseCustomerDiscount[]
+  debtors          Debtor[]
 
   @@map("warehouse_customers")
 }
@@ -620,6 +634,9 @@ model WarehouseSale {
   profitMargin Decimal @map("profit_margin") @db.Decimal(5, 2)
 
   paymentMethod PaymentMethod @map("payment_method")
+  paymentStatus String?       @default("PAID") @map("payment_status") // PAID, CREDIT, PARTIAL
+  creditDueDate DateTime?     @map("credit_due_date")
+  creditNotes   String?       @map("credit_notes")
 
   customerName  String? @map("customer_name")
   customerPhone String? @map("customer_phone")
@@ -640,9 +657,43 @@ model WarehouseSale {
   warehouseCustomer WarehouseCustomer?      @relation(fields: [warehouseCustomerId], references: [id])
   salesOfficerUser  User                    @relation(fields: [salesOfficer], references: [id])
   discountApprover  User?                   @relation("WarehouseSaleApprovedBy", fields: [approvedBy], references: [id])
+  debtor            Debtor?
   saleDiscounts     WarehouseSaleDiscount[]
 
   @@map("warehouse_sales")
+}
+
+model WarehouseProductPurchase {
+  id        String @id @default(cuid())
+  productId String @map("product_id")
+
+  vendorName  String  @map("vendor_name")
+  vendorPhone String? @map("vendor_phone")
+  vendorEmail String? @map("vendor_email")
+
+  quantity    Int
+  unitType    UnitType @map("unit_type")
+  costPerUnit Decimal  @map("cost_per_unit") @db.Decimal(10, 2)
+  totalCost   Decimal  @map("total_cost") @db.Decimal(12, 2)
+
+  paymentMethod PaymentMethod @map("payment_method")
+  paymentStatus String        @default("PAID") @map("payment_status") // PAID, PARTIAL, PENDING
+  amountPaid    Decimal       @default(0) @map("amount_paid") @db.Decimal(12, 2)
+  amountDue     Decimal       @default(0) @map("amount_due") @db.Decimal(12, 2)
+
+  purchaseDate  DateTime @map("purchase_date")
+  invoiceNumber String?  @map("invoice_number")
+  receiptUrl    String?  @map("receipt_url")
+  notes         String?
+
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  product       Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  createdByUser User    @relation("WarehousePurchasesCreatedBy", fields: [createdBy], references: [id])
+
+  @@map("warehouse_product_purchases")
 }
 
 model WarehouseExpense {
@@ -715,6 +766,47 @@ model WarehouseCustomerDiscount {
   saleDiscounts     WarehouseSaleDiscount[]
 
   @@map("warehouse_customer_discounts")
+}
+
+model Debtor {
+  id                  String @id @default(cuid())
+  warehouseCustomerId String @map("warehouse_customer_id")
+  saleId              String @unique @map("sale_id")
+
+  totalAmount Decimal @map("total_amount") @db.Decimal(12, 2)
+  amountPaid  Decimal @default(0) @map("amount_paid") @db.Decimal(12, 2)
+  amountDue   Decimal @map("amount_due") @db.Decimal(12, 2)
+
+  dueDate DateTime? @map("due_date")
+  status  String    @default("OUTSTANDING") @map("status") // OUTSTANDING, PARTIAL, PAID, OVERDUE
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  customer WarehouseCustomer @relation(fields: [warehouseCustomerId], references: [id], onDelete: Cascade)
+  sale     WarehouseSale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  payments DebtorPayment[]
+
+  @@map("warehouse_debtors")
+}
+
+model DebtorPayment {
+  id       String @id @default(cuid())
+  debtorId String @map("debtor_id")
+
+  amount          Decimal       @map("amount") @db.Decimal(12, 2)
+  paymentMethod   PaymentMethod @map("payment_method")
+  paymentDate     DateTime      @map("payment_date")
+  referenceNumber String?       @map("reference_number")
+  notes           String?
+
+  receivedBy String   @map("received_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  debtor         Debtor @relation(fields: [debtorId], references: [id], onDelete: Cascade)
+  receivedByUser User   @relation("DebtorPaymentsReceivedBy", fields: [receivedBy], references: [id])
+
+  @@map("warehouse_debtor_payments")
 }
 
 model DiscountApprovalRequest {

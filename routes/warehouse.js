@@ -19,6 +19,13 @@ router.use('/', warehouseCustomersRouter);
 const warehouseExpensesRouter = require('./warehouse-expenses');
 router.use('/', warehouseExpensesRouter);
 
+const warehousePurchasesRouter = require('./warehouse-purchases');
+router.use('/', warehousePurchasesRouter);
+
+const warehouseDebtorsRouter = require('./warehouse-debtors');
+router.use('/', warehouseDebtorsRouter);
+
+
 // Include discount management routes (if created)
 let checkCustomerDiscount;
 try {
@@ -295,6 +302,9 @@ router.get('/products', asyncHandler(async (req, res) => {
 // @route   POST /api/v1/warehouse/sales
 // @desc    Create warehouse sale with automatic discount application
 // @access  Private (Warehouse Sales Officer, Admin)
+// @route   POST /api/v1/warehouse/sales
+// @desc    Create warehouse sale with price validation, discount application, and credit support
+// @access  Private (Warehouse Sales Officer, Admin)
 router.post('/sales',
   authorizeModule('warehouse', 'write'),
   [
@@ -302,7 +312,10 @@ router.post('/sales',
     body('quantity').isInt({ min: 1 }).withMessage('Quantity must be greater than 0'),
     body('unitType').isIn(['PALLETS', 'PACKS', 'UNITS']).withMessage('Invalid unit type'),
     body('unitPrice').isFloat({ min: 0 }).withMessage('Unit price must be 0 or greater'),
-    body('paymentMethod').isIn(['CASH', 'BANK_TRANSFER', 'CHECK', 'CARD', 'MOBILE_MONEY']),
+    body('paymentMethod').isIn(['CASH', 'BANK_TRANSFER', 'CHECK', 'CARD', 'MOBILE_MONEY', 'CREDIT']),
+    body('paymentStatus').optional().isIn(['PAID', 'CREDIT', 'PARTIAL']),
+    body('creditDueDate').optional().isISO8601(),
+    body('creditNotes').optional().trim(),
     body('warehouseCustomerId').optional().custom(validateCuid('warehouse customer ID')),
     body('customerName').optional().trim(),
     body('customerPhone').optional().trim(),
@@ -319,6 +332,9 @@ router.post('/sales',
       unitType,
       unitPrice,
       paymentMethod,
+      paymentStatus = 'PAID',
+      creditDueDate,
+      creditNotes,
       warehouseCustomerId,
       customerName,
       customerPhone
@@ -349,13 +365,87 @@ router.post('/sales',
       customerId = existingCustomer.id;
     }
 
-    // Get product for cost calculation
+    // Get product for validation and cost calculation
     const product = await prisma.product.findUnique({
-      where: { id: productId }
+      where: { id: productId },
+      select: {
+        id: true,
+        name: true,
+        pricePerPack: true,
+        costPerPack: true,
+        minSellingPrice: true,
+        maxSellingPrice: true,
+        packsPerPallet: true
+      }
     });
 
     if (!product) {
       throw new NotFoundError('Product not found');
+    }
+
+    // ========================================
+    // ENHANCEMENT: PRICE RANGE VALIDATION
+    // ========================================
+    const price = parseFloat(unitPrice);
+    
+    // Only validate if min/max are set
+    if (product.minSellingPrice !== null) {
+      const minPrice = parseFloat(product.minSellingPrice);
+      if (price < minPrice) {
+        throw new ValidationError(
+          `Unit price (₦${price.toLocaleString()}) is below minimum selling price (₦${minPrice.toLocaleString()}) for ${product.name}`
+        );
+      }
+    }
+
+    if (product.maxSellingPrice !== null) {
+      const maxPrice = parseFloat(product.maxSellingPrice);
+      if (price > maxPrice) {
+        throw new ValidationError(
+          `Unit price (₦${price.toLocaleString()}) exceeds maximum selling price (₦${maxPrice.toLocaleString()}) for ${product.name}`
+        );
+      }
+    }
+
+    // ========================================
+    // ENHANCEMENT: CREDIT SALES VALIDATION
+    // ========================================
+    if (paymentMethod === 'CREDIT' || paymentStatus === 'CREDIT') {
+      if (!customerId) {
+        throw new ValidationError('Customer ID is required for credit sales');
+      }
+
+      const customer = await prisma.warehouseCustomer.findUnique({
+        where: { id: customerId },
+        select: {
+          id: true,
+          name: true,
+          creditLimit: true,
+          outstandingDebt: true
+        }
+      });
+
+      if (!customer) {
+        throw new NotFoundError('Customer not found');
+      }
+
+      if (!customer.creditLimit || parseFloat(customer.creditLimit) <= 0) {
+        throw new BusinessError('Customer does not have credit facility');
+      }
+
+      const totalAmount = price * quantity;
+      const currentDebt = parseFloat(customer.outstandingDebt || 0);
+      const creditLimit = parseFloat(customer.creditLimit);
+
+      if (currentDebt + totalAmount > creditLimit) {
+        throw new BusinessError(
+          `Credit limit exceeded. Available credit: ₦${(creditLimit - currentDebt).toLocaleString()}, Required: ₦${totalAmount.toLocaleString()}`
+        );
+      }
+
+      if (!creditDueDate) {
+        throw new ValidationError('Credit due date is required for credit sales');
+      }
     }
 
     // Check for discount
@@ -379,15 +469,17 @@ router.post('/sales',
         totalDiscountAmount = discountAmount * quantity;
         
         // Try to find the applicable discount for tracking
-        const discountCheck = await checkCustomerDiscount(
-          customerId, 
-          productId, 
-          quantity, 
-          basePrice
-        );
-        
-        if (discountCheck.hasDiscount) {
-          applicableDiscount = discountCheck.discount;
+        if (checkCustomerDiscount) {
+          const discountCheck = await checkCustomerDiscount(
+            customerId, 
+            productId, 
+            quantity, 
+            basePrice
+          );
+          
+          if (discountCheck.hasDiscount) {
+            applicableDiscount = discountCheck.discount;
+          }
         }
         
         console.log('✅ Discount detected and saved:', {
@@ -436,7 +528,11 @@ router.post('/sales',
           totalDiscountAmount: discountAmount > 0 ? totalDiscountAmount : null,
           discountPercentage: discountAmount > 0 ? parseFloat(discountPercentage.toFixed(2)) : null,
           discountReason: discountAmount > 0 ? 'Customer discount applied' : null,
-          approvedBy: discountAmount > 0 && applicableDiscount ? req.user.id : null
+          approvedBy: discountAmount > 0 && applicableDiscount ? req.user.id : null,
+          // ENHANCEMENT: Credit fields
+          paymentStatus: paymentMethod === 'CREDIT' ? 'CREDIT' : paymentStatus,
+          creditDueDate: paymentMethod === 'CREDIT' ? new Date(creditDueDate) : null,
+          creditNotes: paymentMethod === 'CREDIT' ? creditNotes : null
         },
         include: {
           product: true,
@@ -447,32 +543,66 @@ router.post('/sales',
         }
       });
 
-      // 2. ✨ AUTOMATICALLY CREATE CASH FLOW ENTRY ✨
-      const cashFlowDescription = discountAmount > 0
-        ? `Sale: ${product.name} - ${customerName || 'Walk-in'} (Discount: ${discountPercentage.toFixed(1)}%)`
-        : `Sale: ${product.name} - ${customerName || 'Walk-in'}`;
+      // 2. Create cash flow entry (only for non-credit sales)
+      let cashFlowEntry = null;
+      if (paymentMethod !== 'CREDIT' && paymentStatus !== 'CREDIT') {
+        const cashFlowDescription = discountAmount > 0
+          ? `Sale: ${product.name} - ${customerName || 'Walk-in'} (Discount: ${discountPercentage.toFixed(1)}%)`
+          : `Sale: ${product.name} - ${customerName || 'Walk-in'}`;
 
-      const cashFlowEntry = await tx.cashFlow.create({
-  data: {
-    transactionType: 'CASH_IN',
-    amount: totalAmount,
-    paymentMethod: paymentMethod,
-    description: cashFlowDescription,
-    referenceNumber: receiptNumber,
-    cashier: req.user.id,
-    module: 'WAREHOUSE'  // ✨ ADD THIS
-  }
-});
-      
+        cashFlowEntry = await tx.cashFlow.create({
+          data: {
+            transactionType: 'CASH_IN',
+            amount: totalAmount,
+            paymentMethod: paymentMethod,
+            description: cashFlowDescription,
+            referenceNumber: receiptNumber,
+            cashier: req.user.id,
+            module: 'WAREHOUSE'
+          }
+        });
+        
+        console.log('✅ Cash flow entry created:', {
+          transactionType: 'CASH_IN',
+          amount: totalAmount,
+          paymentMethod,
+          receiptNumber
+        });
+      }
 
-      console.log('✅ Cash flow entry created:', {
-        transactionType: 'CASH_IN',
-        amount: totalAmount,
-        paymentMethod,
-        receiptNumber
-      });
+      // 3. ENHANCEMENT: Create debtor record for credit sales
+      let debtorRecord = null;
+      if (paymentMethod === 'CREDIT' || paymentStatus === 'CREDIT') {
+        debtorRecord = await tx.debtor.create({
+          data: {
+            warehouseCustomerId: customerId,
+            saleId: warehouseSale.id,
+            totalAmount,
+            amountPaid: 0,
+            amountDue: totalAmount,
+            dueDate: creditDueDate ? new Date(creditDueDate) : null,
+            status: 'OUTSTANDING'
+          }
+        });
 
-      // 3. Track discount usage if applied
+        // Update customer analytics for credit
+        await tx.warehouseCustomer.update({
+          where: { id: customerId },
+          data: {
+            totalCreditPurchases: { increment: 1 },
+            totalCreditAmount: { increment: totalAmount },
+            outstandingDebt: { increment: totalAmount }
+          }
+        });
+
+        console.log('✅ Debtor record created:', {
+          debtorId: debtorRecord.id,
+          amount: totalAmount,
+          dueDate: creditDueDate
+        });
+      }
+
+      // 4. Track discount usage if applied
       if (applicableDiscount && discountAmount > 0) {
         await tx.warehouseCustomerDiscount.update({
           where: { id: applicableDiscount.id },
@@ -483,7 +613,7 @@ router.post('/sales',
         });
       }
 
-      // 4. Update inventory
+      // 5. Update inventory
       if (unitType === 'PACKS') {
         await tx.warehouseInventory.updateMany({
           where: { productId },
@@ -491,9 +621,23 @@ router.post('/sales',
             packs: { decrement: quantity }
           }
         });
+      } else if (unitType === 'PALLETS') {
+        await tx.warehouseInventory.updateMany({
+          where: { productId },
+          data: {
+            pallets: { decrement: quantity }
+          }
+        });
+      } else if (unitType === 'UNITS') {
+        await tx.warehouseInventory.updateMany({
+          where: { productId },
+          data: {
+            units: { decrement: quantity }
+          }
+        });
       }
 
-      // 5. Update customer stats
+      // 6. Update customer stats (for all sales)
       if (customerId) {
         const customerStats = await tx.warehouseCustomer.update({
           where: { id: customerId },
@@ -521,21 +665,32 @@ router.post('/sales',
         });
       }
 
-      return { warehouseSale, cashFlowEntry };
+      return { warehouseSale, cashFlowEntry, debtorRecord };
     });
 
     const result = await withReceiptConflictRetry(() => createSaleOperation());
 
-    const successMessage = discountAmount > 0 
-      ? `Sale recorded successfully with ${discountPercentage.toFixed(1)}% discount applied! Customer saved ₦${totalDiscountAmount.toLocaleString()}. Cash flow entry created.`
-      : 'Warehouse sale recorded successfully. Cash flow entry created.';
+    // Build success message
+    let successMessage = '';
+    if (paymentMethod === 'CREDIT') {
+      successMessage = `Credit sale created successfully. Amount: ₦${totalAmount.toLocaleString()}, Due: ${new Date(creditDueDate).toLocaleDateString()}`;
+      if (discountAmount > 0) {
+        successMessage += ` (${discountPercentage.toFixed(1)}% discount applied - saved ₦${totalDiscountAmount.toLocaleString()})`;
+      }
+    } else {
+      successMessage = discountAmount > 0 
+        ? `Sale recorded successfully with ${discountPercentage.toFixed(1)}% discount applied! Customer saved ₦${totalDiscountAmount.toLocaleString()}. Cash flow entry created.`
+        : 'Warehouse sale recorded successfully. Cash flow entry created.';
+    }
 
     res.status(201).json({
       success: true,
       message: successMessage,
       data: { 
         sale: result.warehouseSale,
-        cashFlowRecorded: true
+        cashFlowRecorded: result.cashFlowEntry !== null,
+        debtorCreated: result.debtorRecord !== null,
+        debtor: result.debtorRecord
       }
     });
   })
