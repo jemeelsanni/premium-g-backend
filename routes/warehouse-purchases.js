@@ -1,101 +1,14 @@
 const express = require('express');
 const router = express.Router();
-const { PrismaClient } = require('@prisma/client');
 const { body, query, validationResult } = require('express-validator');
-const { authorizeModule } = require('../middleware/auth');
-const { asyncHandler, ValidationError } = require('../middleware/errorHandler');
-
+const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-// ================================
-// GET ALL PRODUCT PURCHASES (with filters)
-// ================================
-router.get('/',
-  authorizeModule('warehouse', 'read'),
-  [
-    query('startDate').optional().isISO8601(),
-    query('endDate').optional().isISO8601(),
-    query('productId').optional().isString(),
-    query('vendorName').optional().isString(),
-    query('paymentStatus').optional().isIn(['PAID', 'PARTIAL', 'PENDING']),
-    query('page').optional().isInt({ min: 1 }),
-    query('limit').optional().isInt({ min: 1, max: 100 })
-  ],
-  asyncHandler(async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      throw new ValidationError('Invalid query parameters', errors.array());
-    }
-
-    const {
-      startDate,
-      endDate,
-      productId,
-      vendorName,
-      paymentStatus,
-      page = 1,
-      limit = 20
-    } = req.query;
-
-    // Build filter object
-    const where = {};
-    
-    if (startDate || endDate) {
-      where.purchaseDate = {};
-      if (startDate) where.purchaseDate.gte = new Date(startDate);
-      if (endDate) where.purchaseDate.lte = new Date(endDate);
-    }
-    
-    if (productId) where.productId = productId;
-    if (vendorName) where.vendorName = { contains: vendorName, mode: 'insensitive' };
-    if (paymentStatus) where.paymentStatus = paymentStatus;
-
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    const [purchases, total] = await Promise.all([
-      prisma.warehouseProductPurchase.findMany({
-        where,
-        skip,
-        take: parseInt(limit),
-        include: {
-          product: {
-            select: {
-              id: true,
-              name: true,
-              productNo: true,
-              packsPerPallet: true
-            }
-          },
-          createdByUser: {
-            select: {
-              id: true,
-              username: true,
-              fullName: true
-            }
-          }
-        },
-        orderBy: { purchaseDate: 'desc' }
-      }),
-      prisma.warehouseProductPurchase.count({ where })
-    ]);
-
-    res.json({
-      success: true,
-      data: {
-        purchases,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total,
-          pages: Math.ceil(total / parseInt(limit))
-        }
-      }
-    });
-  })
-);
+const { asyncHandler, ValidationError, BusinessError, NotFoundError } = require('../middleware/errorHandler');
+const { authorizeModule } = require('../middleware/auth');
 
 // ================================
-// CREATE PRODUCT PURCHASE
+// CREATE WAREHOUSE PURCHASE
 // ================================
 router.post('/',
   authorizeModule('warehouse', 'write'),
@@ -104,6 +17,9 @@ router.post('/',
     body('vendorName').trim().notEmpty().withMessage('Vendor name is required'),
     body('vendorPhone').optional().trim(),
     body('vendorEmail').optional().isEmail(),
+    body('orderNumber').optional().trim(),
+    body('batchNumber').optional().trim(),
+    body('expiryDate').optional().isISO8601(),
     body('quantity').isInt({ min: 1 }).withMessage('Quantity must be at least 1'),
     body('unitType').isIn(['PALLETS', 'PACKS', 'UNITS']),
     body('costPerUnit').isFloat({ min: 0 }).withMessage('Cost must be positive'),
@@ -125,6 +41,9 @@ router.post('/',
       vendorName,
       vendorPhone,
       vendorEmail,
+      orderNumber,
+      batchNumber,
+      expiryDate,
       quantity,
       unitType,
       costPerUnit,
@@ -141,7 +60,25 @@ router.post('/',
     const paidAmount = amountPaid ? parseFloat(amountPaid) : (paymentStatus === 'PAID' ? totalCost : 0);
     const dueAmount = totalCost - paidAmount;
 
-    // Create purchase and update inventory in a transaction
+    // Check expiry date (alert if within 30 days)
+    let expiryAlert = null;
+    if (expiryDate) {
+      const expiry = new Date(expiryDate);
+      const today = new Date();
+      const daysUntilExpiry = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
+      
+      if (daysUntilExpiry <= 30 && daysUntilExpiry > 0) {
+        expiryAlert = {
+          message: `Warning: Product expires in ${daysUntilExpiry} days`,
+          daysRemaining: daysUntilExpiry,
+          expiryDate: expiry.toISOString()
+        };
+      } else if (daysUntilExpiry <= 0) {
+        throw new BusinessError('Cannot purchase expired products', 'EXPIRED_PRODUCT');
+      }
+    }
+
+    // Use transaction to ensure atomic operations
     const result = await prisma.$transaction(async (tx) => {
       // Create purchase record
       const purchase = await tx.warehouseProductPurchase.create({
@@ -150,6 +87,9 @@ router.post('/',
           vendorName,
           vendorPhone,
           vendorEmail,
+          orderNumber,
+          batchNumber,
+          expiryDate: expiryDate ? new Date(expiryDate) : null,
           quantity: parseInt(quantity),
           unitType,
           costPerUnit: parseFloat(costPerUnit),
@@ -164,40 +104,34 @@ router.post('/',
           createdBy: req.user.id
         },
         include: {
-          product: true,
+          product: {
+            select: { name: true, productNo: true }
+          },
           createdByUser: {
-            select: {
-              id: true,
-              username: true,
-              fullName: true
-            }
+            select: { username: true, role: true }
           }
         }
       });
 
-      // Update inventory based on unit type
-      const product = await tx.product.findUnique({
-        where: { id: productId },
-        select: { packsPerPallet: true }
-      });
-
+      // Find or create inventory record
       let inventory = await tx.warehouseInventory.findFirst({
         where: { productId }
       });
 
       if (!inventory) {
-        // Create new inventory record
+        // Create new inventory record if it doesn't exist
         inventory = await tx.warehouseInventory.create({
           data: {
             productId,
             pallets: 0,
             packs: 0,
-            units: 0
+            units: 0,
+            reorderLevel: 10
           }
         });
       }
 
-      // Calculate inventory updates
+      // Update inventory based on unit type
       const updates = {
         pallets: inventory.pallets,
         packs: inventory.packs,
@@ -218,13 +152,142 @@ router.post('/',
         data: updates
       });
 
-      return purchase;
+      return { purchase, inventory: updates, expiryAlert };
     });
 
-    res.status(201).json({
+    const responseData = {
       success: true,
       message: 'Product purchase recorded and inventory updated',
-      data: result
+      data: result.purchase
+    };
+
+    if (result.expiryAlert) {
+      responseData.warning = result.expiryAlert;
+    }
+
+    res.status(201).json(responseData);
+  })
+);
+
+// ================================
+// GET ALL PURCHASES
+// ================================
+router.get('/',
+  authorizeModule('warehouse', 'read'),
+  [
+    query('page').optional().isInt({ min: 1 }),
+    query('limit').optional().isInt({ min: 1, max: 100 }),
+    query('productId').optional(),
+    query('vendorName').optional().trim(),
+    query('paymentStatus').optional().isIn(['PAID', 'PARTIAL', 'PENDING']),
+    query('startDate').optional().isISO8601(),
+    query('endDate').optional().isISO8601()
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid query parameters', errors.array());
+    }
+
+    const {
+      page = 1,
+      limit = 20,
+      productId,
+      vendorName,
+      paymentStatus,
+      startDate,
+      endDate
+    } = req.query;
+
+    const where = {};
+
+    if (productId) where.productId = productId;
+    if (vendorName) where.vendorName = { contains: vendorName, mode: 'insensitive' };
+    if (paymentStatus) where.paymentStatus = paymentStatus;
+
+    if (startDate || endDate) {
+      where.purchaseDate = {};
+      if (startDate) where.purchaseDate.gte = new Date(startDate);
+      if (endDate) where.purchaseDate.lte = new Date(endDate);
+    }
+
+    const [purchases, total] = await Promise.all([
+      prisma.warehouseProductPurchase.findMany({
+        where,
+        include: {
+          product: {
+            select: { name: true, productNo: true }
+          },
+          createdByUser: {
+            select: { username: true }
+          }
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: parseInt(limit)
+      }),
+      prisma.warehouseProductPurchase.count({ where })
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        purchases,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
+      }
+    });
+  })
+);
+
+// ================================
+// GET EXPIRING PRODUCTS (within 30 days)
+// ================================
+router.get('/expiring',
+  authorizeModule('warehouse', 'read'),
+  asyncHandler(async (req, res) => {
+    const today = new Date();
+    const thirtyDaysFromNow = new Date();
+    thirtyDaysFromNow.setDate(today.getDate() + 30);
+
+    const expiringPurchases = await prisma.warehouseProductPurchase.findMany({
+      where: {
+        expiryDate: {
+          gte: today,
+          lte: thirtyDaysFromNow
+        }
+      },
+      include: {
+        product: {
+          select: { name: true, productNo: true }
+        }
+      },
+      orderBy: { expiryDate: 'asc' }
+    });
+
+    // Calculate days until expiry for each
+    const purchasesWithDays = expiringPurchases.map(purchase => {
+      const daysUntilExpiry = Math.ceil(
+        (new Date(purchase.expiryDate) - today) / (1000 * 60 * 60 * 24)
+      );
+
+      return {
+        ...purchase,
+        daysUntilExpiry,
+        urgency: daysUntilExpiry <= 7 ? 'critical' : daysUntilExpiry <= 14 ? 'high' : 'medium'
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        expiringPurchases: purchasesWithDays,
+        count: purchasesWithDays.length
+      }
     });
   })
 );
@@ -265,8 +328,8 @@ router.get('/analytics',
         by: ['productId'],
         where,
         _sum: {
-          totalCost: true,
-          quantity: true
+          quantity: true,
+          totalCost: true
         },
         _count: true,
         orderBy: {
@@ -299,27 +362,30 @@ router.get('/analytics',
         where,
         _sum: {
           totalCost: true,
+          amountPaid: true,
           amountDue: true
         },
         _count: true
       })
     ]);
 
-    // Enrich product data
+    // Fetch product details for top products
     const productIds = byProduct.map(p => p.productId);
     const products = await prisma.product.findMany({
       where: { id: { in: productIds } },
       select: { id: true, name: true, productNo: true }
     });
 
-    const productMap = products.reduce((acc, p) => {
+    const productsMap = products.reduce((acc, p) => {
       acc[p.id] = p;
       return acc;
     }, {});
 
-    const enrichedProducts = byProduct.map(p => ({
-      ...p,
-      product: productMap[p.productId]
+    const topProducts = byProduct.map(item => ({
+      product: productsMap[item.productId],
+      totalQuantity: item._sum.quantity,
+      totalCost: item._sum.totalCost,
+      purchaseCount: item._count
     }));
 
     res.json({
@@ -331,10 +397,43 @@ router.get('/analytics',
           totalPaid: summary._sum.amountPaid || 0,
           totalDue: summary._sum.amountDue || 0
         },
-        topProducts: enrichedProducts,
-        topVendors: byVendor,
-        paymentStatusBreakdown: byPaymentStatus
+        topProducts,
+        topVendors: byVendor.map(v => ({
+          vendorName: v.vendorName,
+          totalSpent: v._sum.totalCost,
+          purchaseCount: v._count
+        })),
+        paymentBreakdown: byPaymentStatus
       }
+    });
+  })
+);
+
+// ================================
+// GET SINGLE PURCHASE
+// ================================
+router.get('/:id',
+  authorizeModule('warehouse', 'read'),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+
+    const purchase = await prisma.warehouseProductPurchase.findUnique({
+      where: { id },
+      include: {
+        product: true,
+        createdByUser: {
+          select: { username: true, role: true }
+        }
+      }
+    });
+
+    if (!purchase) {
+      throw new NotFoundError('Purchase not found');
+    }
+
+    res.json({
+      success: true,
+      data: { purchase }
     });
   })
 );

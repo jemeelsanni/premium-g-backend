@@ -671,6 +671,11 @@ model WarehouseProductPurchase {
   vendorPhone String? @map("vendor_phone")
   vendorEmail String? @map("vendor_email")
 
+  // Purchase Details
+  batchNumber String?   @map("batch_number") // ✅ ADD THIS
+  orderNumber String?   @map("order_number") // ✅ ADD THIS
+  expiryDate  DateTime? @map("expiry_date") // ✅ ADD THIS
+
   quantity    Int
   unitType    UnitType @map("unit_type")
   costPerUnit Decimal  @map("cost_per_unit") @db.Decimal(10, 2)
