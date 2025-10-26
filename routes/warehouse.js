@@ -302,9 +302,6 @@ router.get('/products', asyncHandler(async (req, res) => {
 // @route   POST /api/v1/warehouse/sales
 // @desc    Create warehouse sale with automatic discount application
 // @access  Private (Warehouse Sales Officer, Admin)
-// @route   POST /api/v1/warehouse/sales
-// @desc    Create warehouse sale with price validation, discount application, and credit support
-// @access  Private (Warehouse Sales Officer, Admin)
 router.post('/sales',
   authorizeModule('warehouse', 'write'),
   [
@@ -312,13 +309,15 @@ router.post('/sales',
     body('quantity').isInt({ min: 1 }).withMessage('Quantity must be greater than 0'),
     body('unitType').isIn(['PALLETS', 'PACKS', 'UNITS']).withMessage('Invalid unit type'),
     body('unitPrice').isFloat({ min: 0 }).withMessage('Unit price must be 0 or greater'),
-    body('paymentMethod').isIn(['CASH', 'BANK_TRANSFER', 'CHECK', 'CARD', 'MOBILE_MONEY', 'CREDIT']),
+    body('paymentMethod').isIn(['CASH', 'BANK_TRANSFER', 'CHECK', 'CARD', 'MOBILE_MONEY']),
     body('paymentStatus').optional().isIn(['PAID', 'CREDIT', 'PARTIAL']),
     body('creditDueDate').optional().isISO8601(),
     body('creditNotes').optional().trim(),
     body('warehouseCustomerId').optional().custom(validateCuid('warehouse customer ID')),
     body('customerName').optional().trim(),
     body('customerPhone').optional().trim(),
+    body('amountPaid').optional().isFloat({ min: 0 }),
+    body('initialPaymentMethod').optional().isIn(['CASH', 'BANK_TRANSFER', 'CHECK', 'CARD', 'MOBILE_MONEY']),
   ],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -337,8 +336,13 @@ router.post('/sales',
       creditNotes,
       warehouseCustomerId,
       customerName,
-      customerPhone
+      customerPhone,
+      amountPaid: providedAmountPaid,
+      initialPaymentMethod
     } = req.body;
+
+    // Determine if this is a credit sale
+    const isCreditSale = paymentStatus === 'CREDIT';
 
     let customerId = warehouseCustomerId;
     
@@ -383,12 +387,9 @@ router.post('/sales',
       throw new NotFoundError('Product not found');
     }
 
-    // ========================================
-    // ENHANCEMENT: PRICE RANGE VALIDATION
-    // ========================================
+    // Price range validation
     const price = parseFloat(unitPrice);
     
-    // Only validate if min/max are set
     if (product.minSellingPrice !== null) {
       const minPrice = parseFloat(product.minSellingPrice);
       if (price < minPrice) {
@@ -407,10 +408,8 @@ router.post('/sales',
       }
     }
 
-    // ========================================
-    // ENHANCEMENT: CREDIT SALES VALIDATION
-    // ========================================
-    if (paymentMethod === 'CREDIT' || paymentStatus === 'CREDIT') {
+    // Credit sales validation
+    if (isCreditSale) {
       if (!customerId) {
         throw new ValidationError('Customer ID is required for credit sales');
       }
@@ -456,11 +455,9 @@ router.post('/sales',
     let applicableDiscount = null;
     let totalDiscountAmount = 0;
 
-    // Check if discount was applied by comparing with product's base price
     if (customerId && product.pricePerPack) {
       const basePrice = parseFloat(product.pricePerPack);
       
-      // If the unitPrice is less than base price, a discount was applied
       if (unitPrice < basePrice) {
         originalUnitPrice = basePrice;
         finalUnitPrice = unitPrice;
@@ -468,7 +465,6 @@ router.post('/sales',
         discountPercentage = ((discountAmount / basePrice) * 100);
         totalDiscountAmount = discountAmount * quantity;
         
-        // Try to find the applicable discount for tracking
         if (checkCustomerDiscount) {
           const discountCheck = await checkCustomerDiscount(
             customerId, 
@@ -481,18 +477,10 @@ router.post('/sales',
             applicableDiscount = discountCheck.discount;
           }
         }
-        
-        console.log('✅ Discount detected and saved:', {
-          originalPrice: basePrice,
-          finalPrice: unitPrice,
-          discountAmount,
-          discountPercentage: discountPercentage.toFixed(2) + '%',
-          totalSavings: totalDiscountAmount.toFixed(2)
-        });
       }
     }
 
-    // Calculate ALL amounts using the FINAL (discounted) price
+    // Calculate amounts
     const totalAmount = parseFloat((quantity * finalUnitPrice).toFixed(2));
     const costPerUnit = parseFloat(product.costPerPack || 0);
     const totalCost = parseFloat((quantity * costPerUnit).toFixed(2));
@@ -500,11 +488,26 @@ router.post('/sales',
     const profitMargin = totalAmount > 0 ? 
       (grossProfit / totalAmount) * 100 : 0;
 
+    // Partial payment validation
+    const amountPaid = (isCreditSale && providedAmountPaid) 
+      ? parseFloat(providedAmountPaid) 
+      : 0;
+
+    if (amountPaid > totalAmount) {
+      throw new ValidationError(
+        `Amount paid (₦${amountPaid.toLocaleString()}) cannot exceed total amount (₦${totalAmount.toLocaleString()})`
+      );
+    }
+
+    if (amountPaid > 0 && !initialPaymentMethod) {
+      throw new ValidationError('Payment method is required for partial payment');
+    }
+
     const providedReceiptNumber = req.body.receiptNumber;
     const receiptNumber = providedReceiptNumber || await generateReceiptNumber();
 
     const createSaleOperation = () => prisma.$transaction(async (tx) => {
-      // 1. Create warehouse sale with discount tracking
+      // 1. Create warehouse sale
       const warehouseSale = await tx.warehouseSale.create({
         data: {
           productId,
@@ -516,7 +519,7 @@ router.post('/sales',
           totalCost,
           grossProfit,
           profitMargin: parseFloat(profitMargin.toFixed(2)),
-          paymentMethod,
+          paymentMethod: isCreditSale && amountPaid > 0 ? initialPaymentMethod : paymentMethod,
           warehouseCustomerId: customerId,
           customerName,
           customerPhone,
@@ -529,10 +532,10 @@ router.post('/sales',
           discountPercentage: discountAmount > 0 ? parseFloat(discountPercentage.toFixed(2)) : null,
           discountReason: discountAmount > 0 ? 'Customer discount applied' : null,
           approvedBy: discountAmount > 0 && applicableDiscount ? req.user.id : null,
-          // ENHANCEMENT: Credit fields
-          paymentStatus: paymentMethod === 'CREDIT' ? 'CREDIT' : paymentStatus,
-          creditDueDate: paymentMethod === 'CREDIT' ? new Date(creditDueDate) : null,
-          creditNotes: paymentMethod === 'CREDIT' ? creditNotes : null
+          // Credit fields
+          paymentStatus: isCreditSale ? (amountPaid > 0 ? 'PARTIAL' : 'CREDIT') : paymentStatus,
+          creditDueDate: isCreditSale ? new Date(creditDueDate) : null,
+          creditNotes: isCreditSale ? creditNotes : null
         },
         include: {
           product: true,
@@ -543,9 +546,11 @@ router.post('/sales',
         }
       });
 
-      // 2. Create cash flow entry (only for non-credit sales)
+      // 2. Create cash flow entry
       let cashFlowEntry = null;
-      if (paymentMethod !== 'CREDIT' && paymentStatus !== 'CREDIT') {
+      
+      // For full non-credit sales
+      if (!isCreditSale) {
         const cashFlowDescription = discountAmount > 0
           ? `Sale: ${product.name} - ${customerName || 'Walk-in'} (Discount: ${discountPercentage.toFixed(1)}%)`
           : `Sale: ${product.name} - ${customerName || 'Walk-in'}`;
@@ -561,48 +566,77 @@ router.post('/sales',
             module: 'WAREHOUSE'
           }
         });
+      }
+      // For partial payments on credit sales
+      else if (isCreditSale && amountPaid > 0) {
+        const cashFlowDescription = `Partial payment on credit sale: ${product.name} - ${customerName}`;
         
-        console.log('✅ Cash flow entry created:', {
-          transactionType: 'CASH_IN',
-          amount: totalAmount,
-          paymentMethod,
-          receiptNumber
+        cashFlowEntry = await tx.cashFlow.create({
+          data: {
+            transactionType: 'CASH_IN',
+            amount: amountPaid,
+            paymentMethod: initialPaymentMethod,
+            description: cashFlowDescription,
+            referenceNumber: receiptNumber,
+            cashier: req.user.id,
+            module: 'WAREHOUSE'
+          }
         });
       }
 
-      // 3. ENHANCEMENT: Create debtor record for credit sales
+      // 3. Create debtor record for credit sales
       let debtorRecord = null;
-      if (paymentMethod === 'CREDIT' || paymentStatus === 'CREDIT') {
+      if (isCreditSale) {
+        const amountDue = totalAmount - amountPaid;
+        
+        let debtorStatus = 'OUTSTANDING';
+        if (amountPaid === 0) {
+          debtorStatus = 'OUTSTANDING';
+        } else if (amountPaid > 0 && amountDue > 0) {
+          debtorStatus = 'PARTIAL';
+        } else if (amountDue === 0) {
+          debtorStatus = 'PAID';
+        }
+
         debtorRecord = await tx.debtor.create({
           data: {
             warehouseCustomerId: customerId,
             saleId: warehouseSale.id,
             totalAmount,
-            amountPaid: 0,
-            amountDue: totalAmount,
+            amountPaid,
+            amountDue,
             dueDate: creditDueDate ? new Date(creditDueDate) : null,
-            status: 'OUTSTANDING'
+            status: debtorStatus
           }
         });
 
-        // Update customer analytics for credit
+        // Create payment record if partial payment made
+        if (amountPaid > 0) {
+          await tx.debtorPayment.create({
+            data: {
+              debtorId: debtorRecord.id,
+              amount: amountPaid,
+              paymentMethod: initialPaymentMethod,
+              paymentDate: new Date(),
+              notes: 'Initial partial payment at sale',
+              receivedBy: req.user.id
+            }
+          });
+        }
+
+        // Update customer analytics
         await tx.warehouseCustomer.update({
           where: { id: customerId },
           data: {
             totalCreditPurchases: { increment: 1 },
             totalCreditAmount: { increment: totalAmount },
-            outstandingDebt: { increment: totalAmount }
+            outstandingDebt: { increment: amountDue },
+            lastPaymentDate: amountPaid > 0 ? new Date() : undefined
           }
-        });
-
-        console.log('✅ Debtor record created:', {
-          debtorId: debtorRecord.id,
-          amount: totalAmount,
-          dueDate: creditDueDate
         });
       }
 
-      // 4. Track discount usage if applied
+      // 4. Track discount usage
       if (applicableDiscount && discountAmount > 0) {
         await tx.warehouseCustomerDiscount.update({
           where: { id: applicableDiscount.id },
@@ -617,27 +651,21 @@ router.post('/sales',
       if (unitType === 'PACKS') {
         await tx.warehouseInventory.updateMany({
           where: { productId },
-          data: {
-            packs: { decrement: quantity }
-          }
+          data: { packs: { decrement: quantity } }
         });
       } else if (unitType === 'PALLETS') {
         await tx.warehouseInventory.updateMany({
           where: { productId },
-          data: {
-            pallets: { decrement: quantity }
-          }
+          data: { pallets: { decrement: quantity } }
         });
       } else if (unitType === 'UNITS') {
         await tx.warehouseInventory.updateMany({
           where: { productId },
-          data: {
-            units: { decrement: quantity }
-          }
+          data: { units: { decrement: quantity } }
         });
       }
 
-      // 6. Update customer stats (for all sales)
+      // 6. Update customer stats
       if (customerId) {
         const customerStats = await tx.warehouseCustomer.update({
           where: { id: customerId },
@@ -659,9 +687,7 @@ router.post('/sales',
 
         await tx.warehouseCustomer.update({
           where: { id: customerId },
-          data: {
-            averageOrderValue
-          }
+          data: { averageOrderValue }
         });
       }
 
@@ -672,8 +698,15 @@ router.post('/sales',
 
     // Build success message
     let successMessage = '';
-    if (paymentMethod === 'CREDIT') {
-      successMessage = `Credit sale created successfully. Amount: ₦${totalAmount.toLocaleString()}, Due: ${new Date(creditDueDate).toLocaleDateString()}`;
+    if (isCreditSale) {
+      const amountDue = totalAmount - amountPaid;
+      
+      if (amountPaid > 0) {
+        successMessage = `Credit sale created with partial payment. Paid: ₦${amountPaid.toLocaleString()}, Remaining: ₦${amountDue.toLocaleString()}, Due: ${new Date(creditDueDate).toLocaleDateString()}`;
+      } else {
+        successMessage = `Credit sale created successfully. Amount: ₦${totalAmount.toLocaleString()}, Due: ${new Date(creditDueDate).toLocaleDateString()}`;
+      }
+      
       if (discountAmount > 0) {
         successMessage += ` (${discountPercentage.toFixed(1)}% discount applied - saved ₦${totalDiscountAmount.toLocaleString()})`;
       }
@@ -690,13 +723,16 @@ router.post('/sales',
         sale: result.warehouseSale,
         cashFlowRecorded: result.cashFlowEntry !== null,
         debtorCreated: result.debtorRecord !== null,
-        debtor: result.debtorRecord
+        debtor: result.debtorRecord,
+        partialPayment: amountPaid > 0 ? {
+          amountPaid,
+          amountDue: totalAmount - amountPaid,
+          paymentMethod: initialPaymentMethod
+        } : null
       }
     });
   })
 );
-
-
 
 // @route   GET /api/v1/warehouse/sales
 // @desc    Get warehouse sales with filtering and pagination

@@ -61,16 +61,24 @@ router.get('/customers',
     query('sortBy').optional().isIn([
       'name', 'recent', 'topSpender', 'topPurchases', 'creditScore'
     ]),
-    query('customerType').optional().isIn(['INDIVIDUAL', 'BUSINESS']),
+    query('customerType').optional().isIn(['INDIVIDUAL', 'BUSINESS', 'RETAILER']),
     query('hasOutstandingDebt').optional().isBoolean(),
+    query('startDate').optional().isISO8601(),
+    query('endDate').optional().isISO8601(),
+    query('filterMonth').optional().isInt({ min: 1, max: 12 }), // ✅ NEW
+    query('filterYear').optional().isInt({ min: 2020 }),        // ✅ NEW
     query('page').optional().isInt({ min: 1 }),
     query('limit').optional().isInt({ min: 1, max: 100 })
   ],
   asyncHandler(async (req, res) => {
     const {
-      sortBy = 'name',
+      sortBy = 'topPurchases',  // ✅ CHANGED: Default to highest purchases
       customerType,
       hasOutstandingDebt,
+      startDate,
+      endDate,
+      filterMonth,    // ✅ NEW
+      filterYear,     // ✅ NEW
       page = 1,
       limit = 20
     } = req.query;
@@ -78,10 +86,70 @@ router.get('/customers',
     const where = {};
     if (customerType) where.customerType = customerType;
     if (hasOutstandingDebt === 'true') {
-      where.outstandingDebt = { gt: 0 }; // ✨ NEW: Filter by debt
+      where.outstandingDebt = { gt: 0 };
     }
 
-    // ✨ NEW: Dynamic sorting
+    // ✅ NEW: Enhanced date filtering with month/year support
+    if (filterMonth && filterYear) {
+      // Filter by specific month and year
+      const year = parseInt(filterYear);
+      const month = parseInt(filterMonth);
+      const startOfMonth = new Date(year, month - 1, 1);
+      const endOfMonth = new Date(year, month, 0, 23, 59, 59, 999);
+
+      where.OR = [
+        {
+          createdAt: {
+            gte: startOfMonth,
+            lte: endOfMonth
+          }
+        },
+        {
+          lastPurchaseDate: {
+            gte: startOfMonth,
+            lte: endOfMonth
+          }
+        }
+      ];
+    } else if (filterYear && !filterMonth) {
+      // Filter by entire year
+      const year = parseInt(filterYear);
+      const startOfYear = new Date(year, 0, 1);
+      const endOfYear = new Date(year, 11, 31, 23, 59, 59, 999);
+
+      where.OR = [
+        {
+          createdAt: {
+            gte: startOfYear,
+            lte: endOfYear
+          }
+        },
+        {
+          lastPurchaseDate: {
+            gte: startOfYear,
+            lte: endOfYear
+          }
+        }
+      ];
+    } else if (startDate || endDate) {
+      // Custom date range filter
+      where.OR = [
+        {
+          createdAt: {
+            ...(startDate && { gte: new Date(startDate) }),
+            ...(endDate && { lte: new Date(endDate) })
+          }
+        },
+        {
+          lastPurchaseDate: {
+            ...(startDate && { gte: new Date(startDate) }),
+            ...(endDate && { lte: new Date(endDate) })
+          }
+        }
+      ];
+    }
+
+    // Dynamic sorting - default to topPurchases
     let orderBy = {};
     switch (sortBy) {
       case 'recent':
@@ -96,8 +164,11 @@ router.get('/customers',
       case 'creditScore':
         orderBy = { paymentReliabilityScore: 'desc' };
         break;
-      default:
+      case 'name':
         orderBy = { name: 'asc' };
+        break;
+      default:
+        orderBy = { totalPurchases: 'desc' }; // ✅ Default sorting
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -112,7 +183,7 @@ router.get('/customers',
           _count: {
             select: {
               sales: true,
-              debtors: true // ✨ NEW: Count debt records
+              debtors: true
             }
           }
         }
@@ -120,43 +191,42 @@ router.get('/customers',
 
       prisma.warehouseCustomer.count({ where }),
 
-      // ✨ NEW: Performance analytics
       prisma.warehouseCustomer.aggregate({
         where,
         _count: true,
         _sum: {
           totalSpent: true,
           totalPurchases: true,
-          outstandingDebt: true // ✨ NEW
+          outstandingDebt: true
         },
         _avg: {
           averageOrderValue: true,
-          paymentReliabilityScore: true // ✨ NEW
+          paymentReliabilityScore: true
         }
       })
     ]);
 
-    // ✨ NEW: Identify VIP customers (top 20% by spending)
+    // Identify VIP customers (top 20% by spending)
     const topCustomers = await prisma.warehouseCustomer.findMany({
       where,
       orderBy: { totalSpent: 'desc' },
-      take: Math.ceil(total * 0.2),
+      take: Math.ceil(total * 0.2) || 1,
       select: { id: true }
     });
 
     const vipIds = topCustomers.map(c => c.id);
 
-    // ✨ NEW: Mark recent customers (purchased in last 30 days)
+    // Mark recent customers (purchased in last 30 days)
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
     const enrichedCustomers = customers.map(customer => ({
       ...customer,
-      isVIP: vipIds.includes(customer.id), // ✨ NEW
+      isVIP: vipIds.includes(customer.id),
       isRecent: customer.lastPurchaseDate && 
-                customer.lastPurchaseDate >= thirtyDaysAgo, // ✨ NEW
-      hasDebt: parseFloat(customer.outstandingDebt || 0) > 0, // ✨ NEW
-      debtCount: customer._count.debtors // ✨ NEW
+                customer.lastPurchaseDate >= thirtyDaysAgo,
+      hasDebt: parseFloat(customer.outstandingDebt || 0) > 0,
+      debtCount: customer._count.debtors
     }));
 
     res.json({
@@ -169,7 +239,6 @@ router.get('/customers',
           total,
           pages: Math.ceil(total / parseInt(limit))
         },
-        // ✨ NEW: Analytics section
         analytics: {
           totalCustomers: analytics._count,
           totalRevenue: analytics._sum.totalSpent || 0,
@@ -193,7 +262,7 @@ router.get('/customers/:id',
       include: {
         sales: {
           orderBy: { createdAt: 'desc' },
-          take: 10, // Last 10 sales
+          take: 10,
           include: {
             product: {
               select: {
@@ -226,47 +295,56 @@ router.get('/customers/:id',
       });
     }
 
-    // ✨ NEW: Purchase patterns analysis
-    const purchaseAnalysis = await prisma.$queryRaw`
-      SELECT 
-        p.name as product_name,
-        p.product_no,
-        COUNT(*) as purchase_count,
-        SUM(ws.quantity) as total_quantity,
-        SUM(ws.total_amount) as total_spent,
-        AVG(ws.unit_price) as avg_price
-      FROM warehouse_sales ws
-      JOIN products p ON ws.product_id = p.id
-      WHERE ws.warehouse_customer_id = ${id}
-      GROUP BY p.id, p.name, p.product_no
-      ORDER BY total_spent DESC
-      LIMIT 5
-    `;
+    // Get top products using Prisma (avoids BigInt)
+    const topProducts = await prisma.warehouseSale.groupBy({
+      by: ['productId'],
+      where: { warehouseCustomerId: id },
+      _sum: {
+        quantity: true,
+        totalAmount: true
+      },
+      _count: true,
+      _avg: {
+        unitPrice: true
+      },
+      orderBy: {
+        _sum: {
+          totalAmount: 'desc'
+        }
+      },
+      take: 5
+    });
 
-    // ✨ NEW: Monthly spending trend (last 12 months)
-    const spendingTrend = await prisma.$queryRaw`
-      SELECT 
-        DATE_TRUNC('month', created_at) as month,
-        COUNT(*) as purchase_count,
-        SUM(total_amount) as total_spent
-      FROM warehouse_sales
-      WHERE warehouse_customer_id = ${id}
-        AND created_at >= NOW() - INTERVAL '12 months'
-      GROUP BY DATE_TRUNC('month', created_at)
-      ORDER BY month DESC
-    `;
+    // Fetch product details
+    const productIds = topProducts.map(p => p.productId);
+    const products = await prisma.product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, name: true, productNo: true }
+    });
+
+    const productsMap = products.reduce((acc, p) => {
+      acc[p.id] = p;
+      return acc;
+    }, {});
+
+    const enrichedTopProducts = topProducts.map(item => ({
+      product: productsMap[item.productId],
+      purchaseCount: item._count,
+      totalQuantity: Number(item._sum.quantity || 0),
+      totalSpent: Number(item._sum.totalAmount || 0),
+      avgPrice: Number(item._avg.unitPrice || 0)
+    }));
 
     res.json({
       success: true,
       data: {
         customer,
         insights: {
-          topProducts: purchaseAnalysis,
-          spendingTrend,
+          topProducts: enrichedTopProducts,
           debtSummary: {
             activeDebts: customer.debtors.length,
             totalOutstanding: customer.debtors.reduce(
-              (sum, d) => sum + parseFloat(d.amountDue),
+              (sum, d) => sum + parseFloat(d.amountDue || 0),
               0
             )
           }
