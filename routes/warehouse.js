@@ -20,7 +20,7 @@ const warehouseExpensesRouter = require('./warehouse-expenses');
 router.use('/', warehouseExpensesRouter);
 
 const warehousePurchasesRouter = require('./warehouse-purchases');
-router.use('/', warehousePurchasesRouter);
+router.use('/purchases', warehousePurchasesRouter);
 
 const warehouseDebtorsRouter = require('./warehouse-debtors');
 router.use('/', warehouseDebtorsRouter);

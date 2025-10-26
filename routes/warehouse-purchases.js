@@ -80,7 +80,7 @@ router.post('/',
 
     // Use transaction to ensure atomic operations
     const result = await prisma.$transaction(async (tx) => {
-      // Create purchase record
+      // 1. Create purchase record
       const purchase = await tx.warehouseProductPurchase.create({
         data: {
           productId,
@@ -113,13 +113,12 @@ router.post('/',
         }
       });
 
-      // Find or create inventory record
+      // 2. Find or create inventory record
       let inventory = await tx.warehouseInventory.findFirst({
         where: { productId }
       });
 
       if (!inventory) {
-        // Create new inventory record if it doesn't exist
         inventory = await tx.warehouseInventory.create({
           data: {
             productId,
@@ -146,19 +145,45 @@ router.post('/',
         updates.units += parseInt(quantity);
       }
 
-      // Update inventory
       await tx.warehouseInventory.update({
         where: { id: inventory.id },
         data: updates
       });
 
-      return { purchase, inventory: updates, expiryAlert };
+      // 3. ✨ CREATE CASH FLOW ENTRY (ONLY FOR PAID/PARTIAL PAYMENTS) ✨
+      let cashFlowEntry = null;
+      
+      if (paymentStatus === 'PAID' || paymentStatus === 'PARTIAL') {
+        const cashFlowDescription = `Purchase: ${purchase.product.name} (${quantity} ${unitType}) from ${vendorName}`;
+        
+        cashFlowEntry = await tx.cashFlow.create({
+          data: {
+            transactionType: 'CASH_OUT',
+            amount: paidAmount,
+            paymentMethod: paymentMethod,
+            description: cashFlowDescription,
+            referenceNumber: invoiceNumber || orderNumber || `PUR-${purchase.id.slice(-8)}`,
+            cashier: req.user.id,
+            module: 'WAREHOUSE'
+          }
+        });
+        
+        console.log('✅ Cash flow entry created for purchase:', {
+          transactionType: 'CASH_OUT',
+          amount: paidAmount,
+          paymentMethod,
+          purchaseId: purchase.id
+        });
+      }
+
+      return { purchase, inventory: updates, expiryAlert, cashFlowEntry };
     });
 
     const responseData = {
       success: true,
-      message: 'Product purchase recorded and inventory updated',
-      data: result.purchase
+      message: 'Product purchase recorded, inventory updated, and cash flow tracked',
+      data: result.purchase,
+      cashFlowRecorded: result.cashFlowEntry !== null
     };
 
     if (result.expiryAlert) {
