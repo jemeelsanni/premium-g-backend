@@ -739,7 +739,7 @@ router.get('/sales',
         product: { select: { name: true, productNo: true } },
         warehouseCustomer: { select: { id: true, name: true, phone: true } },
         salesOfficerUser: { select: { id: true, username: true } },
-        debtor: {  // ✅ Add this
+        debtor: {
           select: {
             id: true,
             amountPaid: true,
@@ -749,7 +749,6 @@ router.get('/sales',
           }
         },
       },
- 
       orderBy: { createdAt: 'asc' }
     });
 
@@ -758,25 +757,28 @@ router.get('/sales',
     for (const sale of sales) {
       const key = sale.receiptNumber;
       const aggregate = aggregateMap.get(key) || {
-  receiptNumber: key,
-  saleIds: [],
-  warehouseCustomerId: sale.warehouseCustomerId,
-  customerName: sale.customerName || sale.warehouseCustomer?.name || null,
-  customerPhone: sale.customerPhone || sale.warehouseCustomer?.phone || null,
-  paymentMethod: sale.paymentMethod,
-  salesOfficer: sale.salesOfficer,
-  salesOfficerUser: sale.salesOfficerUser,
-  warehouseCustomer: sale.warehouseCustomer,
-  totalAmount: 0,
-  totalDiscountAmount: 0,
-  totalCost: 0,
-  grossProfit: 0,
-  discountApplied: false,
-  discountPercentage: 0,        // ✅ ADD THIS LINE
-  discountReason: null,          // ✅ ADD THIS LINE
-  createdAt: latestCreatedMap.get(key) || sale.createdAt,
-  items: []
-};
+        receiptNumber: key,
+        saleIds: [],
+        warehouseCustomerId: sale.warehouseCustomerId,
+        customerName: sale.customerName || sale.warehouseCustomer?.name || null,
+        customerPhone: sale.customerPhone || sale.warehouseCustomer?.phone || null,
+        paymentMethod: sale.paymentMethod,
+        paymentStatus: sale.paymentStatus,
+        creditDueDate: sale.creditDueDate,
+        salesOfficer: sale.salesOfficer,
+        salesOfficerUser: sale.salesOfficerUser,
+        warehouseCustomer: sale.warehouseCustomer,
+        totalAmount: 0,
+        totalDiscountAmount: 0,
+        totalCost: 0,
+        grossProfit: 0,
+        discountApplied: false,
+        discountPercentage: 0,
+        discountReason: null,
+        createdAt: latestCreatedMap.get(key) || sale.createdAt,
+        items: [],
+        debtor: null
+      };
 
       aggregate.saleIds.push(sale.id);
       aggregate.totalAmount += Number(sale.totalAmount);
@@ -785,18 +787,17 @@ router.get('/sales',
       aggregate.grossProfit += Number(sale.grossProfit || 0);
       aggregate.discountApplied = aggregate.discountApplied || sale.discountApplied;
 
-        // ✅ ADD THESE 7 LINES:
-        if (sale.discountPercentage && sale.discountPercentage > (aggregate.discountPercentage || 0)) {
-          aggregate.discountPercentage = Number(sale.discountPercentage);
-        }
+      if (sale.discountPercentage && sale.discountPercentage > (aggregate.discountPercentage || 0)) {
+        aggregate.discountPercentage = Number(sale.discountPercentage);
+      }
 
-        if (sale.discountReason && !aggregate.discountReason) {
-          aggregate.discountReason = sale.discountReason;
-        }
+      if (sale.discountReason && !aggregate.discountReason) {
+        aggregate.discountReason = sale.discountReason;
+      }
 
-        if (!aggregate.customerName) {
-          aggregate.customerName = sale.customerName || sale.warehouseCustomer?.name || null;
-        }
+      if (!aggregate.customerName) {
+        aggregate.customerName = sale.customerName || sale.warehouseCustomer?.name || null;
+      }
 
       if (!aggregate.customerPhone) {
         aggregate.customerPhone = sale.customerPhone || sale.warehouseCustomer?.phone || null;
@@ -804,6 +805,17 @@ router.get('/sales',
 
       if (!aggregate.warehouseCustomer && sale.warehouseCustomer) {
         aggregate.warehouseCustomer = sale.warehouseCustomer;
+      }
+
+      // ✅ CRITICAL FIX: Capture debtor info from the first sale that has it
+      if (sale.debtor && !aggregate.debtor) {
+        aggregate.debtor = {
+          id: sale.debtor.id,
+          amountPaid: Number(sale.debtor.amountPaid),
+          amountDue: Number(sale.debtor.amountDue),
+          status: sale.debtor.status,
+          dueDate: sale.debtor.dueDate
+        };
       }
 
       aggregate.items.push({
