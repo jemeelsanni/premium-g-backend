@@ -768,14 +768,11 @@ if (isCreditSale) {
     
   } catch (error) {
     console.error('❌ Transaction failed at step:', error);
-    console.error('Error details:', {
-      code: error.code,
-      meta: error.meta,
-      message: error.message,
-      stack: error.stack
-    });
-    throw error; // Re-throw to let outer handler catch it
+    throw error;
   }
+}, {
+  maxWait: 30000,  // ✅ Wait up to 10 seconds to acquire a transaction
+  timeout: 15000,  // ✅ Allow transaction to run for up to 15 seconds
 });
 
     const result = await withReceiptConflictRetry(() => createSaleOperation());
