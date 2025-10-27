@@ -865,7 +865,7 @@ router.get('/sales',
 // @route   GET /api/v1/warehouse/sales/receipt/:receiptNumber
 // @desc    Get all sale items grouped by receipt number
 // @access  Private (Warehouse module access)
-router.get('/sales/receipt/:receiptNumber',  // ✅ Changed from /sales/by-receipt/
+router.get('/sales/receipt/:receiptNumber',
   authorizeModule('warehouse'),
   param('receiptNumber').isString().trim().notEmpty(),
   asyncHandler(async (req, res) => {
@@ -881,12 +881,22 @@ router.get('/sales/receipt/:receiptNumber',  // ✅ Changed from /sales/by-recei
       where.salesOfficer = req.user.id;
     }
 
+    // ✅ UPDATED: Include debtor information
     const sales = await prisma.warehouseSale.findMany({
       where,
       include: {
         product: { select: { name: true, productNo: true } },
         warehouseCustomer: { select: { id: true, name: true, phone: true, email: true, address: true } },
-        salesOfficerUser: { select: { id: true, username: true, role: true } }
+        salesOfficerUser: { select: { id: true, username: true, role: true } },
+        debtor: {
+          select: {
+            id: true,
+            amountPaid: true,
+            amountDue: true,
+            status: true,
+            dueDate: true
+          }
+        }
       },
       orderBy: { createdAt: 'asc' }
     });
@@ -895,26 +905,31 @@ router.get('/sales/receipt/:receiptNumber',  // ✅ Changed from /sales/by-recei
       throw new NotFoundError(`No sales found with receipt number: ${receiptNumber}`);
     }
 
+    // ✅ UPDATED: Add payment status and debtor fields
     const aggregatedSale = {
-  receiptNumber,
-  saleIds: [],
-  warehouseCustomerId: sales[0].warehouseCustomerId,
-  customerName: sales[0].customerName || sales[0].warehouseCustomer?.name || null,
-  customerPhone: sales[0].customerPhone || sales[0].warehouseCustomer?.phone || null,
-  paymentMethod: sales[0].paymentMethod,
-  salesOfficer: sales[0].salesOfficer,
-  salesOfficerUser: sales[0].salesOfficerUser,
-  warehouseCustomer: sales[0].warehouseCustomer,
-  discountApplied: false,
-  discountPercentage: 0,        // ✅ ADD THIS LINE
-  discountReason: null,          // ✅ ADD THIS LINE
-  totalAmount: 0,
-  totalDiscountAmount: 0,
-  totalCost: 0,
-  grossProfit: 0,
-  createdAt: sales[sales.length - 1].createdAt,
-  items: []
-};
+      receiptNumber,
+      saleIds: [],
+      warehouseCustomerId: sales[0].warehouseCustomerId,
+      customerName: sales[0].customerName || sales[0].warehouseCustomer?.name || null,
+      customerPhone: sales[0].customerPhone || sales[0].warehouseCustomer?.phone || null,
+      paymentMethod: sales[0].paymentMethod,
+      paymentStatus: sales[0].paymentStatus,           // ✅ NEW
+      creditDueDate: sales[0].creditDueDate,           // ✅ NEW
+      creditNotes: sales[0].creditNotes,               // ✅ NEW
+      salesOfficer: sales[0].salesOfficer,
+      salesOfficerUser: sales[0].salesOfficerUser,
+      warehouseCustomer: sales[0].warehouseCustomer,
+      discountApplied: false,
+      discountPercentage: 0,
+      discountReason: null,
+      totalAmount: 0,
+      totalDiscountAmount: 0,
+      totalCost: 0,
+      grossProfit: 0,
+      createdAt: sales[sales.length - 1].createdAt,
+      items: [],
+      debtor: null                                     // ✅ NEW
+    };
 
     for (const sale of sales) {
       aggregatedSale.saleIds.push(sale.id);
@@ -924,18 +939,17 @@ router.get('/sales/receipt/:receiptNumber',  // ✅ Changed from /sales/by-recei
       aggregatedSale.grossProfit += Number(sale.grossProfit || 0);
       aggregatedSale.discountApplied = aggregatedSale.discountApplied || sale.discountApplied;
 
-// ✅ ADD THESE 7 LINES:
-if (sale.discountPercentage && sale.discountPercentage > (aggregatedSale.discountPercentage || 0)) {
-  aggregatedSale.discountPercentage = Number(sale.discountPercentage);
-}
+      if (sale.discountPercentage && sale.discountPercentage > (aggregatedSale.discountPercentage || 0)) {
+        aggregatedSale.discountPercentage = Number(sale.discountPercentage);
+      }
 
-if (sale.discountReason && !aggregatedSale.discountReason) {
-  aggregatedSale.discountReason = sale.discountReason;
-}
+      if (sale.discountReason && !aggregatedSale.discountReason) {
+        aggregatedSale.discountReason = sale.discountReason;
+      }
 
-if (!aggregatedSale.customerName) {
-  aggregatedSale.customerName = sale.customerName || sale.warehouseCustomer?.name || null;
-}
+      if (!aggregatedSale.customerName) {
+        aggregatedSale.customerName = sale.customerName || sale.warehouseCustomer?.name || null;
+      }
 
       if (!aggregatedSale.customerPhone) {
         aggregatedSale.customerPhone = sale.customerPhone || sale.warehouseCustomer?.phone || null;
@@ -943,6 +957,17 @@ if (!aggregatedSale.customerName) {
 
       if (!aggregatedSale.warehouseCustomer && sale.warehouseCustomer) {
         aggregatedSale.warehouseCustomer = sale.warehouseCustomer;
+      }
+
+      // ✅ NEW: Capture debtor info from first sale that has it
+      if (sale.debtor && !aggregatedSale.debtor) {
+        aggregatedSale.debtor = {
+          id: sale.debtor.id,
+          amountPaid: Number(sale.debtor.amountPaid),
+          amountDue: Number(sale.debtor.amountDue),
+          status: sale.debtor.status,
+          dueDate: sale.debtor.dueDate
+        };
       }
 
       aggregatedSale.items.push({
@@ -968,7 +993,7 @@ if (!aggregatedSale.customerName) {
 
     res.json({
       success: true,
-      data: aggregatedSale  // ✅ Return data directly, not wrapped in { sale: ... }
+      data: aggregatedSale
     });
   })
 );
