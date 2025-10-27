@@ -341,44 +341,59 @@ router.post('/sales',
       initialPaymentMethod
     } = req.body;
 
-    // ✅ ADD THIS DEBUG LOGGING
-    console.log('🔍 CREATE SALE DEBUG:');
-    console.log('Raw req.body:', JSON.stringify(req.body, null, 2));
-    console.log('Extracted values:');
-    console.log('  - paymentStatus:', paymentStatus);
-    console.log('  - providedAmountPaid:', providedAmountPaid);
-    console.log('  - initialPaymentMethod:', initialPaymentMethod);
-    console.log('  - paymentMethod:', paymentMethod);
+    // ✅ ADD DEBUGGING
+    console.log('🔍 BACKEND RECEIVED:', {
+      paymentMethod,
+      paymentStatus,
+      amountPaid: providedAmountPaid,
+      initialPaymentMethod,
+      creditDueDate
+    });
 
-    // Determine if this is a credit sale
     const isCreditSale = paymentStatus === 'CREDIT';
-    console.log('  - isCreditSale:', isCreditSale);
 
+     // ✅ ADD MORE DEBUGGING
+    console.log('🔍 IS CREDIT SALE?', isCreditSale);
+    console.log('🔍 PAYMENT STATUS:', paymentStatus);
 
-    let customerId = warehouseCustomerId;
-    
-    // Handle customer creation/lookup if needed
-    if (!customerId && customerName) {
-      let existingCustomer = await prisma.warehouseCustomer.findFirst({
-        where: {
-          name: customerName,
-          phone: customerPhone || null
-        }
-      });
+let customerId = warehouseCustomerId;
 
-      if (!existingCustomer) {
-        existingCustomer = await prisma.warehouseCustomer.create({
-          data: {
-            name: customerName,
-            phone: customerPhone,
-            customerType: 'INDIVIDUAL',
-            createdBy: req.user.id
-          }
-        });
-      }
-      
-      customerId = existingCustomer.id;
+// ✅ FIX: For credit sales, customer is MANDATORY
+if (isCreditSale && !customerId && !customerName) {
+  throw new ValidationError(
+    'Customer information is required for credit sales. Please select or create a customer.'
+  );
+}
+
+// Handle customer creation/lookup if needed
+if (!customerId && customerName) {
+  let existingCustomer = await prisma.warehouseCustomer.findFirst({
+    where: {
+      name: customerName,
+      phone: customerPhone || null
     }
+  });
+
+  if (!existingCustomer) {
+    existingCustomer = await prisma.warehouseCustomer.create({
+      data: {
+        name: customerName,
+        phone: customerPhone,
+        customerType: 'INDIVIDUAL',
+        createdBy: req.user.id
+      }
+    });
+  }
+  
+  customerId = existingCustomer.id;
+}
+
+// ✅ FIX: Double-check customer exists for credit sales before transaction
+if (isCreditSale && !customerId) {
+  throw new ValidationError(
+    'Failed to create or find customer for credit sale'
+  );
+}
 
     // Get product for validation and cost calculation
     const product = await prisma.product.findUnique({
@@ -547,7 +562,9 @@ if (isCreditSale) {
         totalCost,
         grossProfit,
         profitMargin: parseFloat(profitMargin.toFixed(2)),
-        paymentMethod: isCreditSale && amountPaid > 0 ? initialPaymentMethod : paymentMethod,
+        paymentMethod: isCreditSale && amountPaid > 0 
+              ? initialPaymentMethod  // ✅ Correct: Use the method customer paid with
+              : paymentMethod,        // ✅ For non-credit or no partial payment
         warehouseCustomerId: customerId,
         customerName,
         customerPhone,
@@ -559,7 +576,9 @@ if (isCreditSale) {
         discountPercentage: discountAmount > 0 ? parseFloat(discountPercentage.toFixed(2)) : null,
         discountReason: discountAmount > 0 ? 'Customer discount applied' : null,
         approvedBy: discountAmount > 0 && applicableDiscount ? req.user.id : null,
-        paymentStatus: isCreditSale ? (amountPaid > 0 ? 'PARTIAL' : 'CREDIT') : paymentStatus,
+        paymentStatus: isCreditSale 
+              ? (amountPaid > 0 ? 'PARTIAL' : 'CREDIT')  // ✅ PARTIAL if amount paid, else CREDIT
+              : 'PAID',  // ✅ Non-credit sales are PAID
         creditDueDate: isCreditSale ? new Date(creditDueDate) : null,
         creditNotes: isCreditSale ? creditNotes : null
       },
@@ -571,6 +590,14 @@ if (isCreditSale) {
         }
       }
     });
+
+    // ✅ ADD DEBUGGING AFTER CREATION
+      console.log('✅ SALE CREATED:', {
+        id: warehouseSale.id,
+        paymentStatus: warehouseSale.paymentStatus,
+        paymentMethod: warehouseSale.paymentMethod,
+        totalAmount: warehouseSale.totalAmount
+      });
     console.log('✅ Warehouse sale created:', warehouseSale.id);
 
     // 2. Create cash flow entry
@@ -613,58 +640,49 @@ if (isCreditSale) {
       console.log('⚠️ No cash flow created (full credit, no payment)');
     }
 
-    // 3. Create debtor record for credit sales
-    console.log('🔵 Step 3: Creating debtor record...');
     let debtorRecord = null;
-    if (isCreditSale && customerId) {
-      const amountDue = totalAmount - amountPaid;
-      
-      let debtorStatus = 'OUTSTANDING';
-      if (amountPaid === 0) {
-        debtorStatus = 'OUTSTANDING';
-      } else if (amountPaid > 0 && amountDue > 0) {
-        debtorStatus = 'PARTIAL';
-      } else if (amountDue === 0) {
-        debtorStatus = 'PAID';
+if (isCreditSale) {
+  // ✅ FIX: Ensure we have a valid customer ID
+  if (!customerId) {
+    throw new ValidationError('Customer ID is required for credit sales');
+  }
+
+  const amountDue = totalAmount - amountPaid;
+  
+  let debtorStatus = 'OUTSTANDING';
+  if (amountPaid === 0) {
+    debtorStatus = 'OUTSTANDING';
+  } else if (amountPaid > 0 && amountDue > 0) {
+    debtorStatus = 'PARTIAL';
+  } else if (amountDue === 0) {
+    debtorStatus = 'PAID';
+  }
+
+  debtorRecord = await tx.debtor.create({
+    data: {
+      warehouseCustomerId: customerId,
+      saleId: warehouseSale.id,
+      totalAmount,
+      amountPaid,
+      amountDue,
+      dueDate: creditDueDate ? new Date(creditDueDate) : null,
+      status: debtorStatus
+    }
+  });
+
+  // Create payment record if partial payment made
+  if (amountPaid > 0) {
+    await tx.debtorPayment.create({
+      data: {
+        debtorId: debtorRecord.id,
+        amount: amountPaid,
+        paymentMethod: initialPaymentMethod,
+        paymentDate: new Date(),
+        notes: 'Initial partial payment at sale',
+        receivedBy: req.user.id
       }
-
-      console.log('Creating debtor with:', {
-        warehouseCustomerId: customerId,
-        saleId: warehouseSale.id,
-        totalAmount,
-        amountPaid,
-        amountDue,
-        status: debtorStatus
-      });
-
-      debtorRecord = await tx.debtor.create({
-        data: {
-          warehouseCustomerId: customerId,
-          saleId: warehouseSale.id,
-          totalAmount,
-          amountPaid,
-          amountDue,
-          dueDate: creditDueDate ? new Date(creditDueDate) : null,
-          status: debtorStatus
-        }
-      });
-      console.log('✅ Debtor record created:', debtorRecord.id);
-
-      // Create payment record if partial payment made
-      if (amountPaid > 0) {
-        console.log('🔵 Step 3a: Creating debtor payment record...');
-        await tx.debtorPayment.create({
-          data: {
-            debtorId: debtorRecord.id,
-            amount: amountPaid,
-            paymentMethod: initialPaymentMethod,
-            paymentDate: new Date(),
-            notes: 'Initial partial payment at sale',
-            receivedBy: req.user.id
-          }
-        });
-        console.log('✅ Debtor payment record created');
-      }
+    });
+  }
 
       // Update customer analytics
       console.log('🔵 Step 3b: Updating customer credit analytics...');

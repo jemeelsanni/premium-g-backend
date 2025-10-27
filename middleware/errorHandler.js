@@ -242,6 +242,13 @@ const handlePrismaError = (error, res) => {
         error: 'Record Not Found',
         message: 'An operation failed because it depends on one or more records that were required but not found'
       });
+      
+    case 'P2028':
+      return res.status(500).json({
+        error: 'Transaction Error',
+        message: 'Database transaction failed. This may be due to a timeout or constraint violation. Please try again.',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
 
     default:
       return res.status(500).json({
