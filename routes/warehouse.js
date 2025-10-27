@@ -845,6 +845,15 @@ router.get('/sales',
         warehouseCustomer: { select: { id: true, name: true, phone: true } },
         salesOfficerUser: { select: { id: true, username: true } }
       },
+  debtor: {  // ✅ Add this
+    select: {
+      id: true,
+      amountPaid: true,
+      amountDue: true,
+      status: true,
+      dueDate: true
+    }
+  },
       orderBy: { createdAt: 'asc' }
     });
 
