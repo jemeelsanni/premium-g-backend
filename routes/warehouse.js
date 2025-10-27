@@ -341,8 +341,19 @@ router.post('/sales',
       initialPaymentMethod
     } = req.body;
 
+    // ✅ ADD THIS DEBUG LOGGING
+    console.log('🔍 CREATE SALE DEBUG:');
+    console.log('Raw req.body:', JSON.stringify(req.body, null, 2));
+    console.log('Extracted values:');
+    console.log('  - paymentStatus:', paymentStatus);
+    console.log('  - providedAmountPaid:', providedAmountPaid);
+    console.log('  - initialPaymentMethod:', initialPaymentMethod);
+    console.log('  - paymentMethod:', paymentMethod);
+
     // Determine if this is a credit sale
     const isCreditSale = paymentStatus === 'CREDIT';
+    console.log('  - isCreditSale:', isCreditSale);
+
 
     let customerId = warehouseCustomerId;
     
@@ -409,43 +420,49 @@ router.post('/sales',
     }
 
     // Credit sales validation
-    if (isCreditSale) {
-      if (!customerId) {
-        throw new ValidationError('Customer ID is required for credit sales');
-      }
+if (isCreditSale) {
+  if (!customerId) {
+    throw new ValidationError('Customer ID is required for credit sales');
+  }
 
-      const customer = await prisma.warehouseCustomer.findUnique({
-        where: { id: customerId },
-        select: {
-          id: true,
-          name: true,
-          creditLimit: true,
-          outstandingDebt: true
-        }
-      });
-
-      if (!customer) {
-        throw new NotFoundError('Customer not found');
-      }
-
-      if (!customer.creditLimit || parseFloat(customer.creditLimit) <= 0) {
-        throw new BusinessError('Customer does not have credit facility');
-      }
-
-      const totalAmount = price * quantity;
-      const currentDebt = parseFloat(customer.outstandingDebt || 0);
-      const creditLimit = parseFloat(customer.creditLimit);
-
-      if (currentDebt + totalAmount > creditLimit) {
-        throw new BusinessError(
-          `Credit limit exceeded. Available credit: ₦${(creditLimit - currentDebt).toLocaleString()}, Required: ₦${totalAmount.toLocaleString()}`
-        );
-      }
-
-      if (!creditDueDate) {
-        throw new ValidationError('Credit due date is required for credit sales');
-      }
+  const customer = await prisma.warehouseCustomer.findUnique({
+    where: { id: customerId },
+    select: {
+      id: true,
+      name: true,
+      creditLimit: true,
+      outstandingDebt: true
     }
+  });
+
+  if (!customer) {
+    throw new NotFoundError('Customer not found');
+  }
+
+  // ✅ MODIFIED: Skip credit facility check if partial payment is provided
+  const hasPartialPayment = providedAmountPaid && parseFloat(providedAmountPaid) > 0;
+  
+  if (!hasPartialPayment) {
+    // Only validate credit facility for full credit sales (no partial payment)
+    if (!customer.creditLimit || parseFloat(customer.creditLimit) <= 0) {
+      throw new BusinessError('Customer does not have credit facility');
+    }
+
+    const totalAmount = parseFloat(unitPrice) * quantity;
+    const currentDebt = parseFloat(customer.outstandingDebt || 0);
+    const creditLimit = parseFloat(customer.creditLimit);
+
+    if (currentDebt + totalAmount > creditLimit) {
+      throw new BusinessError(
+        `Credit limit exceeded. Available credit: ₦${(creditLimit - currentDebt).toLocaleString()}, Required: ₦${totalAmount.toLocaleString()}`
+      );
+    }
+  }
+
+  if (!creditDueDate) {
+    throw new ValidationError('Credit due date is required for credit sales');
+  }
+}
 
     // Check for discount
     let finalUnitPrice = unitPrice;
@@ -505,194 +522,243 @@ router.post('/sales',
 
     const providedReceiptNumber = req.body.receiptNumber;
     const receiptNumber = providedReceiptNumber || await generateReceiptNumber();
+    // Partial payment validation
+
+    // ✅ ADD THIS DEBUG LOGGING
+    console.log('💰 PAYMENT CALCULATION:');
+    console.log('  - providedAmountPaid:', providedAmountPaid);
+    console.log('  - parsed amountPaid:', amountPaid);
+    console.log('  - totalAmount:', totalAmount);
+    console.log('  - Will create debtor:', isCreditSale);
+    console.log('  - Will set paymentStatus to:', isCreditSale ? (amountPaid > 0 ? 'PARTIAL' : 'CREDIT') : paymentStatus);
 
     const createSaleOperation = () => prisma.$transaction(async (tx) => {
-      // 1. Create warehouse sale
-      const warehouseSale = await tx.warehouseSale.create({
+  try {
+    // 1. Create warehouse sale
+    console.log('🔵 Step 1: Creating warehouse sale...');
+    const warehouseSale = await tx.warehouseSale.create({
+      data: {
+        productId,
+        quantity,
+        unitType,
+        unitPrice: finalUnitPrice,
+        totalAmount,
+        costPerUnit,
+        totalCost,
+        grossProfit,
+        profitMargin: parseFloat(profitMargin.toFixed(2)),
+        paymentMethod: isCreditSale && amountPaid > 0 ? initialPaymentMethod : paymentMethod,
+        warehouseCustomerId: customerId,
+        customerName,
+        customerPhone,
+        receiptNumber,
+        salesOfficer: req.user.id,
+        originalUnitPrice: discountAmount > 0 ? originalUnitPrice : null,  
+        discountApplied: discountAmount > 0,
+        totalDiscountAmount: discountAmount > 0 ? totalDiscountAmount : null,
+        discountPercentage: discountAmount > 0 ? parseFloat(discountPercentage.toFixed(2)) : null,
+        discountReason: discountAmount > 0 ? 'Customer discount applied' : null,
+        approvedBy: discountAmount > 0 && applicableDiscount ? req.user.id : null,
+        paymentStatus: isCreditSale ? (amountPaid > 0 ? 'PARTIAL' : 'CREDIT') : paymentStatus,
+        creditDueDate: isCreditSale ? new Date(creditDueDate) : null,
+        creditNotes: isCreditSale ? creditNotes : null
+      },
+      include: {
+        product: true,
+        warehouseCustomer: true,
+        salesOfficerUser: {
+          select: { id: true, username: true }
+        }
+      }
+    });
+    console.log('✅ Warehouse sale created:', warehouseSale.id);
+
+    // 2. Create cash flow entry
+    console.log('🔵 Step 2: Creating cash flow entry...');
+    let cashFlowEntry = null;
+    
+    if (!isCreditSale) {
+      const cashFlowDescription = discountAmount > 0
+        ? `Sale: ${product.name} - ${customerName || 'Walk-in'} (Discount: ${discountPercentage.toFixed(1)}%)`
+        : `Sale: ${product.name} - ${customerName || 'Walk-in'}`;
+
+      cashFlowEntry = await tx.cashFlow.create({
         data: {
-          productId,
-          quantity,
-          unitType,
-          unitPrice: finalUnitPrice,
-          totalAmount,
-          costPerUnit,
-          totalCost,
-          grossProfit,
-          profitMargin: parseFloat(profitMargin.toFixed(2)),
-          paymentMethod: isCreditSale && amountPaid > 0 ? initialPaymentMethod : paymentMethod,
+          transactionType: 'CASH_IN',
+          amount: totalAmount,
+          paymentMethod: paymentMethod,
+          description: cashFlowDescription,
+          referenceNumber: receiptNumber,
+          cashier: req.user.id,
+          module: 'WAREHOUSE'
+        }
+      });
+      console.log('✅ Cash flow created (full payment)');
+    } else if (isCreditSale && amountPaid > 0) {
+      const cashFlowDescription = `Partial payment on credit sale: ${product.name} - ${customerName}`;
+      
+      cashFlowEntry = await tx.cashFlow.create({
+        data: {
+          transactionType: 'CASH_IN',
+          amount: amountPaid,
+          paymentMethod: initialPaymentMethod,
+          description: cashFlowDescription,
+          referenceNumber: receiptNumber,
+          cashier: req.user.id,
+          module: 'WAREHOUSE'
+        }
+      });
+      console.log('✅ Cash flow created (partial payment):', amountPaid);
+    } else {
+      console.log('⚠️ No cash flow created (full credit, no payment)');
+    }
+
+    // 3. Create debtor record for credit sales
+    console.log('🔵 Step 3: Creating debtor record...');
+    let debtorRecord = null;
+    if (isCreditSale && customerId) {
+      const amountDue = totalAmount - amountPaid;
+      
+      let debtorStatus = 'OUTSTANDING';
+      if (amountPaid === 0) {
+        debtorStatus = 'OUTSTANDING';
+      } else if (amountPaid > 0 && amountDue > 0) {
+        debtorStatus = 'PARTIAL';
+      } else if (amountDue === 0) {
+        debtorStatus = 'PAID';
+      }
+
+      console.log('Creating debtor with:', {
+        warehouseCustomerId: customerId,
+        saleId: warehouseSale.id,
+        totalAmount,
+        amountPaid,
+        amountDue,
+        status: debtorStatus
+      });
+
+      debtorRecord = await tx.debtor.create({
+        data: {
           warehouseCustomerId: customerId,
-          customerName,
-          customerPhone,
-          receiptNumber,
-          salesOfficer: req.user.id,
-          // Discount tracking
-          originalUnitPrice: discountAmount > 0 ? originalUnitPrice : null,  
-          discountApplied: discountAmount > 0,
-          totalDiscountAmount: discountAmount > 0 ? totalDiscountAmount : null,
-          discountPercentage: discountAmount > 0 ? parseFloat(discountPercentage.toFixed(2)) : null,
-          discountReason: discountAmount > 0 ? 'Customer discount applied' : null,
-          approvedBy: discountAmount > 0 && applicableDiscount ? req.user.id : null,
-          // Credit fields
-          paymentStatus: isCreditSale ? (amountPaid > 0 ? 'PARTIAL' : 'CREDIT') : paymentStatus,
-          creditDueDate: isCreditSale ? new Date(creditDueDate) : null,
-          creditNotes: isCreditSale ? creditNotes : null
-        },
-        include: {
-          product: true,
-          warehouseCustomer: true,
-          salesOfficerUser: {
-            select: { id: true, username: true }
+          saleId: warehouseSale.id,
+          totalAmount,
+          amountPaid,
+          amountDue,
+          dueDate: creditDueDate ? new Date(creditDueDate) : null,
+          status: debtorStatus
+        }
+      });
+      console.log('✅ Debtor record created:', debtorRecord.id);
+
+      // Create payment record if partial payment made
+      if (amountPaid > 0) {
+        console.log('🔵 Step 3a: Creating debtor payment record...');
+        await tx.debtorPayment.create({
+          data: {
+            debtorId: debtorRecord.id,
+            amount: amountPaid,
+            paymentMethod: initialPaymentMethod,
+            paymentDate: new Date(),
+            notes: 'Initial partial payment at sale',
+            receivedBy: req.user.id
           }
+        });
+        console.log('✅ Debtor payment record created');
+      }
+
+      // Update customer analytics
+      console.log('🔵 Step 3b: Updating customer credit analytics...');
+      await tx.warehouseCustomer.update({
+        where: { id: customerId },
+        data: {
+          totalCreditPurchases: { increment: 1 },
+          totalCreditAmount: { increment: totalAmount },
+          outstandingDebt: { increment: amountDue },
+          lastPaymentDate: amountPaid > 0 ? new Date() : undefined
+        }
+      });
+      console.log('✅ Customer credit analytics updated');
+    } else {
+      console.log('⚠️ No debtor record created (not a credit sale or no customer)');
+    }
+
+    // 4. Track discount usage
+    if (applicableDiscount && discountAmount > 0) {
+      console.log('🔵 Step 4: Updating discount usage...');
+      await tx.warehouseCustomerDiscount.update({
+        where: { id: applicableDiscount.id },
+        data: {
+          usageCount: { increment: 1 },
+          totalDiscountGiven: { increment: totalDiscountAmount }
+        }
+      });
+      console.log('✅ Discount usage updated');
+    }
+
+    // 5. Update inventory
+    console.log('🔵 Step 5: Updating inventory...');
+    if (unitType === 'PACKS') {
+      await tx.warehouseInventory.updateMany({
+        where: { productId },
+        data: { packs: { decrement: quantity } }
+      });
+    } else if (unitType === 'PALLETS') {
+      await tx.warehouseInventory.updateMany({
+        where: { productId },
+        data: { pallets: { decrement: quantity } }
+      });
+    } else if (unitType === 'UNITS') {
+      await tx.warehouseInventory.updateMany({
+        where: { productId },
+        data: { units: { decrement: quantity } }
+      });
+    }
+    console.log('✅ Inventory updated');
+
+    // 6. Update customer stats
+    if (customerId) {
+      console.log('🔵 Step 6: Updating customer stats...');
+      const amountToRecord = isCreditSale ? amountPaid : totalAmount;
+      
+      const customerStats = await tx.warehouseCustomer.update({
+        where: { id: customerId },
+        data: {
+          totalPurchases: { increment: 1 },
+          totalSpent: { increment: amountToRecord },
+          lastPurchaseDate: new Date()
+        },
+        select: {
+          totalPurchases: true,
+          totalSpent: true
         }
       });
 
-      // 2. Create cash flow entry
-      let cashFlowEntry = null;
-      
-      // For full non-credit sales
-      if (!isCreditSale) {
-        const cashFlowDescription = discountAmount > 0
-          ? `Sale: ${product.name} - ${customerName || 'Walk-in'} (Discount: ${discountPercentage.toFixed(1)}%)`
-          : `Sale: ${product.name} - ${customerName || 'Walk-in'}`;
+      const totalSpentValue = parseFloat(customerStats.totalSpent.toString());
+      const averageOrderValue = customerStats.totalPurchases > 0
+        ? parseFloat((totalSpentValue / customerStats.totalPurchases).toFixed(2))
+        : 0;
 
-        cashFlowEntry = await tx.cashFlow.create({
-          data: {
-            transactionType: 'CASH_IN',
-            amount: totalAmount,
-            paymentMethod: paymentMethod,
-            description: cashFlowDescription,
-            referenceNumber: receiptNumber,
-            cashier: req.user.id,
-            module: 'WAREHOUSE'
-          }
-        });
-      }
-      // For partial payments on credit sales
-      else if (isCreditSale && amountPaid > 0) {
-        const cashFlowDescription = `Partial payment on credit sale: ${product.name} - ${customerName}`;
-        
-        cashFlowEntry = await tx.cashFlow.create({
-          data: {
-            transactionType: 'CASH_IN',
-            amount: amountPaid,
-            paymentMethod: initialPaymentMethod,
-            description: cashFlowDescription,
-            referenceNumber: receiptNumber,
-            cashier: req.user.id,
-            module: 'WAREHOUSE'
-          }
-        });
-      }
+      await tx.warehouseCustomer.update({
+        where: { id: customerId },
+        data: { averageOrderValue }
+      });
+      console.log('✅ Customer stats updated');
+    }
 
-      // 3. Create debtor record for credit sales
-      let debtorRecord = null;
-      if (isCreditSale) {
-        const amountDue = totalAmount - amountPaid;
-        
-        let debtorStatus = 'OUTSTANDING';
-        if (amountPaid === 0) {
-          debtorStatus = 'OUTSTANDING';
-        } else if (amountPaid > 0 && amountDue > 0) {
-          debtorStatus = 'PARTIAL';
-        } else if (amountDue === 0) {
-          debtorStatus = 'PAID';
-        }
-
-        debtorRecord = await tx.debtor.create({
-          data: {
-            warehouseCustomerId: customerId,
-            saleId: warehouseSale.id,
-            totalAmount,
-            amountPaid,
-            amountDue,
-            dueDate: creditDueDate ? new Date(creditDueDate) : null,
-            status: debtorStatus
-          }
-        });
-
-        // Create payment record if partial payment made
-        if (amountPaid > 0) {
-          await tx.debtorPayment.create({
-            data: {
-              debtorId: debtorRecord.id,
-              amount: amountPaid,
-              paymentMethod: initialPaymentMethod,
-              paymentDate: new Date(),
-              notes: 'Initial partial payment at sale',
-              receivedBy: req.user.id
-            }
-          });
-        }
-
-        // Update customer analytics
-        await tx.warehouseCustomer.update({
-          where: { id: customerId },
-          data: {
-            totalCreditPurchases: { increment: 1 },
-            totalCreditAmount: { increment: totalAmount },
-            outstandingDebt: { increment: amountDue },
-            lastPaymentDate: amountPaid > 0 ? new Date() : undefined
-          }
-        });
-      }
-
-      // 4. Track discount usage
-      if (applicableDiscount && discountAmount > 0) {
-        await tx.warehouseCustomerDiscount.update({
-          where: { id: applicableDiscount.id },
-          data: {
-            usageCount: { increment: 1 },
-            totalDiscountGiven: { increment: totalDiscountAmount }
-          }
-        });
-      }
-
-      // 5. Update inventory
-      if (unitType === 'PACKS') {
-        await tx.warehouseInventory.updateMany({
-          where: { productId },
-          data: { packs: { decrement: quantity } }
-        });
-      } else if (unitType === 'PALLETS') {
-        await tx.warehouseInventory.updateMany({
-          where: { productId },
-          data: { pallets: { decrement: quantity } }
-        });
-      } else if (unitType === 'UNITS') {
-        await tx.warehouseInventory.updateMany({
-          where: { productId },
-          data: { units: { decrement: quantity } }
-        });
-      }
-
-      // 6. Update customer stats
-      if (customerId) {
-        const customerStats = await tx.warehouseCustomer.update({
-          where: { id: customerId },
-          data: {
-            totalPurchases: { increment: 1 },
-            totalSpent: { increment: totalAmount },
-            lastPurchaseDate: new Date()
-          },
-          select: {
-            totalPurchases: true,
-            totalSpent: true
-          }
-        });
-
-        const totalSpentValue = parseFloat(customerStats.totalSpent.toString());
-        const averageOrderValue = customerStats.totalPurchases > 0
-          ? parseFloat((totalSpentValue / customerStats.totalPurchases).toFixed(2))
-          : 0;
-
-        await tx.warehouseCustomer.update({
-          where: { id: customerId },
-          data: { averageOrderValue }
-        });
-      }
-
-      return { warehouseSale, cashFlowEntry, debtorRecord };
+    console.log('✅✅✅ Transaction completed successfully!');
+    return { warehouseSale, cashFlowEntry, debtorRecord };
+    
+  } catch (error) {
+    console.error('❌ Transaction failed at step:', error);
+    console.error('Error details:', {
+      code: error.code,
+      meta: error.meta,
+      message: error.message,
+      stack: error.stack
     });
+    throw error; // Re-throw to let outer handler catch it
+  }
+});
 
     const result = await withReceiptConflictRetry(() => createSaleOperation());
 
@@ -843,17 +909,18 @@ router.get('/sales',
       include: {
         product: { select: { name: true, productNo: true } },
         warehouseCustomer: { select: { id: true, name: true, phone: true } },
-        salesOfficerUser: { select: { id: true, username: true } }
+        salesOfficerUser: { select: { id: true, username: true } },
+        debtor: {  // ✅ Add this
+          select: {
+            id: true,
+            amountPaid: true,
+            amountDue: true,
+            status: true,
+            dueDate: true
+          }
+        },
       },
-  debtor: {  // ✅ Add this
-    select: {
-      id: true,
-      amountPaid: true,
-      amountDue: true,
-      status: true,
-      dueDate: true
-    }
-  },
+ 
       orderBy: { createdAt: 'asc' }
     });
 

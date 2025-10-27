@@ -788,9 +788,9 @@ model Debtor {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  customer WarehouseCustomer @relation(fields: [warehouseCustomerId], references: [id], onDelete: Cascade)
-  sale     WarehouseSale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  payments DebtorPayment[]
+  warehouseCustomer WarehouseCustomer @relation(fields: [warehouseCustomerId], references: [id], onDelete: Cascade)
+  sale              WarehouseSale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  payments          DebtorPayment[]
 
   @@map("warehouse_debtors")
 }
