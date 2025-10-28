@@ -23,7 +23,7 @@ const warehousePurchasesRouter = require('./warehouse-purchases');
 router.use('/purchases', warehousePurchasesRouter);
 
 const warehouseDebtorsRouter = require('./warehouse-debtors');
-router.use('/', warehouseDebtorsRouter);
+router.use('/debtors', warehouseDebtorsRouter);
 
 
 // Include discount management routes (if created)

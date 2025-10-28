@@ -1,3 +1,8 @@
+// ============================================
+// FINAL FIX: routes/warehouse-debtors.js
+// ============================================
+// Corrected relation names based on Prisma schema
+
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
@@ -13,7 +18,7 @@ const prisma = new PrismaClient();
 router.get('/',
   authorizeModule('warehouse', 'read'),
   [
-    query('status').optional().isIn(['OUTSTANDING', 'PARTIAL', 'PAID', 'OVERDUE']),
+    query('status').optional().isIn(['all', 'OUTSTANDING', 'PARTIAL', 'PAID', 'OVERDUE']),
     query('customerId').optional().isString(),
     query('startDate').optional().isISO8601(),
     query('endDate').optional().isISO8601(),
@@ -37,7 +42,11 @@ router.get('/',
 
     // Build filter
     const where = {};
-    if (status) where.status = status;
+    
+    if (status && status !== 'all') {
+      where.status = status;
+    }
+    
     if (customerId) where.warehouseCustomerId = customerId;
     
     if (startDate || endDate) {
@@ -58,36 +67,16 @@ router.get('/',
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const [debtors, total, analytics] = await Promise.all([
+      // ✅ FIX: Use correct relation names from schema
       prisma.debtor.findMany({
         where,
         skip,
         take: parseInt(limit),
         include: {
-          customer: {
-            select: {
-              id: true,
-              name: true,
-              phone: true,
-              email: true,
-              customerType: true
-            }
-          },
+          warehouseCustomer: true,  // ✅ Correct relation name
           sale: {
-            select: {
-              id: true,
-              receiptNumber: true,
-              createdAt: true,
-              productId: true,
-              quantity: true,
-              unitType: true
-            },
             include: {
-              product: {
-                select: {
-                  name: true,
-                  productNo: true
-                }
-              }
+              product: true
             }
           },
           payments: {
@@ -114,6 +103,38 @@ router.get('/',
       })
     ]);
 
+    // Transform response to match frontend expectations
+    const transformedDebtors = debtors.map(debtor => ({
+      id: debtor.id,
+      totalAmount: debtor.totalAmount,
+      amountPaid: debtor.amountPaid,
+      amountDue: debtor.amountDue,
+      status: debtor.status,
+      dueDate: debtor.dueDate,
+      creditNotes: debtor.creditNotes,
+      createdAt: debtor.createdAt,
+      customer: {
+        id: debtor.warehouseCustomer.id,
+        name: debtor.warehouseCustomer.name,
+        phone: debtor.warehouseCustomer.phone,
+        email: debtor.warehouseCustomer.email,
+        customerType: debtor.warehouseCustomer.customerType
+      },
+      sale: {
+        id: debtor.sale.id,
+        receiptNumber: debtor.sale.receiptNumber,
+        createdAt: debtor.sale.createdAt,
+        productId: debtor.sale.productId,
+        quantity: debtor.sale.quantity,
+        unitType: debtor.sale.unitType,
+        product: {
+          name: debtor.sale.product.name,
+          productNo: debtor.sale.product.productNo
+        }
+      },
+      payments: debtor.payments
+    }));
+
     const summary = analytics.reduce((acc, item) => {
       acc[item.status] = {
         count: item._count,
@@ -127,7 +148,7 @@ router.get('/',
     res.json({
       success: true,
       data: {
-        debtors,
+        debtors: transformedDebtors,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
@@ -170,7 +191,6 @@ router.get('/customer/:customerId/summary',
           sale: {
             select: {
               receiptNumber: true,
-              createdAt: true,
               totalAmount: true
             }
           },
@@ -240,10 +260,17 @@ router.post('/:debtorId/payments',
     const { amount, paymentMethod, paymentDate, referenceNumber, notes } = req.body;
 
     const result = await prisma.$transaction(async (tx) => {
-      // Get debtor
+      // Get debtor with customer and sale info
       const debtor = await tx.debtor.findUnique({
         where: { id: debtorId },
-        include: { customer: true }
+        include: { 
+          warehouseCustomer: true,
+          sale: {
+            include: {
+              product: true
+            }
+          }
+        }
       });
 
       if (!debtor) {
@@ -254,10 +281,12 @@ router.post('/:debtorId/payments',
       const currentDue = parseFloat(debtor.amountDue);
 
       if (paymentAmount > currentDue) {
-        throw new ValidationError(`Payment amount (${paymentAmount}) exceeds outstanding debt (${currentDue})`);
+        throw new ValidationError(
+          `Payment amount (₦${paymentAmount.toLocaleString()}) cannot exceed outstanding balance (₦${currentDue.toLocaleString()})`
+        );
       }
 
-      // Record payment
+      // 1. Create payment record
       const payment = await tx.debtorPayment.create({
         data: {
           debtorId,
@@ -270,14 +299,14 @@ router.post('/:debtorId/payments',
         }
       });
 
-      // Update debtor record
+      // 2. Update debtor record
       const newAmountPaid = parseFloat(debtor.amountPaid) + paymentAmount;
       const newAmountDue = parseFloat(debtor.totalAmount) - newAmountPaid;
-      
+
       let newStatus = debtor.status;
-      if (newAmountDue === 0) {
+      if (newAmountDue <= 0) {
         newStatus = 'PAID';
-      } else if (newAmountPaid > 0 && newAmountDue > 0) {
+      } else if (newAmountPaid > 0) {
         newStatus = 'PARTIAL';
       }
 
@@ -290,22 +319,42 @@ router.post('/:debtorId/payments',
         }
       });
 
-      // Update customer analytics
-      const customerDebts = await tx.debtor.findMany({
-        where: { warehouseCustomerId: debtor.warehouseCustomerId }
+      // 3. ✅ CREATE CASH FLOW ENTRY (INFLOW)
+      const cashFlowDescription = `Debt payment from ${debtor.warehouseCustomer.name} - ${debtor.sale.product.name} (Receipt: ${debtor.sale.receiptNumber})`;
+      
+      const cashFlowEntry = await tx.cashFlow.create({
+        data: {
+          transactionType: 'CASH_IN',
+          amount: paymentAmount,
+          paymentMethod: paymentMethod,
+          description: cashFlowDescription,
+          referenceNumber: referenceNumber || `DEBT-PAY-${payment.id.slice(-8)}`,
+          cashier: req.user.id,
+          module: 'WAREHOUSE'
+        }
       });
 
-      const totalOutstanding = customerDebts.reduce(
-        (sum, d) => sum + parseFloat(d.amountDue),
-        0
-      );
+      console.log('✅ Cash flow entry created for debt payment:', {
+        transactionType: 'CASH_IN',
+        amount: paymentAmount,
+        paymentMethod,
+        debtorId,
+        cashFlowId: cashFlowEntry.id
+      });
 
-      // Calculate payment reliability (percentage of on-time payments)
+      // 4. Update customer stats
+      const totalOutstanding = await tx.debtor.aggregate({
+        where: {
+          warehouseCustomerId: debtor.warehouseCustomerId,
+          status: { in: ['OUTSTANDING', 'PARTIAL', 'OVERDUE'] }
+        },
+        _sum: { amountDue: true }
+      });
+
+      // Calculate payment reliability
       const allPayments = await tx.debtorPayment.count({
         where: {
-          debtor: {
-            warehouseCustomerId: debtor.warehouseCustomerId
-          }
+          debtor: { warehouseCustomerId: debtor.warehouseCustomerId }
         }
       });
 
@@ -313,8 +362,9 @@ router.post('/:debtorId/payments',
         where: {
           debtor: {
             warehouseCustomerId: debtor.warehouseCustomerId,
-            status: 'OVERDUE'
-          }
+            dueDate: { not: null }
+          },
+          paymentDate: { gt: debtor.dueDate }
         }
       });
 
@@ -325,19 +375,24 @@ router.post('/:debtorId/payments',
       await tx.warehouseCustomer.update({
         where: { id: debtor.warehouseCustomerId },
         data: {
-          outstandingDebt: totalOutstanding,
+          outstandingDebt: totalOutstanding._sum.amountDue || 0,
           lastPaymentDate: new Date(paymentDate),
           paymentReliabilityScore: reliabilityScore
         }
       });
 
-      return { payment, debtor: updatedDebtor };
+      return { payment, debtor: updatedDebtor, cashFlowEntry };
     });
 
     res.json({
       success: true,
-      message: 'Payment recorded successfully',
-      data: result
+      message: 'Payment recorded successfully and cash flow updated',
+      data: {
+        payment: result.payment,
+        debtor: result.debtor,
+        cashFlowRecorded: true,
+        cashFlowId: result.cashFlowEntry.id
+      }
     });
   })
 );
@@ -398,7 +453,7 @@ router.get('/analytics',
           status: { in: ['OUTSTANDING', 'PARTIAL', 'OVERDUE'] }
         },
         include: {
-          customer: {
+          warehouseCustomer: {
             select: {
               name: true,
               phone: true,
