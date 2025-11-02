@@ -96,7 +96,7 @@ router.get('/summary',
       isActive: true,
       OR: [
         { lastPurchaseDate: { ...dateFilter } },
-        { warehouseSales: { some: { createdAt: { ...dateFilter } } } }
+        { sales: { some: { createdAt: { ...dateFilter } } } }
       ]
     },
     select: { id: true, isActive: true }
