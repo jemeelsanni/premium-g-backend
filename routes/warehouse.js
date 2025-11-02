@@ -214,28 +214,55 @@ router.get('/inventory', asyncHandler(async (req, res) => {
   const { productId, location, lowStock } = req.query;
 
   const where = {};
-
   if (productId) where.productId = productId;
   if (location) where.location = location;
-  
-  // Low stock filter
-  if (lowStock === 'true') {
-    where.packs = { lte: prisma.raw('reorder_level') };
-  }
 
+  // Fetch inventory
   const inventory = await prisma.warehouseInventory.findMany({
     where,
-    include: {
-      product: true
-    },
+    include: { product: true },
     orderBy: { lastUpdated: 'desc' }
   });
 
+  // Transform and normalize
+  let formattedInventory = inventory.map(inv => {
+    const currentStock =
+      (inv.pallets ?? 0) + (inv.packs ?? 0) + (inv.units ?? 0);
+
+    const minimumStock = inv.reorderLevel ?? 0;
+    const maximumStock = inv.maxStockLevel ?? 0;
+
+    return {
+      id: inv.id,
+      productId: inv.productId,
+      product: inv.product,
+      location: inv.location,
+      currentStock,
+      minimumStock,
+      maximumStock,
+      lastRestocked: inv.lastUpdated ?? inv.createdAt,
+      stockStatus:
+        currentStock <= minimumStock
+          ? 'LOW_STOCK'
+          : maximumStock && currentStock >= maximumStock
+          ? 'OVERSTOCK'
+          : 'NORMAL'
+    };
+  });
+
+  // Optional low stock filter
+  if (lowStock === 'true') {
+    formattedInventory = formattedInventory.filter(
+      (inv) => inv.currentStock <= inv.minimumStock
+    );
+  }
+
   res.json({
     success: true,
-    data: inventory 
+    data: formattedInventory
   });
 }));
+
 
 // @route   PUT /api/v1/warehouse/inventory/:id
 // @desc    Update inventory levels
@@ -284,14 +311,63 @@ router.get('/products', asyncHandler(async (req, res) => {
       isActive: true,
       module: 'WAREHOUSE'
     },
-    orderBy: { name: 'asc' }
+    orderBy: { name: 'asc' },
+    include: {
+      warehouseInventory: {
+        select: {
+          pallets: true,
+          packs: true,
+          units: true,
+          reorderLevel: true,
+          maxStockLevel: true
+        }
+      }
+    }
+  });
+
+  const formattedProducts = products.map(p => {
+    // 🧠 Handle multiple inventories
+    const inventories = Array.isArray(p.warehouseInventory)
+      ? p.warehouseInventory
+      : [p.warehouseInventory].filter(Boolean);
+
+    const totalStock = inventories.reduce(
+      (sum, inv) => sum + (inv.pallets ?? 0) + (inv.packs ?? 0) + (inv.units ?? 0),
+      0
+    );
+
+    const minLevel = Math.min(...inventories.map(inv => inv.reorderLevel ?? 0), 0);
+    const maxLevel = Math.max(...inventories.map(inv => inv.maxStockLevel ?? 0), 0);
+
+    const stockStatus =
+      totalStock <= minLevel
+        ? 'LOW_STOCK'
+        : maxLevel && totalStock >= maxLevel
+        ? 'OVERSTOCK'
+        : 'NORMAL';
+
+    return {
+      id: p.id,
+      name: p.name,
+      productNo: p.productNo,
+      pricePerPack: p.pricePerPack,
+      currentStock: totalStock,
+      minimumStock: minLevel,
+      maximumStock: maxLevel,
+      stockStatus
+    };
   });
 
   res.json({
     success: true,
-    data: { products }
+    data: { products: formattedProducts }
   });
 }));
+
+
+
+
+
 
 // ================================
 // WAREHOUSE SALES ROUTES
@@ -1163,20 +1239,48 @@ router.use('/', warehouseExpensesRouter);
 // @route   GET /api/v1/warehouse/analytics/summary
 // @desc    Get warehouse analytics summary
 // @access  Private (Warehouse module access)
-router.get('/analytics/summary',
+router.get(
+  '/analytics/summary',
   authorizeModule('warehouse'),
   asyncHandler(async (req, res) => {
-    const { startDate, endDate } = req.query;
-    
-    const dateFilter = {};
-    if (startDate) dateFilter.gte = new Date(startDate);
-    if (endDate) dateFilter.lte = new Date(endDate);
+    const { startDate, endDate, filterMonth, filterYear } = req.query;
 
-    const sales = await prisma.warehouseSale.findMany({
-      where: {
-        createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined
+    // Determine date range
+    const now = new Date();
+    let rangeStart, rangeEnd;
+
+    if (filterMonth && filterYear) {
+      // 🔹 Specific month filter
+      const month = parseInt(filterMonth);
+      const year = parseInt(filterYear);
+      rangeStart = new Date(year, month - 1, 1);
+      rangeEnd = new Date(year, month, 0, 23, 59, 59, 999);
+    } else if (filterYear) {
+      // 🔹 Whole year filter
+      const year = parseInt(filterYear);
+      rangeStart = new Date(year, 0, 1);
+      rangeEnd = new Date(year, 11, 31, 23, 59, 59, 999);
+    } else if (startDate || endDate) {
+      // 🔹 Custom range
+      rangeStart = startDate ? new Date(startDate) : undefined;
+      rangeEnd = endDate ? new Date(endDate) : undefined;
+    } else {
+      // 🔹 Default = current month
+      rangeStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      rangeEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    }
+
+    const dateFilter = {
+      createdAt: {
+        ...(rangeStart ? { gte: rangeStart } : {}),
+        ...(rangeEnd ? { lte: rangeEnd } : {}),
       },
-      include: { product: true }
+    };
+
+    // Fetch sales with correct date range
+    const sales = await prisma.warehouseSale.findMany({
+      where: dateFilter,
+      include: { product: true },
     });
 
     // Calculate metrics
@@ -1184,31 +1288,39 @@ router.get('/analytics/summary',
     let totalCOGS = 0;
     let totalQuantitySold = 0;
 
-    sales.forEach(sale => {
+    for (const sale of sales) {
       totalRevenue += parseFloat(sale.totalAmount);
       totalCOGS += parseFloat(sale.totalCost);
       totalQuantitySold += sale.quantity;
-    });
+    }
 
     const grossProfit = totalRevenue - totalCOGS;
-    const profitMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+    const profitMargin =
+      totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
 
     res.json({
       success: true,
       data: {
         summary: {
-          totalRevenue: parseFloat(totalRevenue.toFixed(2)),
-          totalCOGS: parseFloat(totalCOGS.toFixed(2)),
-          grossProfit: parseFloat(grossProfit.toFixed(2)),
-          profitMargin: parseFloat(profitMargin.toFixed(2)),
+          totalRevenue: +totalRevenue.toFixed(2),
+          totalCOGS: +totalCOGS.toFixed(2),
+          grossProfit: +grossProfit.toFixed(2),
+          profitMargin: +profitMargin.toFixed(2),
           totalSales: sales.length,
-          totalQuantitySold
+          totalQuantitySold,
         },
-        period: { startDate, endDate }
-      }
+        period: {
+          startDate: rangeStart?.toISOString(),
+          endDate: rangeEnd?.toISOString(),
+          filterMonth,
+          filterYear,
+        },
+      },
     });
   })
 );
+
+
 
 // @route   GET /api/v1/warehouse/analytics/profit-summary
 // @desc    Get detailed profit summary
@@ -1452,7 +1564,7 @@ router.get('/sales/export/pdf',
       if (endDate) where.createdAt.lte = new Date(endDate);
     }
     
-    if (customerId) where.customerId = customerId;
+    if (customerId) where.warehouseCustomerId = customerId;
     if (productId) where.productId = productId;
 
     // Role-based access
@@ -1465,7 +1577,7 @@ router.get('/sales/export/pdf',
       take: parseInt(limit),
       include: {
         product: { select: { name: true, productNo: true } },
-        customer: { select: { name: true } },
+        warehouseCustomer: { select: { name: true } },
         salesOfficerUser: { select: { username: true } }
       },
       orderBy: { createdAt: 'desc' }
@@ -1649,7 +1761,6 @@ router.get('/sales/export/pdf',
 // @desc    Export individual sale detail to PDF
 // @access  Private (Warehouse module access)
 router.get('/sales/:id/export/pdf',
-  param('id').custom(validateCuid('sale ID')),
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -1664,16 +1775,26 @@ router.get('/sales/:id/export/pdf',
       where.salesOfficer = req.user.id;
     }
 
-    const sale = await prisma.warehouseSale.findFirst({
-      where,
-      include: {
-        product: true,
-        customer: true,
-        salesOfficerUser: {
-          select: { username: true, role: true }
-        }
+    const { id: receiptNumber } = req.params;
+
+const sale = await prisma.warehouseSale.findFirst({
+  where: { receiptNumber },
+  include: {
+    product: true,
+    warehouseCustomer: {
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        address: true,
+        customerType: true,
+        businessName: true
       }
-    });
+    },
+    salesOfficerUser: { select: { username: true, role: true } }
+  }
+});
+
 
     if (!sale) {
       throw new NotFoundError('Sale not found');

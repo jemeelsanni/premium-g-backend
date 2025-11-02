@@ -319,7 +319,22 @@ router.post('/:debtorId/payments',
         }
       });
 
-      // 3. ✅ CREATE CASH FLOW ENTRY (INFLOW)
+      // 3. ✅ UPDATE WAREHOUSE SALE PAYMENT STATUS (FIX ADDED HERE)
+      await tx.warehouseSale.update({
+        where: { id: debtor.saleId },
+        data: {
+          paymentStatus: newStatus === 'PAID' ? 'PAID' : 'PARTIAL'
+        }
+      });
+
+      console.log('✅ Warehouse sale payment status updated:', {
+        saleId: debtor.saleId,
+        receiptNumber: debtor.sale.receiptNumber,
+        newPaymentStatus: newStatus === 'PAID' ? 'PAID' : 'PARTIAL',
+        debtorStatus: newStatus
+      });
+
+      // 4. CREATE CASH FLOW ENTRY (INFLOW)
       const cashFlowDescription = `Debt payment from ${debtor.warehouseCustomer.name} - ${debtor.sale.product.name} (Receipt: ${debtor.sale.receiptNumber})`;
       
       const cashFlowEntry = await tx.cashFlow.create({
@@ -342,7 +357,7 @@ router.post('/:debtorId/payments',
         cashFlowId: cashFlowEntry.id
       });
 
-      // 4. Update customer stats
+      // 5. Update customer stats
       const totalOutstanding = await tx.debtor.aggregate({
         where: {
           warehouseCustomerId: debtor.warehouseCustomerId,

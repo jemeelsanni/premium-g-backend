@@ -11,12 +11,14 @@ const { authorizeRole } = require('../../middleware/auth'); // Import authorizeR
 const router = express.Router();
 const prisma = new PrismaClient();
 
-// Get warehouse analytics summary
+// GET /api/v1/analytics/warehouse/summary
 router.get('/summary',
-  authorizeModule('warehouse'),
+  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN', 'WAREHOUSE_SALES_OFFICER']),
   [
     query('startDate').optional().isISO8601(),
-    query('endDate').optional().isISO8601()
+    query('endDate').optional().isISO8601(),
+    query('filterMonth').optional().isInt({ min: 1, max: 12 }),
+    query('filterYear').optional().isInt({ min: 2020 }),
   ],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -24,39 +26,83 @@ router.get('/summary',
       throw new ValidationError('Invalid query parameters', errors.array());
     }
 
-    const { startDate, endDate } = req.query;
-    
-    const dateFilter = {};
-    if (startDate) dateFilter.gte = new Date(startDate);
-    if (endDate) dateFilter.lte = new Date(endDate);
+    const { startDate, endDate, filterMonth, filterYear } = req.query;
 
-    // Get warehouse sales, cash flow, inventory, and customers
+    // Default to current month if no filters provided
+    const now = new Date();
+    let dateFilter = {};
+
+    if (filterMonth && filterYear) {
+      // Filter by specific month and year
+      const year = parseInt(filterYear);
+      const month = parseInt(filterMonth);
+      const startOfMonth = new Date(year, month - 1, 1);
+      const endOfMonth = new Date(year, month, 0, 23, 59, 59, 999);
+      
+      dateFilter = {
+        gte: startOfMonth,
+        lte: endOfMonth
+      };
+    } else if (filterYear && !filterMonth) {
+      // Filter by entire year
+      const year = parseInt(filterYear);
+      const startOfYear = new Date(year, 0, 1);
+      const endOfYear = new Date(year, 11, 31, 23, 59, 59, 999);
+      
+      dateFilter = {
+        gte: startOfYear,
+        lte: endOfYear
+      };
+    } else if (startDate || endDate) {
+      // Custom date range
+      if (startDate) dateFilter.gte = new Date(startDate);
+      if (endDate) dateFilter.lte = new Date(endDate);
+    } else {
+      // DEFAULT: Current month only (auto-reset on first day of month)
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      
+      dateFilter = {
+        gte: startOfMonth,
+        lte: endOfMonth
+      };
+    }
+
+    // Fetch data with date filter
     const [sales, cashFlow, inventory, customers] = await Promise.all([
-      prisma.warehouseSale.findMany({
-        where: {
-          createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined
-        },
-        include: {
-          product: { select: { name: true, productNo: true } }
-        }
-      }),
-      
-      prisma.cashFlow.findMany({
-        where: {
-          createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined
-        }
-      }),
-      
-      prisma.warehouseInventory.findMany({
-        include: {
-          product: { select: { name: true, productNo: true, packsPerPallet: true, pricePerPack: true } }
-        }
-      }),
+  prisma.warehouseSale.findMany({
+    where: {
+      createdAt: { ...dateFilter }   // ✅ wrap it properly
+    },
+    include: {
+      product: { select: { name: true, productNo: true } }
+    }
+  }),
 
-      prisma.warehouseCustomer.findMany({
-        select: { id: true, isActive: true }
-      })
-    ]);
+  prisma.cashFlow.findMany({
+    where: {
+      createdAt: { ...dateFilter }   // ✅ wrap properly
+    }
+  }),
+
+  prisma.warehouseInventory.findMany({
+    include: {
+      product: { select: { name: true, productNo: true, packsPerPallet: true, pricePerPack: true } }
+    }
+  }),
+
+  prisma.warehouseCustomer.findMany({
+    where: {
+      isActive: true,
+      OR: [
+        { lastPurchaseDate: { ...dateFilter } },
+        { warehouseSales: { some: { createdAt: { ...dateFilter } } } }
+      ]
+    },
+    select: { id: true, isActive: true }
+  })
+]);
+
 
     // Calculate sales metrics
     let totalRevenue = 0;
@@ -130,16 +176,14 @@ router.get('/summary',
     const averageSaleValue = sales.length > 0 ? totalRevenue / sales.length : 0;
     const netCashFlow = totalCashIn - totalCashOut;
 
-    const totalCustomers = customers.length;
-    const activeCustomers = customers.filter(customer => customer.isActive !== false).length;
+    const totalCustomers = await prisma.warehouseCustomer.count();
+    const activeCustomers = customers.length; // Active customers in the filtered period
 
-    // Top products
     const topProducts = Object.entries(productStats)
       .map(([name, stats]) => ({ productName: name, ...stats }))
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 10);
 
-    // Recent daily performance
     const dailyPerformance = Object.entries(dailySales)
       .map(([date, stats]) => ({ date, ...stats }))
       .sort((a, b) => new Date(b.date) - new Date(a.date))
@@ -171,7 +215,7 @@ router.get('/summary',
           totalItems: inventory.length,
           lowStockItems,
           outOfStockItems,
-          stockHealthPercentage: inventory.length > 0 ? 
+          stockHealthPercentage: inventory.length > 0 ?
             ((inventory.length - lowStockItems - outOfStockItems) / inventory.length) * 100 : 0
         },
 
@@ -182,7 +226,12 @@ router.get('/summary',
         
         topProducts,
         dailyPerformance,
-        period: { startDate, endDate }
+        period: { 
+          startDate: dateFilter.gte?.toISOString(), 
+          endDate: dateFilter.lte?.toISOString(),
+          filterMonth,
+          filterYear 
+        }
       }
     });
   })
