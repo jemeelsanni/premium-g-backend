@@ -220,18 +220,23 @@ router.get('/inventory', asyncHandler(async (req, res) => {
   if (productId) where.productId = productId;
   if (location) where.location = location;
 
-  // Fetch inventory
   const inventory = await prisma.warehouseInventory.findMany({
     where,
     include: { product: true },
     orderBy: { lastUpdated: 'desc' }
   });
 
-  // Transform and normalize
   let formattedInventory = inventory.map(inv => {
-    const currentStock =
-      (inv.pallets ?? 0) + (inv.packs ?? 0) + (inv.units ?? 0);
-
+    const product = inv.product;
+    const packsPerPallet = product?.packsPerPallet || 1;
+    
+    // ✅ FIXED: Convert everything to packs for consistent comparison
+    const palletsToPacks = (inv.pallets ?? 0) * packsPerPallet;
+    const currentPacks = palletsToPacks + (inv.packs ?? 0);
+    const currentUnits = inv.units ?? 0;
+    
+    // Store both for display purposes
+    const currentStock = currentPacks; // Use packs as the standard unit
     const minimumStock = inv.reorderLevel ?? 0;
     const maximumStock = inv.maxStockLevel ?? 0;
 
@@ -240,12 +245,17 @@ router.get('/inventory', asyncHandler(async (req, res) => {
       productId: inv.productId,
       product: inv.product,
       location: inv.location,
-      currentStock,
-      minimumStock,
-      maximumStock,
+      pallets: inv.pallets ?? 0,
+      packs: inv.packs ?? 0,
+      units: inv.units ?? 0,
+      currentStock, // Total in packs
+      minimumStock, // Reorder level in packs
+      maximumStock, // Max stock in packs
       lastRestocked: inv.lastUpdated ?? inv.createdAt,
       stockStatus:
-        currentStock <= minimumStock
+        currentStock === 0
+          ? 'OUT_OF_STOCK'
+          : currentStock <= minimumStock
           ? 'LOW_STOCK'
           : maximumStock && currentStock >= maximumStock
           ? 'OVERSTOCK'
@@ -256,7 +266,7 @@ router.get('/inventory', asyncHandler(async (req, res) => {
   // Optional low stock filter
   if (lowStock === 'true') {
     formattedInventory = formattedInventory.filter(
-      (inv) => inv.currentStock <= inv.minimumStock
+      (inv) => inv.currentStock <= inv.minimumStock && inv.currentStock > 0
     );
   }
 
