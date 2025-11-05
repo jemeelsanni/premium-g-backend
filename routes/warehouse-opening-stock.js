@@ -1,9 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const { prisma } = require('../config/database');
-const { asyncHandler } = require('../middleware/asyncHandler');
-const { authorizeModule, authorizeRole } = require('../middleware/auth');
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
+const { asyncHandler } = require('../middleware/errorHandler');
+const { authorizeRole } = require('../middleware/auth');
 const { query } = require('express-validator');
+
 
 /**
  * @route   GET /api/v1/warehouse/opening-stock
