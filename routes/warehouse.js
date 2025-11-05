@@ -25,6 +25,9 @@ router.use('/purchases', warehousePurchasesRouter);
 const warehouseDebtorsRouter = require('./warehouse-debtors');
 router.use('/debtors', warehouseDebtorsRouter);
 
+const warehouseOpeningStockRouter = require('./warehouse-opening-stock');
+router.use('/opening-stock', warehouseOpeningStockRouter);
+
 
 // Include discount management routes (if created)
 let checkCustomerDiscount;
