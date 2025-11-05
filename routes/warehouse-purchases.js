@@ -246,9 +246,9 @@ router.get('/',
           createdByUser: {
             select: { username: true }
           }
-        },
+        },  // ← Make sure this closing bracket exists
         orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
+        skip: (parseInt(page) - 1) * parseInt(limit),
         take: parseInt(limit)
       }),
       prisma.warehouseProductPurchase.count({ where })
@@ -262,7 +262,7 @@ router.get('/',
           page: parseInt(page),
           limit: parseInt(limit),
           total,
-          totalPages: Math.ceil(total / limit)
+          totalPages: Math.ceil(total / parseInt(limit))
         }
       }
     });
