@@ -633,10 +633,10 @@ model WarehouseSale {
   grossProfit  Decimal @map("gross_profit") @db.Decimal(10, 2)
   profitMargin Decimal @map("profit_margin") @db.Decimal(5, 2)
 
-  paymentMethod PaymentMethod @map("payment_method")
-  paymentStatus String?       @default("PAID") @map("payment_status") // PAID, CREDIT, PARTIAL
-  creditDueDate DateTime?     @map("credit_due_date")
-  creditNotes   String?       @map("credit_notes")
+  paymentMethod PaymentMethod? @map("payment_method")
+  paymentStatus String?        @default("PAID") @map("payment_status") // PAID, CREDIT, PARTIAL
+  creditDueDate DateTime?      @map("credit_due_date")
+  creditNotes   String?        @map("credit_notes")
 
   customerName  String? @map("customer_name")
   customerPhone String? @map("customer_phone")

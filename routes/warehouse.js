@@ -549,7 +549,9 @@ router.post(
             totalCost,
             grossProfit,
             profitMargin,
-            paymentMethod: isCreditSale && amountPaid > 0 ? initialPaymentMethod : paymentMethod,
+            paymentMethod: isCreditSale 
+              ? (amountPaid > 0 ? initialPaymentMethod : null)
+              : paymentMethod,            
             warehouseCustomerId: customerId,
             customerName,
             customerPhone,
