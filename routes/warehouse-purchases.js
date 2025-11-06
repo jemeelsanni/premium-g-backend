@@ -230,7 +230,7 @@ router.get('/',
       endDate
     } = req.query;
 
-    const where = { productId: { not: null } };
+    const where = { NOT: { productId: null } };
 
     if (productId) where.productId = productId;
     if (vendorName) where.vendorName = { contains: vendorName, mode: 'insensitive' };
