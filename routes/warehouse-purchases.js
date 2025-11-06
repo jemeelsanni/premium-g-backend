@@ -230,7 +230,7 @@ router.get('/',
       endDate
     } = req.query;
 
-    const where = {};
+    const where = { productId: { not: null } };
 
     if (productId) where.productId = productId;
     if (vendorName) where.vendorName = { contains: vendorName, mode: 'insensitive' };
@@ -246,13 +246,9 @@ router.get('/',
       prisma.warehouseProductPurchase.findMany({
         where,
         include: {
-          product: {
-            select: { name: true, productNo: true }
-          },
-          createdByUser: {
-            select: { username: true }
-          }
-        },  // ← Make sure this closing bracket exists
+          product: { select: { name: true, productNo: true } },
+          createdByUser: { select: { username: true } }
+        },
         orderBy: { createdAt: 'desc' },
         skip: (parseInt(page) - 1) * parseInt(limit),
         take: parseInt(limit)
@@ -260,10 +256,16 @@ router.get('/',
       prisma.warehouseProductPurchase.count({ where })
     ]);
 
+    // ✅ Ensure product object exists
+    const formattedPurchases = purchases.map(p => ({
+      ...p,
+      product: p.product || { name: 'Unknown Product', productNo: 'N/A' }
+    }));
+
     res.json({
       success: true,
       data: {
-        purchases,
+        purchases: formattedPurchases,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
@@ -274,6 +276,7 @@ router.get('/',
     });
   })
 );
+
 
 // ================================
 // GET EXPIRING PRODUCTS (within 30 days)
