@@ -78,6 +78,9 @@ router.post('/',
       }
     }
 
+    const initialBatchStatus = 'ACTIVE';
+
+
     // Use transaction to ensure atomic operations
     const result = await prisma.$transaction(async (tx) => {
       // 1. Create purchase record
