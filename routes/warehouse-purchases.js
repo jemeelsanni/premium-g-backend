@@ -287,34 +287,70 @@ router.get('/expiring',
         expiryDate: {
           gte: today,
           lte: thirtyDaysFromNow
-        }
+        },
+        batchStatus: 'ACTIVE',  // ✅ Only active batches
+        quantityRemaining: { gt: 0 }  // ✅ Only items with remaining stock
       },
       include: {
         product: {
-          select: { name: true, productNo: true }
+          select: { 
+            name: true, 
+            productNo: true,
+            pricePerPack: true,  // ✅ Need price for revenue calculation
+            costPerPack: true   // ✅ Need cost for value at risk
+          }
         }
       },
       orderBy: { expiryDate: 'asc' }
     });
 
-    // Calculate days until expiry for each
-    const purchasesWithDays = expiringPurchases.map(purchase => {
+    // Calculate days until expiry and financial metrics for each batch
+    const purchasesWithDetails = expiringPurchases.map(purchase => {
       const daysUntilExpiry = Math.ceil(
         (new Date(purchase.expiryDate) - today) / (1000 * 60 * 60 * 24)
       );
 
+      // Calculate financial impact
+      const valueAtRisk = purchase.quantityRemaining * parseFloat(purchase.costPerUnit);
+      const potentialRevenue = purchase.quantityRemaining * parseFloat(purchase.product.pricePerPack || purchase.costPerUnit * 1.2);
+      const percentageSold = purchase.quantity > 0 
+        ? ((purchase.quantitySold / purchase.quantity) * 100).toFixed(1)
+        : 0;
+
       return {
-        ...purchase,
+        id: purchase.id,
+        productName: purchase.product.name,
+        productNo: purchase.product.productNo,
+        batchNumber: purchase.batchNumber,
+        orderNumber: purchase.orderNumber,
+        expiryDate: purchase.expiryDate,
+        originalQuantity: purchase.quantity,
+        quantityRemaining: purchase.quantityRemaining,
+        quantitySold: purchase.quantitySold,
+        unitType: purchase.unitType,
+        valueAtRisk,
+        potentialRevenue,
         daysUntilExpiry,
-        urgency: daysUntilExpiry <= 7 ? 'critical' : daysUntilExpiry <= 14 ? 'high' : 'medium'
+        urgency: daysUntilExpiry <= 7 ? 'critical' : daysUntilExpiry <= 14 ? 'high' : 'medium',
+        percentageSold: parseFloat(percentageSold)
       };
     });
+
+    // ✅ Calculate summary statistics
+    const summary = {
+      totalBatchesExpiring: purchasesWithDetails.length,
+      criticalBatches: purchasesWithDetails.filter(p => p.urgency === 'critical').length,
+      highPriorityBatches: purchasesWithDetails.filter(p => p.urgency === 'high').length,
+      totalValueAtRisk: purchasesWithDetails.reduce((sum, p) => sum + p.valueAtRisk, 0),
+      totalPotentialRevenue: purchasesWithDetails.reduce((sum, p) => sum + p.potentialRevenue, 0)
+    };
 
     res.json({
       success: true,
       data: {
-        expiringPurchases: purchasesWithDays,
-        count: purchasesWithDays.length
+        expiringPurchases: purchasesWithDetails,
+        count: purchasesWithDetails.length,
+        summary  // ✅ Now including summary
       }
     });
   })
