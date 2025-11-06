@@ -233,7 +233,8 @@ router.get('/',
     const where = {};
 
     if (productId) where.productId = productId;
-    if (vendorName) where.vendorName = { contains: vendorName, mode: 'insensitive' };
+    if (vendorName)
+      where.vendorName = { contains: vendorName, mode: 'insensitive' };
     if (paymentStatus) where.paymentStatus = paymentStatus;
 
     if (startDate || endDate) {
@@ -241,6 +242,7 @@ router.get('/',
       if (startDate) where.purchaseDate.gte = new Date(startDate);
       if (endDate) where.purchaseDate.lte = new Date(endDate);
     }
+
 
     // ✅ exclude purchases without valid product only when not filtered by productId
     if (!productId) {
@@ -262,7 +264,7 @@ router.get('/',
     ]);
 
     // ✅ Ensure product object exists
-    const formattedPurchases = (purchases || []).map(p => ({
+    const formattedPurchases = purchases.map(p => ({
       ...p,
       product: p.product || { name: 'Unknown Product', productNo: 'N/A' },
     }));
