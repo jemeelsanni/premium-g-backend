@@ -204,6 +204,9 @@ const updateInventoryAfterSale = async (productId, quantity, unitType, tx) => {
 };
 
 
+
+
+
 router.use('/', warehouseCustomersRouter);
 
 // ================================
@@ -411,6 +414,105 @@ router.get('/products', asyncHandler(async (req, res) => {
 // ================================
 
 
+async function allocateSaleQuantityFEFO(tx, productId, quantityToSell, unitType) {
+  // Fetch available batches sorted by expiry date (FEFO - First Expired, First Out)
+  const availableBatches = await tx.warehouseProductPurchase.findMany({
+    where: {
+      productId,
+      unitType, // Only match batches with same unit type
+      batchStatus: 'ACTIVE',
+      quantityRemaining: { gt: 0 }
+    },
+    orderBy: [
+      { expiryDate: 'asc' }, // Expiring soon goes first
+      { purchaseDate: 'asc' } // Then FIFO for same expiry
+    ]
+  });
+
+  if (availableBatches.length === 0) {
+    throw new BusinessError('No active batches available for this product', 'NO_BATCHES');
+  }
+
+  // Calculate total available quantity
+  const totalAvailable = availableBatches.reduce(
+    (sum, batch) => sum + batch.quantityRemaining, 
+    0
+  );
+
+  if (totalAvailable < quantityToSell) {
+    throw new BusinessError(
+      `Insufficient stock. Available: ${totalAvailable}, Requested: ${quantityToSell}`,
+      'INSUFFICIENT_STOCK'
+    );
+  }
+
+  // Allocate quantity across batches
+  const allocations = [];
+  let remainingToSell = quantityToSell;
+
+  for (const batch of availableBatches) {
+    if (remainingToSell === 0) break;
+
+    const quantityFromThisBatch = Math.min(remainingToSell, batch.quantityRemaining);
+    
+    allocations.push({
+      batchId: batch.id,
+      batchNumber: batch.batchNumber,
+      expiryDate: batch.expiryDate,
+      quantityAllocated: quantityFromThisBatch,
+      newRemainingQty: batch.quantityRemaining - quantityFromThisBatch,
+      newSoldQty: batch.quantitySold + quantityFromThisBatch
+    });
+
+    remainingToSell -= quantityFromThisBatch;
+  }
+
+  return allocations;
+}
+
+/**
+ * Update batches and create batch-sale records
+ */
+async function updateBatchesAfterSale(tx, saleId, allocations) {
+  const batchSaleRecords = [];
+
+  for (const allocation of allocations) {
+    // Determine new batch status
+    let newStatus = 'ACTIVE';
+    if (allocation.newRemainingQty === 0) {
+      newStatus = 'DEPLETED';
+    }
+
+    // Update batch quantities and status
+    await tx.warehouseProductPurchase.update({
+      where: { id: allocation.batchId },
+      data: {
+        quantityRemaining: allocation.newRemainingQty,
+        quantitySold: allocation.newSoldQty,
+        batchStatus: newStatus
+      }
+    });
+
+    // Create batch-sale tracking record
+    const batchSale = await tx.warehouseBatchSale.create({
+      data: {
+        saleId,
+        batchId: allocation.batchId,
+        quantitySold: allocation.quantityAllocated
+      }
+    });
+
+    batchSaleRecords.push({
+      ...batchSale,
+      batchNumber: allocation.batchNumber,
+      expiryDate: allocation.expiryDate
+    });
+  }
+
+  return batchSaleRecords;
+}
+
+
 
 // @route   POST /api/v1/warehouse/sales
 // @desc    Create warehouse sale with automatic discount application
@@ -574,6 +676,25 @@ router.post(
           else salePaymentStatus = 'PAID';
         }
 
+        const batchAllocations = await allocateSaleQuantityFEFO(
+          tx, 
+          productId, 
+          quantity, 
+          unitType
+        );
+
+        console.log('📦 FEFO Allocations:', batchAllocations.map(b => ({
+          batch: b.batchNumber,
+          qty: b.quantityAllocated,
+          expiry: b.expiryDate
+        })));
+
+        // Calculate weighted average cost from allocated batches
+        const weightedTotalCost = batchAllocations.reduce((sum, alloc) => 
+          sum + (alloc.costPerUnit * alloc.quantityAllocated), 0
+        );
+        const calculatedCostPerUnit = weightedTotalCost / quantity;
+
         // Step 1: Create sale
         const warehouseSale = await tx.warehouseSale.create({
           data: {
@@ -582,10 +703,10 @@ router.post(
             unitType,
             unitPrice: price,
             totalAmount,
-            costPerUnit,
-            totalCost,
-            grossProfit,
-            profitMargin,
+            costPerUnit: calculatedCostPerUnit,  // Changed from: costPerUnit
+            totalCost: weightedTotalCost,         // Changed from: totalCost
+            grossProfit: totalAmount - weightedTotalCost,  // Recalculate
+            profitMargin: totalAmount > 0 ? ((totalAmount - weightedTotalCost) / totalAmount) * 100 : 0,
             paymentMethod: isCreditSale 
               ? (amountPaid > 0 ? initialPaymentMethod : null)
               : paymentMethod,            
@@ -688,6 +809,14 @@ router.post(
           });
         }
 
+        const batchSaleRecords = await updateBatchesAfterSale(
+          tx,
+          warehouseSale.id,
+          batchAllocations
+        );
+
+        console.log(`Sale used ${batchSaleRecords.length} batch(es)`)
+
         // Step 5: Customer stats
         if (customerId) {
           const amountToRecord = isCreditSale ? amountPaid : totalAmount;
@@ -738,7 +867,15 @@ router.post(
     res.status(201).json({
       success: true,
       message,
-      data: result
+      data: {
+        ...result,
+        batchesUsed: batchSaleRecords.length, // NEW
+        batchDetails: batchSaleRecords.map(b => ({  // NEW
+          batchNumber: b.batchNumber,
+          quantity: b.quantitySold,
+          expiryDate: b.expiryDate
+        }))
+      }
     });
   })
 );

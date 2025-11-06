@@ -4,11 +4,15 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const cron = require('node-cron');
 const rateLimit = require('express-rate-limit');
 const { PrismaClient, Prisma } = require('@prisma/client');
 
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 const { authenticateToken } = require('./middleware/auth');
+
+const { manageBatchStatus } = require('./jobs/batch-status-manager');
+
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -319,6 +323,26 @@ app.get('/api/system/status', authenticateToken, async (req, res) => {
     });
   }
 });
+
+cron.schedule('0 0 * * *', async () => {
+  console.log('🕐 Running scheduled batch status management...');
+  try {
+    await manageBatchStatus();
+  } catch (error) {
+    console.error('❌ Scheduled job failed:', error);
+  }
+});
+
+// Optional: Run at startup to catch any missed updates
+if (process.env.NODE_ENV === 'production') {
+  setTimeout(async () => {
+    console.log('🚀 Running initial batch status check...');
+    await manageBatchStatus();
+  }, 5000); // Wait 5 seconds after startup
+}
+
+console.log('✅ Batch status management cron job scheduled');
+
 
 // ================================
 // ROUTES - STANDALONE MODULES

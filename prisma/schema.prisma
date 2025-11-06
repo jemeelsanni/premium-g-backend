@@ -634,7 +634,7 @@ model WarehouseSale {
   profitMargin Decimal @map("profit_margin") @db.Decimal(5, 2)
 
   paymentMethod PaymentMethod? @map("payment_method")
-  paymentStatus String?        @default("PAID") @map("payment_status") // PAID, CREDIT, PARTIAL
+  paymentStatus String?        @default("PAID") @map("payment_status")
   creditDueDate DateTime?      @map("credit_due_date")
   creditNotes   String?        @map("credit_notes")
 
@@ -653,12 +653,13 @@ model WarehouseSale {
   discountReason      String?  @map("discount_reason")
   approvedBy          String?  @map("approved_by")
 
-  product           Product                 @relation(fields: [productId], references: [id])
-  warehouseCustomer WarehouseCustomer?      @relation(fields: [warehouseCustomerId], references: [id])
-  salesOfficerUser  User                    @relation(fields: [salesOfficer], references: [id])
-  discountApprover  User?                   @relation("WarehouseSaleApprovedBy", fields: [approvedBy], references: [id])
-  debtor            Debtor?
-  saleDiscounts     WarehouseSaleDiscount[]
+  product             Product                 @relation(fields: [productId], references: [id])
+  warehouseCustomer   WarehouseCustomer?      @relation(fields: [warehouseCustomerId], references: [id])
+  salesOfficerUser    User                    @relation(fields: [salesOfficer], references: [id])
+  discountApprover    User?                   @relation("WarehouseSaleApprovedBy", fields: [approvedBy], references: [id])
+  debtor              Debtor?
+  saleDiscounts       WarehouseSaleDiscount[]
+  warehouseBatchSales WarehouseBatchSale[] // ✅ KEEP THIS
 
   @@map("warehouse_sales")
 }
@@ -672,9 +673,12 @@ model WarehouseProductPurchase {
   vendorEmail String? @map("vendor_email")
 
   // Purchase Details
-  batchNumber String?   @map("batch_number") // ✅ ADD THIS
-  orderNumber String?   @map("order_number") // ✅ ADD THIS
-  expiryDate  DateTime? @map("expiry_date") // ✅ ADD THIS
+  batchNumber       String?     @map("batch_number") // ✅ ADD THIS
+  orderNumber       String?     @map("order_number") // ✅ ADD THIS
+  expiryDate        DateTime?   @map("expiry_date") // ✅ ADD THIS
+  quantityRemaining Int         @map("quantity_remaining")
+  quantitySold      Int         @default(0) @map("quantity_sold")
+  batchStatus       BatchStatus @default(ACTIVE) @map("batch_status")
 
   quantity    Int
   unitType    UnitType @map("unit_type")
@@ -695,10 +699,29 @@ model WarehouseProductPurchase {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  product       Product @relation(fields: [productId], references: [id], onDelete: Restrict)
-  createdByUser User    @relation("WarehousePurchasesCreatedBy", fields: [createdBy], references: [id])
+  product             Product              @relation(fields: [productId], references: [id], onDelete: Restrict)
+  createdByUser       User                 @relation("WarehousePurchasesCreatedBy", fields: [createdBy], references: [id])
+  warehouseBatchSales WarehouseBatchSale[]
 
+  @@index([batchStatus])
+  @@index([expiryDate, batchStatus])
+  @@index([productId, batchStatus, expiryDate])
   @@map("warehouse_product_purchases")
+}
+
+model WarehouseBatchSale {
+  id           String   @id @default(cuid())
+  saleId       String   @map("sale_id")
+  batchId      String   @map("batch_id")
+  quantitySold Int      @map("quantity_sold")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  sale  WarehouseSale            @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  batch WarehouseProductPurchase @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@index([batchId])
+  @@map("warehouse_batch_sales")
 }
 
 model WarehouseExpense {
@@ -1002,6 +1025,12 @@ enum ProductModule {
   DISTRIBUTION
   WAREHOUSE
   BOTH
+}
+
+enum BatchStatus {
+  ACTIVE
+  DEPLETED
+  EXPIRED
 }
 
 enum OrderStatus {
