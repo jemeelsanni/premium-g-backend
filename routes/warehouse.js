@@ -683,6 +683,14 @@ router.post(
           unitType
         );
 
+        // ✅ ADD VALIDATION
+        if (!batchAllocations || batchAllocations.length === 0) {
+          throw new BusinessError(
+            `Insufficient inventory for ${product.name}. Requested: ${quantity} ${unitType}`,
+            'INSUFFICIENT_INVENTORY'
+          );
+        }
+
         console.log('📦 FEFO Allocations:', batchAllocations.map(b => ({
           batch: b.batchNumber,
           qty: b.quantityAllocated,
@@ -693,7 +701,27 @@ router.post(
         const weightedTotalCost = batchAllocations.reduce((sum, alloc) => 
           sum + (alloc.costPerUnit * alloc.quantityAllocated), 0
         );
+
+        // ✅ ADD SAFETY CHECK
+        if (weightedTotalCost === 0 || !isFinite(weightedTotalCost)) {
+          console.error('❌ Invalid cost calculation:', { 
+            batchAllocations, 
+            weightedTotalCost 
+          });
+          throw new BusinessError(
+            'Unable to calculate cost. Please check batch data.',
+            'COST_CALCULATION_ERROR'
+          );
+        }
         const calculatedCostPerUnit = weightedTotalCost / quantity;
+
+        // ✅ FINAL VALIDATION
+        if (!isFinite(calculatedCostPerUnit)) {
+          throw new BusinessError(
+            'Invalid cost calculation result',
+            'INVALID_COST'
+          );
+        }
 
         // Step 1: Create sale
         const warehouseSale = await tx.warehouseSale.create({
@@ -718,7 +746,7 @@ router.post(
             customerName,
             customerPhone,
             receiptNumber,
-            salesOfficer: {  // ✅ Connect the sales officer
+            salesOfficerUser: {  // ✅ CHANGED FROM salesOfficer
               connect: { id: req.user.id }
             },
             paymentStatus: salePaymentStatus,
@@ -823,7 +851,7 @@ router.post(
 
         console.log(`Sale used ${batchSaleRecords.length} batch(es)`)
 
-        // Step 5: Customer stats
+
         if (customerId) {
           const amountToRecord = isCreditSale ? amountPaid : totalAmount;
           const stats = await tx.warehouseCustomer.update({
@@ -848,7 +876,7 @@ router.post(
         }
 
         console.log('✅✅✅ Transaction completed successfully');
-        return { warehouseSale };
+        return { warehouseSale, batchSaleRecords };
       });
 
     const result = await withReceiptConflictRetry(() => createSaleOperation());
@@ -874,13 +902,13 @@ router.post(
       success: true,
       message,
       data: {
-        ...result,
-        batchesUsed: batchSaleRecords.length, // NEW
-        batchDetails: batchSaleRecords.map(b => ({  // NEW
+        sale: result.warehouseSale,
+        batchesUsed: result.batchSaleRecords?.length || 0,
+        batchDetails: result.batchSaleRecords?.map(b => ({
           batchNumber: b.batchNumber,
           quantity: b.quantitySold,
           expiryDate: b.expiryDate
-        }))
+        })) || []
       }
     });
   })
