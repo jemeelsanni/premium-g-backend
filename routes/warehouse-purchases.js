@@ -243,12 +243,6 @@ router.get('/',
       if (endDate) where.purchaseDate.lte = new Date(endDate);
     }
 
-
-    // ✅ exclude purchases without valid product only when not filtered by productId
-    if (!productId) {
-      where.NOT = { productId: null };
-    }
-
     const [purchases, total] = await Promise.all([
       prisma.warehouseProductPurchase.findMany({
         where,
@@ -263,7 +257,6 @@ router.get('/',
       prisma.warehouseProductPurchase.count({ where })
     ]);
 
-    // ✅ Ensure product object exists
     const formattedPurchases = purchases.map(p => ({
       ...p,
       product: p.product || { name: 'Unknown Product', productNo: 'N/A' },
@@ -283,6 +276,7 @@ router.get('/',
     });
   })
 );
+
 
 
 // ================================
