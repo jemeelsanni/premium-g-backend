@@ -230,7 +230,7 @@ router.get('/',
       endDate
     } = req.query;
 
-    const where = { NOT: { productId: null } };
+    const where = {};
 
     if (productId) where.productId = productId;
     if (vendorName) where.vendorName = { contains: vendorName, mode: 'insensitive' };
@@ -240,6 +240,11 @@ router.get('/',
       where.purchaseDate = {};
       if (startDate) where.purchaseDate.gte = new Date(startDate);
       if (endDate) where.purchaseDate.lte = new Date(endDate);
+    }
+
+    // ✅ exclude purchases without valid product only when not filtered by productId
+    if (!productId) {
+      where.NOT = { productId: null };
     }
 
     const [purchases, total] = await Promise.all([
@@ -257,9 +262,9 @@ router.get('/',
     ]);
 
     // ✅ Ensure product object exists
-    const formattedPurchases = purchases.map(p => ({
+    const formattedPurchases = (purchases || []).map(p => ({
       ...p,
-      product: p.product || { name: 'Unknown Product', productNo: 'N/A' }
+      product: p.product || { name: 'Unknown Product', productNo: 'N/A' },
     }));
 
     res.json({
