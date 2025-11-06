@@ -220,53 +220,57 @@ router.get('/inventory', asyncHandler(async (req, res) => {
   if (productId) where.productId = productId;
   if (location) where.location = location;
 
+  // Fetch inventory
   const inventory = await prisma.warehouseInventory.findMany({
     where,
     include: { product: true },
     orderBy: { lastUpdated: 'desc' }
   });
 
+  // ✅ FIX: Transform with proper unit conversion
   let formattedInventory = inventory.map(inv => {
     const product = inv.product;
     const packsPerPallet = product?.packsPerPallet || 1;
     
-    // ✅ FIXED: Convert everything to packs for consistent comparison
+    // Convert everything to PACKS for consistent comparison
     const palletsToPacks = (inv.pallets ?? 0) * packsPerPallet;
-    const currentPacks = palletsToPacks + (inv.packs ?? 0);
-    const currentUnits = inv.units ?? 0;
+    const totalPacks = palletsToPacks + (inv.packs ?? 0);
     
-    // Store both for display purposes
-    const currentStock = currentPacks; // Use packs as the standard unit
-    const minimumStock = inv.reorderLevel ?? 0;
-    const maximumStock = inv.maxStockLevel ?? 0;
+    const minimumStock = inv.reorderLevel ?? 0; // Should be in packs
+    const maximumStock = inv.maxStockLevel ?? 0; // Should be in packs
+    
+    // Determine stock status based on PACKS
+    let stockStatus = 'NORMAL';
+    if (totalPacks === 0) {
+      stockStatus = 'OUT_OF_STOCK';
+    } else if (totalPacks <= minimumStock) {
+      stockStatus = 'LOW_STOCK';
+    } else if (maximumStock > 0 && totalPacks >= maximumStock) {
+      stockStatus = 'OVERSTOCK';
+    }
 
     return {
       id: inv.id,
       productId: inv.productId,
       product: inv.product,
       location: inv.location,
+      // Return individual counts for display
       pallets: inv.pallets ?? 0,
       packs: inv.packs ?? 0,
       units: inv.units ?? 0,
-      currentStock, // Total in packs
-      minimumStock, // Reorder level in packs
-      maximumStock, // Max stock in packs
+      // Calculated total in packs
+      currentStock: totalPacks,
+      minimumStock,
+      maximumStock,
       lastRestocked: inv.lastUpdated ?? inv.createdAt,
-      stockStatus:
-        currentStock === 0
-          ? 'OUT_OF_STOCK'
-          : currentStock <= minimumStock
-          ? 'LOW_STOCK'
-          : maximumStock && currentStock >= maximumStock
-          ? 'OVERSTOCK'
-          : 'NORMAL'
+      stockStatus // ✅ Now calculated correctly!
     };
   });
 
   // Optional low stock filter
   if (lowStock === 'true') {
     formattedInventory = formattedInventory.filter(
-      (inv) => inv.currentStock <= inv.minimumStock && inv.currentStock > 0
+      (inv) => inv.stockStatus === 'LOW_STOCK'
     );
   }
 
@@ -275,6 +279,7 @@ router.get('/inventory', asyncHandler(async (req, res) => {
     data: formattedInventory
   });
 }));
+
 
 
 // @route   PUT /api/v1/warehouse/inventory/:id
