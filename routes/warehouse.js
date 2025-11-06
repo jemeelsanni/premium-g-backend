@@ -698,7 +698,9 @@ router.post(
         // Step 1: Create sale
         const warehouseSale = await tx.warehouseSale.create({
           data: {
-            productId,
+            product: {
+              connect: { id: productId }  // ✅ ADD THIS
+            },
             quantity,
             unitType,
             unitPrice: price,
@@ -710,11 +712,15 @@ router.post(
             paymentMethod: isCreditSale 
               ? (amountPaid > 0 ? initialPaymentMethod : null)
               : paymentMethod,            
-            warehouseCustomerId: customerId,
+            warehouseCustomer: warehouseCustomerId ? {  // ✅ Also connect customer if present
+              connect: { id: warehouseCustomerId }
+            } : undefined,
             customerName,
             customerPhone,
             receiptNumber,
-            salesOfficer: req.user.id,
+            salesOfficer: {  // ✅ Connect the sales officer
+              connect: { id: req.user.id }
+            },
             paymentStatus: salePaymentStatus,
             creditDueDate: isCreditSale ? new Date(creditDueDate) : null,
             creditNotes: isCreditSale ? creditNotes : null
