@@ -459,6 +459,7 @@ async function allocateSaleQuantityFEFO(tx, productId, quantityToSell, unitType)
       batchId: batch.id,
       batchNumber: batch.batchNumber,
       expiryDate: batch.expiryDate,
+      costPerUnit: batch.costPerUnit, // ✅ ADD THIS LINE
       quantityAllocated: quantityFromThisBatch,
       newRemainingQty: batch.quantityRemaining - quantityFromThisBatch,
       newSoldQty: batch.quantitySold + quantityFromThisBatch
