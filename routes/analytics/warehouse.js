@@ -68,41 +68,54 @@ router.get('/summary',
       };
     }
 
-    // Fetch data with date filter
-    const [sales, cashFlow, inventory, customers] = await Promise.all([
-  prisma.warehouseSale.findMany({
-    where: {
-      createdAt: { ...dateFilter }   // ✅ wrap it properly
-    },
-    include: {
-      product: { select: { name: true, productNo: true } }
-    }
-  }),
+    // 🆕 Fetch data with date filter (added debtorStats)
+    const [sales, cashFlow, inventory, customers, debtorStats] = await Promise.all([
+      prisma.warehouseSale.findMany({
+        where: {
+          createdAt: { ...dateFilter }
+        },
+        include: {
+          product: { select: { name: true, productNo: true } }
+        }
+      }),
 
-  prisma.cashFlow.findMany({
-    where: {
-      createdAt: { ...dateFilter }   // ✅ wrap properly
-    }
-  }),
+      prisma.cashFlow.findMany({
+        where: {
+          createdAt: { ...dateFilter }
+        }
+      }),
 
-  prisma.warehouseInventory.findMany({
-    include: {
-      product: { select: { name: true, productNo: true, packsPerPallet: true, pricePerPack: true } }
-    }
-  }),
+      prisma.warehouseInventory.findMany({
+        include: {
+          product: { select: { name: true, productNo: true, packsPerPallet: true, pricePerPack: true } }
+        }
+      }),
 
-  prisma.warehouseCustomer.findMany({
-    where: {
-      isActive: true,
-      OR: [
-        { lastPurchaseDate: { ...dateFilter } },
-        { sales: { some: { createdAt: { ...dateFilter } } } }
-      ]
-    },
-    select: { id: true, isActive: true }
-  })
-]);
+      prisma.warehouseCustomer.findMany({
+        where: {
+          isActive: true,
+          OR: [
+            { lastPurchaseDate: { ...dateFilter } },
+            { sales: { some: { createdAt: { ...dateFilter } } } }
+          ]
+        },
+        select: { id: true, isActive: true }
+      }),
 
+      // 🆕 NEW: Debtor statistics
+      prisma.debtor.aggregate({
+        where: {
+          createdAt: { ...dateFilter },
+          status: { in: ['OUTSTANDING', 'PARTIAL', 'OVERDUE'] } // Only active debts
+        },
+        _sum: {
+          totalAmount: true,
+          amountPaid: true,
+          amountDue: true
+        },
+        _count: true
+      })
+    ]);
 
     // Calculate sales metrics
     let totalRevenue = 0;
@@ -197,7 +210,8 @@ router.get('/summary',
           totalCOGS: parseFloat(totalCOGS.toFixed(2)),
           grossProfit: parseFloat(grossProfit.toFixed(2)),
           profitMargin: parseFloat(profitMargin.toFixed(2)),
-          totalSales: totalQuantitySold,
+          totalSales: totalQuantitySold, // ✅ Already using totalQuantitySold (packs)
+          totalQuantitySold, // ✅ Added for clarity
           averageSaleValue: parseFloat(averageSaleValue.toFixed(2)),
           totalCustomers,
           activeCustomers
@@ -216,6 +230,14 @@ router.get('/summary',
           outOfStockItems,
           stockHealthPercentage: inventory.length > 0 ?
             ((inventory.length - lowStockItems - outOfStockItems) / inventory.length) * 100 : 0
+        },
+
+        // 🆕 NEW: Debtor summary
+        debtorSummary: {
+          totalDebtors: debtorStats._count || 0,
+          totalOutstanding: parseFloat((debtorStats._sum.amountDue || 0).toFixed(2)),
+          totalCreditSales: parseFloat((debtorStats._sum.totalAmount || 0).toFixed(2)),
+          totalPaid: parseFloat((debtorStats._sum.amountPaid || 0).toFixed(2))
         },
 
         customerSummary: {

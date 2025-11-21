@@ -1481,12 +1481,34 @@ router.get(
     };
 
     // Fetch sales with correct date range
-    const sales = await prisma.warehouseSale.findMany({
-      where: dateFilter,
-      include: { product: true },
-    });
+    const [sales, debtorStats, customers, inventory] = await Promise.all([
+      prisma.warehouseSale.findMany({
+        where: dateFilter,
+        include: { product: true },
+      }),
 
-    // Calculate metrics
+      // 🆕 Debtor statistics  
+      prisma.debtor.aggregate({
+        where: {
+          createdAt: dateFilter.createdAt,
+          status: { in: ['OUTSTANDING', 'PARTIAL', 'OVERDUE'] }
+        },
+        _sum: {
+          totalAmount: true,
+          amountPaid: true,
+          amountDue: true
+        },
+        _count: true
+      }),
+
+      prisma.warehouseCustomer.count(),
+
+      prisma.warehouseInventory.findMany({
+        include: { product: true }
+      })
+    ]);
+
+    // Calculate metrics (your existing code)
     let totalRevenue = 0;
     let totalCOGS = 0;
     let totalQuantitySold = 0;
@@ -1498,8 +1520,24 @@ router.get(
     }
 
     const grossProfit = totalRevenue - totalCOGS;
-    const profitMargin =
-      totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+    const profitMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+
+    // 🆕 Calculate inventory metrics
+    let totalStockValue = 0;
+    let lowStockItems = 0;
+    let outOfStockItems = 0;
+
+    inventory.forEach(item => {
+      const stockLevel = item.packs + (item.pallets * (item.product?.packsPerPallet || 1));
+      totalStockValue += stockLevel * parseFloat(item.product?.pricePerPack || 0);
+      
+      if (stockLevel === 0) {
+        outOfStockItems++;
+      } else if (stockLevel <= item.reorderLevel) {
+        lowStockItems++;
+      }
+    });
+    
 
     res.json({
       success: true,
@@ -1510,6 +1548,29 @@ router.get(
           grossProfit: +grossProfit.toFixed(2),
           profitMargin: +profitMargin.toFixed(2),
           totalSales: totalQuantitySold
+        },
+        debtorSummary: {
+          totalDebtors: debtorStats._count || 0,
+          totalOutstanding: parseFloat((debtorStats._sum.amountDue || 0).toFixed(2)),
+          totalCreditSales: parseFloat((debtorStats._sum.totalAmount || 0).toFixed(2)),
+          totalPaid: parseFloat((debtorStats._sum.amountPaid || 0).toFixed(2))
+        },
+
+        // 🆕 Inventory summary
+        inventory: {
+          totalStockValue: parseFloat(totalStockValue.toFixed(2)),
+          totalItems: inventory.length,
+          lowStockItems,
+          outOfStockItems,
+          stockHealthPercentage: inventory.length > 0 
+            ? parseFloat((((inventory.length - lowStockItems - outOfStockItems) / inventory.length) * 100).toFixed(2))
+            : 100
+        },
+
+        // 🆕 Customer summary
+        customerSummary: {
+          totalCustomers: customers,
+          activeCustomers: sales.length > 0 ? new Set(sales.map(s => s.warehouseCustomerId).filter(Boolean)).size : 0
         },
         period: {
           startDate: rangeStart?.toISOString(),
