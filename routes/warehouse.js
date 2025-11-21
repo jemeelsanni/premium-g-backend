@@ -293,9 +293,6 @@ router.get('/inventory', asyncHandler(async (req, res) => {
     );
   }
 
-  // 🔍 FINAL RESPONSE LOGGING
-  console.log('📤 SENDING RESPONSE:', JSON.stringify(formattedInventory, null, 2));
-
   res.json({
     success: true,
     data: formattedInventory
@@ -559,8 +556,6 @@ router.post(
       initialPaymentMethod
     } = req.body;
 
-    console.log('📥 RAW INPUT:', { providedAmountPaid, paymentMethod, initialPaymentMethod });
-
     // ============================================================================
     // 🔥 FIX: Prevent Auto-Multiplication of Partial Amount
     // ============================================================================
@@ -576,8 +571,6 @@ router.post(
         throw new ValidationError('Invalid partial payment amount');
       }
     }
-
-    console.log('✅ CLEANED amountPaid:', amountPaid);
 
     // ============================================================================
     // CUSTOMER VALIDATION
@@ -662,7 +655,6 @@ router.post(
     }
 
     const receiptNumber = providedReceiptNumber || await generateReceiptNumber();
-    console.log('💰 PAYMENT SUMMARY:', { totalAmount, amountPaid, balance: totalAmount - amountPaid });
 
     // ============================================================================
     // CREATE TRANSACTION

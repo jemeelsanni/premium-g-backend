@@ -110,9 +110,12 @@ app.use('/api/', limiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Logging
+// Logging - Only log errors and slow requests to reduce log volume
 if (process.env.NODE_ENV !== 'test') {
-  app.use(morgan('combined'));
+  // Only log requests that result in errors (4xx or 5xx status codes)
+  app.use(morgan('combined', {
+    skip: function (req, res) { return res.statusCode < 400 }
+  }));
 }
 
 // ================================

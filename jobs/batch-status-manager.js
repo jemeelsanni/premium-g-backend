@@ -75,10 +75,8 @@ async function generateExpiryAlerts() {
 
   if (criticalBatches.length > 0) {
     console.log(`⚠️  CRITICAL: ${criticalBatches.length} batches expiring within 7 days`);
-    criticalBatches.forEach(batch => {
-      const daysLeft = Math.ceil((batch.expiryDate - today) / (1000 * 60 * 60 * 24));
-      console.log(`   - ${batch.product.name} (Batch: ${batch.batchNumber}) - ${daysLeft} days, ${batch.quantityRemaining} units`);
-    });
+    // Log only a summary to reduce log volume
+    // Individual batch details should be sent via email/SMS instead
 
     // TODO: Send email/SMS alerts to warehouse managers
     // await sendExpiryAlert(criticalBatches);
