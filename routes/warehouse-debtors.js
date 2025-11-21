@@ -13,129 +13,161 @@ const { asyncHandler, ValidationError } = require('../middleware/errorHandler');
 const prisma = new PrismaClient();
 
 // ================================
-// GET ALL DEBTORS (with filters & analytics)
+// GET ALL DEBTORS (GROUPED BY CUSTOMER)
 // ================================
 router.get('/',
   authorizeModule('warehouse', 'read'),
   [
-    query('status').optional().isIn(['all', 'OUTSTANDING', 'PARTIAL', 'PAID', 'OVERDUE']),
-    query('customerId').optional().isString(),
-    query('startDate').optional().isISO8601(),
-    query('endDate').optional().isISO8601(),
-    query('page').optional().isInt({ min: 1 }),
-    query('limit').optional().isInt({ min: 1, max: 100 })
+    query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+    query('status').optional().isIn(['OUTSTANDING', 'PARTIAL', 'OVERDUE', 'PAID', 'all'])
   ],
   asyncHandler(async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      throw new ValidationError('Invalid query parameters', errors.array());
-    }
+    const { page = 1, limit = 20, status = 'all' } = req.query;
 
-    const {
-      status,
-      customerId,
-      startDate,
-      endDate,
-      page = 1,
-      limit = 20
-    } = req.query;
-
-    // Build filter
+    // Build filter for status
     const where = {};
-    
-    if (status && status !== 'all') {
+    if (status !== 'all') {
       where.status = status;
     }
-    
-    if (customerId) where.warehouseCustomerId = customerId;
-    
-    if (startDate || endDate) {
-      where.createdAt = {};
-      if (startDate) where.createdAt.gte = new Date(startDate);
-      if (endDate) where.createdAt.lte = new Date(endDate);
-    }
-
-    // Auto-update overdue status
-    await prisma.debtor.updateMany({
-      where: {
-        status: { in: ['OUTSTANDING', 'PARTIAL'] },
-        dueDate: { lt: new Date() }
-      },
-      data: { status: 'OVERDUE' }
-    });
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const [debtors, total, analytics] = await Promise.all([
-      // ✅ FIX: Use correct relation names from schema
-      prisma.debtor.findMany({
-        where,
-        skip,
-        take: parseInt(limit),
-        include: {
-          warehouseCustomer: true,  // ✅ Correct relation name
-          sale: {
-            include: {
-              product: true
-            }
-          },
-          payments: {
-            orderBy: { paymentDate: 'desc' }
+    // 🆕 NEW APPROACH: Group debtors by customer
+    const debtorsRaw = await prisma.debtor.findMany({
+      where,
+      include: {
+        warehouseCustomer: true,
+        sale: {
+          include: {
+            product: true
           }
         },
-        orderBy: [
-          { status: 'asc' },
-          { dueDate: 'asc' }
-        ]
-      }),
-      prisma.debtor.count({ where }),
-
-      // Analytics
-      prisma.debtor.groupBy({
-        by: ['status'],
-        where,
-        _sum: {
-          totalAmount: true,
-          amountPaid: true,
-          amountDue: true
-        },
-        _count: true
-      })
-    ]);
-
-    // Transform response to match frontend expectations
-    const transformedDebtors = debtors.map(debtor => ({
-      id: debtor.id,
-      totalAmount: debtor.totalAmount,
-      amountPaid: debtor.amountPaid,
-      amountDue: debtor.amountDue,
-      status: debtor.status,
-      dueDate: debtor.dueDate,
-      creditNotes: debtor.creditNotes,
-      createdAt: debtor.createdAt,
-      customer: {
-        id: debtor.warehouseCustomer.id,
-        name: debtor.warehouseCustomer.name,
-        phone: debtor.warehouseCustomer.phone,
-        email: debtor.warehouseCustomer.email,
-        customerType: debtor.warehouseCustomer.customerType
-      },
-      sale: {
-        id: debtor.sale.id,
-        receiptNumber: debtor.sale.receiptNumber,
-        createdAt: debtor.sale.createdAt,
-        productId: debtor.sale.productId,
-        quantity: debtor.sale.quantity,
-        unitType: debtor.sale.unitType,
-        product: {
-          name: debtor.sale.product.name,
-          productNo: debtor.sale.product.productNo
+        payments: {
+          orderBy: { paymentDate: 'desc' }
         }
       },
-      payments: debtor.payments
-    }));
+      orderBy: [
+        { status: 'asc' },
+        { createdAt: 'desc' }
+      ]
+    });
 
-    const summary = analytics.reduce((acc, item) => {
+    // 🆕 Group by customer
+    const customerDebtMap = new Map();
+
+    for (const debtor of debtorsRaw) {
+      const customerId = debtor.warehouseCustomerId;
+      
+      if (!customerDebtMap.has(customerId)) {
+        customerDebtMap.set(customerId, {
+          customerId,
+          customer: {
+            id: debtor.warehouseCustomer.id,
+            name: debtor.warehouseCustomer.name,
+            phone: debtor.warehouseCustomer.phone,
+            email: debtor.warehouseCustomer.email,
+            customerType: debtor.warehouseCustomer.customerType,
+            paymentReliabilityScore: debtor.warehouseCustomer.paymentReliabilityScore
+          },
+          totalAmount: 0,
+          amountPaid: 0,
+          amountDue: 0,
+          debtCount: 0,
+          sales: [], // All sales/debts for this customer
+          earliestDueDate: null,
+          latestCreatedAt: null,
+          status: 'OUTSTANDING', // Will be determined
+          allPayments: []
+        });
+      }
+
+      const customerDebt = customerDebtMap.get(customerId);
+      
+      // Aggregate amounts
+      customerDebt.totalAmount += parseFloat(debtor.totalAmount);
+      customerDebt.amountPaid += parseFloat(debtor.amountPaid);
+      customerDebt.amountDue += parseFloat(debtor.amountDue);
+      customerDebt.debtCount += 1;
+
+      // Track earliest due date
+      if (debtor.dueDate) {
+        if (!customerDebt.earliestDueDate || debtor.dueDate < customerDebt.earliestDueDate) {
+          customerDebt.earliestDueDate = debtor.dueDate;
+        }
+      }
+
+      // Track latest created date
+      if (!customerDebt.latestCreatedAt || debtor.createdAt > customerDebt.latestCreatedAt) {
+        customerDebt.latestCreatedAt = debtor.createdAt;
+      }
+
+      // Add sale details
+      customerDebt.sales.push({
+        id: debtor.id,
+        saleId: debtor.saleId,
+        receiptNumber: debtor.sale.receiptNumber,
+        product: debtor.sale.product,
+        totalAmount: parseFloat(debtor.totalAmount),
+        amountPaid: parseFloat(debtor.amountPaid),
+        amountDue: parseFloat(debtor.amountDue),
+        status: debtor.status,
+        dueDate: debtor.dueDate,
+        createdAt: debtor.createdAt
+      });
+
+      // Collect all payments
+      customerDebt.allPayments.push(...debtor.payments);
+    }
+
+    // Convert map to array and determine overall status
+    let aggregatedDebtors = Array.from(customerDebtMap.values()).map(customerDebt => {
+      // Determine overall status
+      let overallStatus = 'PAID';
+      
+      if (customerDebt.amountDue > 0) {
+        // Check if overdue
+        const now = new Date();
+        const hasOverdue = customerDebt.sales.some(sale => 
+          sale.dueDate && new Date(sale.dueDate) < now && sale.amountDue > 0
+        );
+        
+        if (hasOverdue) {
+          overallStatus = 'OVERDUE';
+        } else if (customerDebt.amountPaid > 0) {
+          overallStatus = 'PARTIAL';
+        } else {
+          overallStatus = 'OUTSTANDING';
+        }
+      }
+
+      customerDebt.status = overallStatus;
+
+      // Sort payments by date (most recent first)
+      customerDebt.allPayments.sort((a, b) => 
+        new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime()
+      );
+
+      return customerDebt;
+    });
+
+    // Apply pagination
+    const total = aggregatedDebtors.length;
+    aggregatedDebtors = aggregatedDebtors.slice(skip, skip + parseInt(limit));
+
+    // Calculate analytics
+    const analyticsData = await prisma.debtor.groupBy({
+      by: ['status'],
+      where,
+      _sum: {
+        totalAmount: true,
+        amountPaid: true,
+        amountDue: true
+      },
+      _count: true
+    });
+
+    const summary = analyticsData.reduce((acc, item) => {
       acc[item.status] = {
         count: item._count,
         totalAmount: item._sum.totalAmount || 0,
@@ -148,7 +180,7 @@ router.get('/',
     res.json({
       success: true,
       data: {
-        debtors: transformedDebtors,
+        debtors: aggregatedDebtors,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
