@@ -1509,8 +1509,7 @@ router.get(
           totalCOGS: +totalCOGS.toFixed(2),
           grossProfit: +grossProfit.toFixed(2),
           profitMargin: +profitMargin.toFixed(2),
-          totalSales: sales.length,
-          totalQuantitySold,
+          totalSales: totalQuantitySold
         },
         period: {
           startDate: rangeStart?.toISOString(),
