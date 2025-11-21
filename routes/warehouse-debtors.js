@@ -444,6 +444,217 @@ router.post('/:debtorId/payments',
   })
 );
 
+
+// ================================
+// RECORD PAYMENT FOR CUSTOMER (ALL DEBTS)
+// ================================
+router.post('/customer/:customerId/payment',
+  authorizeModule('warehouse', 'write'),
+  [
+    body('amount').isFloat({ min: 0.01 }).withMessage('Amount must be greater than 0'),
+    body('paymentMethod').isIn(['CASH', 'BANK_TRANSFER', 'CHECK', 'CARD', 'MOBILE_MONEY']),
+    body('paymentDate').isISO8601(),
+    body('referenceNumber').optional().trim(),
+    body('notes').optional().trim()
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
+    const { customerId } = req.params;
+    const { amount, paymentMethod, paymentDate, referenceNumber, notes } = req.body;
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Get all outstanding debts for this customer
+      const customerDebts = await tx.debtor.findMany({
+        where: {
+          warehouseCustomerId: customerId,
+          status: { in: ['OUTSTANDING', 'PARTIAL', 'OVERDUE'] },
+          amountDue: { gt: 0 }
+        },
+        include: {
+          warehouseCustomer: true,
+          sale: {
+            include: {
+              product: true
+            }
+          }
+        },
+        orderBy: [
+          { dueDate: 'asc' }, // Prioritize older debts
+          { createdAt: 'asc' }
+        ]
+      });
+
+      if (customerDebts.length === 0) {
+        throw new ValidationError('No outstanding debts found for this customer');
+      }
+
+      const paymentAmount = parseFloat(amount);
+      const totalOutstanding = customerDebts.reduce((sum, debt) => sum + parseFloat(debt.amountDue), 0);
+
+      if (paymentAmount > totalOutstanding) {
+        throw new ValidationError(
+          `Payment amount (₦${paymentAmount.toLocaleString()}) cannot exceed total outstanding balance (₦${totalOutstanding.toLocaleString()})`
+        );
+      }
+
+      let remainingPayment = paymentAmount;
+      const paymentsCreated = [];
+      const debtorsUpdated = [];
+      const salesUpdated = [];
+
+      // Distribute payment across debts (FIFO - oldest first)
+      for (const debt of customerDebts) {
+        if (remainingPayment <= 0) break;
+
+        const debtDue = parseFloat(debt.amountDue);
+        const paymentForThisDebt = Math.min(remainingPayment, debtDue);
+
+        // 1. Create payment record for this debt
+        const payment = await tx.debtorPayment.create({
+          data: {
+            debtorId: debt.id,
+            amount: paymentForThisDebt,
+            paymentMethod,
+            paymentDate: new Date(paymentDate),
+            referenceNumber: referenceNumber ? `${referenceNumber}-${debt.id.slice(-4)}` : undefined,
+            notes: notes || `Payment allocation: ₦${paymentForThisDebt.toLocaleString()}`,
+            receivedBy: req.user.id
+          }
+        });
+
+        paymentsCreated.push(payment);
+
+        // 2. Update debtor record
+        const newAmountPaid = parseFloat(debt.amountPaid) + paymentForThisDebt;
+        const newAmountDue = parseFloat(debt.totalAmount) - newAmountPaid;
+
+        let newStatus = debt.status;
+        if (newAmountDue <= 0) {
+          newStatus = 'PAID';
+        } else if (newAmountPaid > 0) {
+          newStatus = 'PARTIAL';
+        }
+
+        const updatedDebtor = await tx.debtor.update({
+          where: { id: debt.id },
+          data: {
+            amountPaid: newAmountPaid,
+            amountDue: newAmountDue,
+            status: newStatus
+          }
+        });
+
+        debtorsUpdated.push(updatedDebtor);
+
+        // 3. Update warehouse sale payment status
+        await tx.warehouseSale.update({
+          where: { id: debt.saleId },
+          data: {
+            paymentStatus: newStatus === 'PAID' ? 'PAID' : 'PARTIAL'
+          }
+        });
+
+        salesUpdated.push(debt.saleId);
+
+        remainingPayment -= paymentForThisDebt;
+      }
+
+      // 4. Create single cash flow entry for the entire payment
+      const customer = customerDebts[0].warehouseCustomer;
+      const cashFlowDescription = `Debt payment from ${customer.name} - Allocated across ${debtorsUpdated.length} debt(s)`;
+      
+      const cashFlowEntry = await tx.cashFlow.create({
+        data: {
+          transactionType: 'CASH_IN',
+          amount: paymentAmount,
+          paymentMethod: paymentMethod,
+          description: cashFlowDescription,
+          referenceNumber: referenceNumber || `DEBT-PAY-${Date.now()}`,
+          cashier: req.user.id,
+          module: 'WAREHOUSE'
+        }
+      });
+
+      console.log('✅ Customer debt payment processed:', {
+        customerId,
+        customerName: customer.name,
+        totalPayment: paymentAmount,
+        debtsUpdated: debtorsUpdated.length,
+        salesUpdated: salesUpdated.length,
+        cashFlowId: cashFlowEntry.id
+      });
+
+      // 5. Update customer stats
+      const totalOutstandingAfter = await tx.debtor.aggregate({
+        where: {
+          warehouseCustomerId: customerId,
+          status: { in: ['OUTSTANDING', 'PARTIAL', 'OVERDUE'] }
+        },
+        _sum: { amountDue: true }
+      });
+
+      // Calculate payment reliability
+      const allPayments = await tx.debtorPayment.count({
+        where: {
+          debtor: { warehouseCustomerId: customerId }
+        }
+      });
+
+      const latePayments = await tx.debtorPayment.count({
+        where: {
+          debtor: {
+            warehouseCustomerId: customerId,
+            dueDate: { not: null }
+          },
+          paymentDate: { gt: prisma.debtor.fields.dueDate }
+        }
+      });
+
+      const reliabilityScore = allPayments > 0
+        ? ((allPayments - latePayments) / allPayments) * 100
+        : 100;
+
+      await tx.warehouseCustomer.update({
+        where: { id: customerId },
+        data: {
+          outstandingDebt: totalOutstandingAfter._sum.amountDue || 0,
+          lastPaymentDate: new Date(paymentDate),
+          paymentReliabilityScore: reliabilityScore
+        }
+      });
+
+      return {
+        payments: paymentsCreated,
+        debtorsUpdated,
+        salesUpdated,
+        cashFlowEntry,
+        paymentAllocation: debtorsUpdated.map(d => ({
+          debtId: d.id,
+          amountAllocated: paymentsCreated.find(p => p.debtorId === d.id)?.amount || 0,
+          newStatus: d.status
+        }))
+      };
+    });
+
+    res.json({
+      success: true,
+      message: `Payment of ₦${parseFloat(amount).toLocaleString()} recorded successfully`,
+      data: {
+        totalPayment: parseFloat(amount),
+        debtsUpdated: result.debtorsUpdated.length,
+        salesUpdated: result.salesUpdated.length,
+        paymentAllocation: result.paymentAllocation,
+        cashFlowRecorded: true,
+        cashFlowId: result.cashFlowEntry.id
+      }
+    });
+  })
+);
+
 // ================================
 // GET DEBTORS ANALYTICS
 // ================================
