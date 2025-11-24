@@ -657,21 +657,24 @@ router.post('/receipt/:receiptNumber/payment',
       });
 
       // Calculate payment reliability
-      const allPayments = await tx.debtorPayment.count({
+      const allPaymentsWithDebtors = await tx.debtorPayment.findMany({
         where: {
           debtor: { warehouseCustomerId: customerId }
+        },
+        include: {
+          debtor: {
+            select: { dueDate: true }
+          }
         }
       });
 
-      const latePayments = await tx.debtorPayment.count({
-        where: {
-          debtor: {
-            warehouseCustomerId: customerId,
-            dueDate: { not: null }
-          },
-          paymentDate: { gt: prisma.debtor.fields.dueDate }
-        }
-      });
+      const allPayments = allPaymentsWithDebtors.length;
+
+      // Count late payments (payments made after due date)
+      const latePayments = allPaymentsWithDebtors.filter(payment => {
+        if (!payment.debtor.dueDate) return false;
+        return new Date(payment.paymentDate) > new Date(payment.debtor.dueDate);
+      }).length;
 
       const reliabilityScore = allPayments > 0
         ? ((allPayments - latePayments) / allPayments) * 100
@@ -869,21 +872,24 @@ router.post('/customer/:customerId/payment',
       });
 
       // Calculate payment reliability
-      const allPayments = await tx.debtorPayment.count({
+      const allPaymentsWithDebtors = await tx.debtorPayment.findMany({
         where: {
           debtor: { warehouseCustomerId: customerId }
+        },
+        include: {
+          debtor: {
+            select: { dueDate: true }
+          }
         }
       });
 
-      const latePayments = await tx.debtorPayment.count({
-        where: {
-          debtor: {
-            warehouseCustomerId: customerId,
-            dueDate: { not: null }
-          },
-          paymentDate: { gt: prisma.debtor.fields.dueDate }
-        }
-      });
+      const allPayments = allPaymentsWithDebtors.length;
+
+      // Count late payments (payments made after due date)
+      const latePayments = allPaymentsWithDebtors.filter(payment => {
+        if (!payment.debtor.dueDate) return false;
+        return new Date(payment.paymentDate) > new Date(payment.debtor.dueDate);
+      }).length;
 
       const reliabilityScore = allPayments > 0
         ? ((allPayments - latePayments) / allPayments) * 100
