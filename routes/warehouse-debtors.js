@@ -500,11 +500,28 @@ router.post('/receipt/:receiptNumber/payment',
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      throw new ValidationError('Invalid input data', errors.array());
+      console.error('❌ Receipt payment validation failed:', {
+        receiptNumber: req.params.receiptNumber,
+        body: req.body,
+        errors: errors.array()
+      });
+      return res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        message: 'Invalid payment data',
+        details: errors.array()
+      });
     }
 
     const { receiptNumber } = req.params;
     const { amount, paymentMethod, paymentDate, referenceNumber, notes } = req.body;
+
+    console.log('✅ Receipt payment validation passed:', {
+      receiptNumber,
+      amount,
+      paymentMethod,
+      paymentDate
+    });
 
     const result = await prisma.$transaction(async (tx) => {
       // Get all debtors for this receipt
