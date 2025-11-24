@@ -13,7 +13,7 @@ const { asyncHandler, ValidationError } = require('../middleware/errorHandler');
 const prisma = new PrismaClient();
 
 // ================================
-// GET ALL DEBTORS (PER SALE/RECEIPT)
+// GET ALL DEBTORS (GROUPED BY RECEIPT)
 // ================================
 router.get('/',
   authorizeModule('warehouse', 'read'),
@@ -31,16 +31,9 @@ router.get('/',
       where.status = status;
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    // Count total for pagination
-    const total = await prisma.debtor.count({ where });
-
-    // Get debtors per sale/receipt (no grouping by customer)
+    // Get all debtors with their sales
     const debtors = await prisma.debtor.findMany({
       where,
-      skip,
-      take: parseInt(limit),
       include: {
         warehouseCustomer: {
           select: {
@@ -61,6 +54,8 @@ router.get('/',
             unitPrice: true,
             totalAmount: true,
             createdAt: true,
+            paymentMethod: true,
+            paymentStatus: true,
             product: {
               select: {
                 id: true,
@@ -75,52 +70,131 @@ router.get('/',
         }
       },
       orderBy: [
-        { status: 'asc' },
         { createdAt: 'desc' }
       ]
     });
 
-    // Transform debtors to show per sale/receipt
-    const debtorsPerSale = debtors.map(debtor => ({
-      id: debtor.id,
-      saleId: debtor.saleId,
-      receiptNumber: debtor.sale.receiptNumber,
-      customer: {
-        id: debtor.warehouseCustomer.id,
-        name: debtor.warehouseCustomer.name,
-        phone: debtor.warehouseCustomer.phone,
-        email: debtor.warehouseCustomer.email,
-        customerType: debtor.warehouseCustomer.customerType,
-        paymentReliabilityScore: debtor.warehouseCustomer.paymentReliabilityScore
-      },
-      sale: {
-        id: debtor.sale.id,
-        receiptNumber: debtor.sale.receiptNumber,
+    // Group debtors by receiptNumber
+    const receiptMap = new Map();
+
+    for (const debtor of debtors) {
+      const receiptNumber = debtor.sale.receiptNumber;
+
+      if (!receiptMap.has(receiptNumber)) {
+        receiptMap.set(receiptNumber, {
+          receiptNumber,
+          customer: {
+            id: debtor.warehouseCustomer.id,
+            name: debtor.warehouseCustomer.name,
+            phone: debtor.warehouseCustomer.phone,
+            email: debtor.warehouseCustomer.email,
+            customerType: debtor.warehouseCustomer.customerType,
+            paymentReliabilityScore: debtor.warehouseCustomer.paymentReliabilityScore
+          },
+          totalAmount: 0,
+          amountPaid: 0,
+          amountDue: 0,
+          status: 'OUTSTANDING',
+          dueDate: debtor.dueDate,
+          createdAt: debtor.sale.createdAt,
+          paymentMethod: debtor.sale.paymentMethod,
+          products: [],
+          debtorIds: [],
+          allPayments: []
+        });
+      }
+
+      const receipt = receiptMap.get(receiptNumber);
+
+      // Aggregate amounts
+      receipt.totalAmount += parseFloat(debtor.totalAmount);
+      receipt.amountPaid += parseFloat(debtor.amountPaid);
+      receipt.amountDue += parseFloat(debtor.amountDue);
+
+      // Track debtor IDs for payment
+      receipt.debtorIds.push(debtor.id);
+
+      // Add product details
+      receipt.products.push({
+        debtorId: debtor.id,
+        saleId: debtor.saleId,
         product: debtor.sale.product,
         quantity: debtor.sale.quantity,
         unitType: debtor.sale.unitType,
         unitPrice: parseFloat(debtor.sale.unitPrice),
-        totalAmount: parseFloat(debtor.sale.totalAmount),
-        createdAt: debtor.sale.createdAt
-      },
-      totalAmount: parseFloat(debtor.totalAmount),
-      amountPaid: parseFloat(debtor.amountPaid),
-      amountDue: parseFloat(debtor.amountDue),
-      status: debtor.status,
-      dueDate: debtor.dueDate,
-      createdAt: debtor.createdAt,
-      updatedAt: debtor.updatedAt,
-      payments: debtor.payments.map(payment => ({
-        id: payment.id,
-        amount: parseFloat(payment.amount),
-        paymentMethod: payment.paymentMethod,
-        paymentDate: payment.paymentDate,
-        referenceNumber: payment.referenceNumber,
-        notes: payment.notes
-      })),
-      paymentCount: debtor.payments.length,
-      lastPaymentDate: debtor.payments.length > 0 ? debtor.payments[0].paymentDate : null
-    }));
+        totalAmount: parseFloat(debtor.totalAmount),
+        amountPaid: parseFloat(debtor.amountPaid),
+        amountDue: parseFloat(debtor.amountDue),
+        status: debtor.status
+      });
+
+      // Collect all payments (deduplicate if needed)
+      receipt.allPayments.push(...debtor.payments);
+    }
+
+    // Convert map to array and determine overall status for each receipt
+    let groupedDebtors = Array.from(receiptMap.values()).map(receipt => {
+      // Determine overall status for the receipt
+      let overallStatus = 'PAID';
+
+      if (receipt.amountDue > 0) {
+        const now = new Date();
+        const isOverdue = receipt.dueDate && new Date(receipt.dueDate) < now;
+
+        if (isOverdue) {
+          overallStatus = 'OVERDUE';
+        } else if (receipt.amountPaid > 0) {
+          overallStatus = 'PARTIAL';
+        } else {
+          overallStatus = 'OUTSTANDING';
+        }
+      }
+
+      receipt.status = overallStatus;
+
+      // Deduplicate and sort payments
+      const paymentMap = new Map();
+      receipt.allPayments.forEach(payment => {
+        if (!paymentMap.has(payment.id)) {
+          paymentMap.set(payment.id, payment);
+        }
+      });
+
+      receipt.allPayments = Array.from(paymentMap.values())
+        .sort((a, b) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime())
+        .map(payment => ({
+          id: payment.id,
+          amount: parseFloat(payment.amount),
+          paymentMethod: payment.paymentMethod,
+          paymentDate: payment.paymentDate,
+          referenceNumber: payment.referenceNumber,
+          notes: payment.notes
+        }));
+
+      receipt.paymentCount = receipt.allPayments.length;
+      receipt.lastPaymentDate = receipt.allPayments.length > 0 ? receipt.allPayments[0].paymentDate : null;
+      receipt.productCount = receipt.products.length;
+
+      return receipt;
+    });
+
+    // Apply status filter if needed
+    if (status !== 'all') {
+      groupedDebtors = groupedDebtors.filter(receipt => receipt.status === status);
+    }
+
+    // Sort by status and date
+    groupedDebtors.sort((a, b) => {
+      const statusOrder = { OVERDUE: 0, OUTSTANDING: 1, PARTIAL: 2, PAID: 3 };
+      const statusDiff = statusOrder[a.status] - statusOrder[b.status];
+      if (statusDiff !== 0) return statusDiff;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+
+    // Apply pagination
+    const total = groupedDebtors.length;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const paginatedDebtors = groupedDebtors.slice(skip, skip + parseInt(limit));
 
     // Calculate analytics
     const analyticsData = await prisma.debtor.groupBy({
@@ -147,7 +221,7 @@ router.get('/',
     res.json({
       success: true,
       data: {
-        debtors: debtorsPerSale,
+        debtors: paginatedDebtors,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
@@ -411,6 +485,219 @@ router.post('/:debtorId/payments',
   })
 );
 
+// ================================
+// RECORD PAYMENT FOR RECEIPT (ALL PRODUCTS)
+// ================================
+router.post('/receipt/:receiptNumber/payment',
+  authorizeModule('warehouse', 'write'),
+  [
+    body('amount').isFloat({ min: 0.01 }).withMessage('Amount must be greater than 0'),
+    body('paymentMethod').isIn(['CASH', 'BANK_TRANSFER', 'CHECK', 'CARD', 'MOBILE_MONEY']),
+    body('paymentDate').isISO8601(),
+    body('referenceNumber').optional().trim(),
+    body('notes').optional().trim()
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
+    const { receiptNumber } = req.params;
+    const { amount, paymentMethod, paymentDate, referenceNumber, notes } = req.body;
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Get all debtors for this receipt
+      const receiptDebtors = await tx.debtor.findMany({
+        where: {
+          sale: {
+            receiptNumber: receiptNumber
+          },
+          status: { in: ['OUTSTANDING', 'PARTIAL', 'OVERDUE'] },
+          amountDue: { gt: 0 }
+        },
+        include: {
+          warehouseCustomer: true,
+          sale: {
+            include: {
+              product: true
+            }
+          }
+        },
+        orderBy: [
+          { createdAt: 'asc' }
+        ]
+      });
+
+      if (receiptDebtors.length === 0) {
+        throw new ValidationError(`No outstanding debts found for receipt: ${receiptNumber}`);
+      }
+
+      const paymentAmount = parseFloat(amount);
+      const totalOutstanding = receiptDebtors.reduce((sum, debt) => sum + parseFloat(debt.amountDue), 0);
+
+      if (paymentAmount > totalOutstanding) {
+        throw new ValidationError(
+          `Payment amount (₦${paymentAmount.toLocaleString()}) cannot exceed total outstanding balance (₦${totalOutstanding.toLocaleString()})`
+        );
+      }
+
+      let remainingPayment = paymentAmount;
+      const paymentsCreated = [];
+      const debtorsUpdated = [];
+      const salesUpdated = [];
+
+      // Distribute payment across debts (FIFO - oldest first)
+      for (const debt of receiptDebtors) {
+        if (remainingPayment <= 0) break;
+
+        const debtDue = parseFloat(debt.amountDue);
+        const paymentForThisDebt = Math.min(remainingPayment, debtDue);
+
+        // 1. Create payment record for this debt
+        const payment = await tx.debtorPayment.create({
+          data: {
+            debtorId: debt.id,
+            amount: paymentForThisDebt,
+            paymentMethod,
+            paymentDate: new Date(paymentDate),
+            referenceNumber: referenceNumber ? `${referenceNumber}-${debt.id.slice(-4)}` : undefined,
+            notes: notes || `Payment allocation: ₦${paymentForThisDebt.toLocaleString()}`,
+            receivedBy: req.user.id
+          }
+        });
+
+        paymentsCreated.push(payment);
+
+        // 2. Update debtor record
+        const newAmountPaid = parseFloat(debt.amountPaid) + paymentForThisDebt;
+        const newAmountDue = parseFloat(debt.totalAmount) - newAmountPaid;
+
+        let newStatus = debt.status;
+        if (newAmountDue <= 0) {
+          newStatus = 'PAID';
+        } else if (newAmountPaid > 0) {
+          newStatus = 'PARTIAL';
+        }
+
+        const updatedDebtor = await tx.debtor.update({
+          where: { id: debt.id },
+          data: {
+            amountPaid: newAmountPaid,
+            amountDue: newAmountDue,
+            status: newStatus
+          }
+        });
+
+        debtorsUpdated.push(updatedDebtor);
+
+        // 3. Update warehouse sale payment status
+        await tx.warehouseSale.update({
+          where: { id: debt.saleId },
+          data: {
+            paymentStatus: newStatus === 'PAID' ? 'PAID' : 'PARTIAL'
+          }
+        });
+
+        salesUpdated.push(debt.saleId);
+
+        remainingPayment -= paymentForThisDebt;
+      }
+
+      // 4. Create single cash flow entry for the entire payment
+      const customer = receiptDebtors[0].warehouseCustomer;
+      const cashFlowDescription = `Debt payment from ${customer.name} - Receipt: ${receiptNumber} (${debtorsUpdated.length} product${debtorsUpdated.length > 1 ? 's' : ''})`;
+
+      const cashFlowEntry = await tx.cashFlow.create({
+        data: {
+          transactionType: 'CASH_IN',
+          amount: paymentAmount,
+          paymentMethod: paymentMethod,
+          description: cashFlowDescription,
+          referenceNumber: referenceNumber || `DEBT-PAY-${receiptNumber}`,
+          cashier: req.user.id,
+          module: 'WAREHOUSE'
+        }
+      });
+
+      console.log('✅ Receipt debt payment processed:', {
+        receiptNumber,
+        customerName: customer.name,
+        totalPayment: paymentAmount,
+        debtsUpdated: debtorsUpdated.length,
+        salesUpdated: salesUpdated.length,
+        cashFlowId: cashFlowEntry.id
+      });
+
+      // 5. Update customer stats
+      const customerId = receiptDebtors[0].warehouseCustomerId;
+      const totalOutstandingAfter = await tx.debtor.aggregate({
+        where: {
+          warehouseCustomerId: customerId,
+          status: { in: ['OUTSTANDING', 'PARTIAL', 'OVERDUE'] }
+        },
+        _sum: { amountDue: true }
+      });
+
+      // Calculate payment reliability
+      const allPayments = await tx.debtorPayment.count({
+        where: {
+          debtor: { warehouseCustomerId: customerId }
+        }
+      });
+
+      const latePayments = await tx.debtorPayment.count({
+        where: {
+          debtor: {
+            warehouseCustomerId: customerId,
+            dueDate: { not: null }
+          },
+          paymentDate: { gt: prisma.debtor.fields.dueDate }
+        }
+      });
+
+      const reliabilityScore = allPayments > 0
+        ? ((allPayments - latePayments) / allPayments) * 100
+        : 100;
+
+      await tx.warehouseCustomer.update({
+        where: { id: customerId },
+        data: {
+          outstandingDebt: totalOutstandingAfter._sum.amountDue || 0,
+          lastPaymentDate: new Date(paymentDate),
+          paymentReliabilityScore: reliabilityScore
+        }
+      });
+
+      return {
+        payments: paymentsCreated,
+        debtorsUpdated,
+        salesUpdated,
+        cashFlowEntry,
+        receiptNumber,
+        paymentAllocation: debtorsUpdated.map(d => ({
+          debtId: d.id,
+          amountAllocated: paymentsCreated.find(p => p.debtorId === d.id)?.amount || 0,
+          newStatus: d.status
+        }))
+      };
+    });
+
+    res.json({
+      success: true,
+      message: `Payment of ₦${parseFloat(amount).toLocaleString()} recorded successfully for receipt ${receiptNumber}`,
+      data: {
+        receiptNumber: result.receiptNumber,
+        totalPayment: parseFloat(amount),
+        debtsUpdated: result.debtorsUpdated.length,
+        salesUpdated: result.salesUpdated.length,
+        paymentAllocation: result.paymentAllocation,
+        cashFlowRecorded: true,
+        cashFlowId: result.cashFlowEntry.id
+      }
+    });
+  })
+);
 
 // ================================
 // RECORD PAYMENT FOR CUSTOMER (ALL DEBTS)
