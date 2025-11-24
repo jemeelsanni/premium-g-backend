@@ -68,14 +68,15 @@ router.get('/summary',
       };
     }
 
-    // 🆕 Fetch data with date filter (added debtorStats)
-    const [sales, cashFlow, inventory, customers, debtorStats] = await Promise.all([
+    // 🆕 Fetch data with date filter (added debtorStats, expenses, expensesByType, customerSales)
+    const [sales, cashFlow, inventory, customers, debtorStats, expenses, expensesByType, customerSales] = await Promise.all([
       prisma.warehouseSale.findMany({
         where: {
           createdAt: { ...dateFilter }
         },
         include: {
-          product: { select: { name: true, productNo: true } }
+          product: { select: { name: true, productNo: true } },
+          warehouseCustomer: { select: { id: true, name: true } }
         }
       }),
 
@@ -114,6 +115,44 @@ router.get('/summary',
           amountDue: true
         },
         _count: true
+      }),
+
+      // 🆕 NEW: Warehouse expenses (approved only)
+      prisma.warehouseExpense.aggregate({
+        where: {
+          expenseDate: { ...dateFilter },
+          status: 'APPROVED' // Only count approved expenses
+        },
+        _sum: {
+          amount: true
+        }
+      }),
+
+      // 🆕 NEW: Expense breakdown by type
+      prisma.warehouseExpense.groupBy({
+        by: ['expenseType'],
+        where: {
+          expenseDate: { ...dateFilter },
+          status: 'APPROVED'
+        },
+        _sum: {
+          amount: true
+        }
+      }),
+
+      // 🆕 NEW: Customer sales aggregation
+      prisma.warehouseSale.groupBy({
+        by: ['warehouseCustomerId'],
+        where: {
+          createdAt: { ...dateFilter },
+          warehouseCustomerId: { not: null }
+        },
+        _sum: {
+          totalAmount: true,
+          totalCost: true,
+          grossProfit: true
+        },
+        _count: true
       })
     ]);
 
@@ -127,7 +166,7 @@ router.get('/summary',
     sales.forEach(sale => {
       const revenue = parseFloat(sale.totalAmount);
       const cost = parseFloat(sale.totalCost);
-      
+
       totalRevenue += revenue;
       totalCOGS += cost;
       totalQuantitySold += sale.quantity;
@@ -135,17 +174,19 @@ router.get('/summary',
       // Product statistics
       const productName = sale.product?.name || 'Unknown Product';
       if (!productStats[productName]) {
-        productStats[productName] = { 
-          sales: 0, 
-          revenue: 0, 
-          quantity: 0, 
-          profit: 0 
+        productStats[productName] = {
+          sales: 0,
+          revenue: 0,
+          cogs: 0,
+          quantity: 0,
+          grossProfit: 0
         };
       }
       productStats[productName].sales += 1;
       productStats[productName].revenue += revenue;
+      productStats[productName].cogs += cost;
       productStats[productName].quantity += sale.quantity;
-      productStats[productName].profit += parseFloat(sale.grossProfit);
+      productStats[productName].grossProfit += parseFloat(sale.grossProfit);
 
       // Daily sales tracking
       const saleDate = sale.createdAt.toISOString().split('T')[0];
@@ -192,9 +233,98 @@ router.get('/summary',
     const totalCustomers = await prisma.warehouseCustomer.count();
     const activeCustomers = customers.length; // Active customers in the filtered period
 
+    // 🆕 NEW: Net Profitability Calculations
+    const totalExpenses = parseFloat(expenses._sum.amount || 0);
+    const netProfit = grossProfit - totalExpenses;
+    const netProfitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+
+    // Cost ratios
+    const cogsRatio = totalRevenue > 0 ? (totalCOGS / totalRevenue) * 100 : 0;
+    const expenseRatio = totalRevenue > 0 ? (totalExpenses / totalRevenue) * 100 : 0;
+
+    // Efficiency metrics
+    const revenuePerCustomer = activeCustomers > 0 ? totalRevenue / activeCustomers : 0;
+    const profitPerSale = sales.length > 0 ? netProfit / sales.length : 0;
+
+    // 🆕 NEW: Expense Breakdown by Category
+    const expenseBreakdown = expensesByType.reduce((acc, item) => {
+      const category = item.expenseType.toLowerCase();
+      acc[category] = parseFloat(item._sum.amount || 0);
+      return acc;
+    }, {});
+
+    // 🆕 NEW: Top Products with Net Profit (allocate expenses proportionally)
     const topProducts = Object.entries(productStats)
-      .map(([name, stats]) => ({ productName: name, ...stats }))
-      .sort((a, b) => b.revenue - a.revenue)
+      .map(([name, stats]) => {
+        const allocatedExpenses = totalRevenue > 0
+          ? (stats.revenue / totalRevenue) * totalExpenses
+          : 0;
+        const netProfit = stats.grossProfit - allocatedExpenses;
+        const netProfitMargin = stats.revenue > 0
+          ? (netProfit / stats.revenue) * 100
+          : 0;
+
+        return {
+          productName: name,
+          sales: stats.sales,
+          revenue: parseFloat(stats.revenue.toFixed(2)),
+          cogs: parseFloat(stats.cogs.toFixed(2)),
+          quantity: stats.quantity,
+          grossProfit: parseFloat(stats.grossProfit.toFixed(2)),
+          allocatedExpenses: parseFloat(allocatedExpenses.toFixed(2)),
+          netProfit: parseFloat(netProfit.toFixed(2)),
+          netProfitMargin: parseFloat(netProfitMargin.toFixed(2))
+        };
+      })
+      .sort((a, b) => b.netProfit - a.netProfit)
+      .slice(0, 10);
+
+    // 🆕 NEW: Top Profitable Customers
+    const profitableCustomers = await Promise.all(
+      customerSales
+        .map(async (customerSale) => {
+          if (!customerSale.warehouseCustomerId) return null;
+
+          const customer = await prisma.warehouseCustomer.findUnique({
+            where: { id: customerSale.warehouseCustomerId },
+            select: {
+              id: true,
+              name: true,
+              outstandingDebt: true
+            }
+          });
+
+          if (!customer) return null;
+
+          const revenue = parseFloat(customerSale._sum.totalAmount || 0);
+          const cogs = parseFloat(customerSale._sum.totalCost || 0);
+          const grossProfit = parseFloat(customerSale._sum.grossProfit || 0);
+
+          // Allocate expenses proportionally to this customer
+          const allocatedExpenses = totalRevenue > 0
+            ? (revenue / totalRevenue) * totalExpenses
+            : 0;
+          const netProfit = grossProfit - allocatedExpenses;
+          const netProfitMargin = revenue > 0 ? (netProfit / revenue) * 100 : 0;
+
+          return {
+            customerId: customer.id,
+            customerName: customer.name,
+            orderCount: customerSale._count,
+            revenue: parseFloat(revenue.toFixed(2)),
+            cogs: parseFloat(cogs.toFixed(2)),
+            grossProfit: parseFloat(grossProfit.toFixed(2)),
+            allocatedExpenses: parseFloat(allocatedExpenses.toFixed(2)),
+            netProfit: parseFloat(netProfit.toFixed(2)),
+            netProfitMargin: parseFloat(netProfitMargin.toFixed(2)),
+            outstandingDebt: parseFloat(customer.outstandingDebt || 0)
+          };
+        })
+    );
+
+    const topCustomers = profitableCustomers
+      .filter(c => c !== null)
+      .sort((a, b) => b.netProfit - a.netProfit)
       .slice(0, 10);
 
     const dailyPerformance = Object.entries(dailySales)
@@ -206,30 +336,54 @@ router.get('/summary',
       success: true,
       data: {
         summary: {
+          // Revenue & Costs
           totalRevenue: parseFloat(totalRevenue.toFixed(2)),
           totalCOGS: parseFloat(totalCOGS.toFixed(2)),
+          totalExpenses: parseFloat(totalExpenses.toFixed(2)),
+
+          // Profitability
           grossProfit: parseFloat(grossProfit.toFixed(2)),
-          profitMargin: parseFloat(profitMargin.toFixed(2)),
-          totalSales: totalQuantitySold, // ✅ Already using totalQuantitySold (packs)
-          totalQuantitySold, // ✅ Added for clarity
+          netProfit: parseFloat(netProfit.toFixed(2)),
+          grossProfitMargin: parseFloat(profitMargin.toFixed(2)),
+          netProfitMargin: parseFloat(netProfitMargin.toFixed(2)),
+
+          // Cost Ratios
+          cogsRatio: parseFloat(cogsRatio.toFixed(2)),
+          expenseRatio: parseFloat(expenseRatio.toFixed(2)),
+
+          // Sales Metrics
+          totalSales: sales.length,
+          totalQuantitySold,
           averageSaleValue: parseFloat(averageSaleValue.toFixed(2)),
+
+          // Efficiency Metrics
+          revenuePerCustomer: parseFloat(revenuePerCustomer.toFixed(2)),
+          profitPerSale: parseFloat(profitPerSale.toFixed(2)),
+
+          // Customer Metrics
           totalCustomers,
           activeCustomers
         },
-        
+
         cashFlow: {
           totalCashIn: parseFloat(totalCashIn.toFixed(2)),
           totalCashOut: parseFloat(totalCashOut.toFixed(2)),
           netCashFlow: parseFloat(netCashFlow.toFixed(2))
         },
-        
+
         inventory: {
           totalStockValue: parseFloat(totalStockValue.toFixed(2)),
           totalItems: inventory.length,
           lowStockItems,
           outOfStockItems,
           stockHealthPercentage: inventory.length > 0 ?
-            ((inventory.length - lowStockItems - outOfStockItems) / inventory.length) * 100 : 0
+            parseFloat(((inventory.length - lowStockItems - outOfStockItems) / inventory.length * 100).toFixed(2)) : 0
+        },
+
+        // 🆕 NEW: Expense Breakdown
+        expenseBreakdown: {
+          total: parseFloat(totalExpenses.toFixed(2)),
+          byCategory: expenseBreakdown
         },
 
         // 🆕 NEW: Debtor summary
@@ -244,14 +398,19 @@ router.get('/summary',
           totalCustomers,
           activeCustomers
         },
-        
+
+        // 🆕 ENHANCED: Top products now include net profit
         topProducts,
+
+        // 🆕 NEW: Top profitable customers
+        topCustomers,
+
         dailyPerformance,
-        period: { 
-          startDate: dateFilter.gte?.toISOString(), 
+        period: {
+          startDate: dateFilter.gte?.toISOString(),
           endDate: dateFilter.lte?.toISOString(),
           filterMonth,
-          filterYear 
+          filterYear
         }
       }
     });
