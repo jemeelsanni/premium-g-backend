@@ -137,9 +137,9 @@ export const WarehouseDashboard: React.FC = () => {
         );
     }
 
-    const summary = (stats?.data?.summary ?? stats?.summary ?? {}) as Record<string, unknown>;
-    const inventorySummary = (stats?.data?.inventory ?? stats?.inventory ?? {}) as Record<string, unknown>;
-    const customerSummary = (stats?.data?.customerSummary ?? stats?.customerSummary ?? {}) as Record<string, unknown>;
+    const summary = (stats?.data?.summary ?? {}) as Record<string, unknown>;
+    const inventorySummary = (stats?.data?.inventory ?? {}) as Record<string, unknown>;
+    const customerSummary = (stats?.data?.customerSummary ?? {}) as Record<string, unknown>;
     const debtorSummary = (stats?.data?.debtorSummary ?? {}) as Record<string, unknown>;
     const expenseBreakdown = (stats?.data?.expenseBreakdown ?? { total: 0, byCategory: {} }) as { total: number; byCategory: Record<string, number> };
 
@@ -158,8 +158,7 @@ export const WarehouseDashboard: React.FC = () => {
     );
 
     const activeCustomerCount = parseNumber(
-        (customerSummary as { activeCustomers?: unknown })?.activeCustomers
-        ?? (summary as { activeCustomers?: unknown })?.activeCustomers,
+        (customerSummary as { activeCustomers?: unknown })?.activeCustomers,
         customersList?.active ?? 0
     );
 
