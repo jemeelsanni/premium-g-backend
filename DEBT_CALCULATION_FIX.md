@@ -1,12 +1,23 @@
-# Debt Calculation Fix - Frontend Issue
+# Debt Calculation Fix - Backend AND Frontend Issues
 
 ## Problem Summary
 Outstanding debt on sale details and debtor pages is calculating incorrectly after sales are created. The issue occurs when:
 1. Multiple products are added to the cart
-2. Some products have discounts applied
+2. Some products have discounts applied (or not)
 3. A partial payment is made on a credit sale
 
-## Root Cause
+## Root Causes (TWO BUGS!)
+
+### Bug #1: Backend - Not Aggregating Debtor Amounts ⚠️ CRITICAL
+The backend endpoint `/api/v1/warehouse/sales/receipt/:receiptNumber` only captured debtor info from the **first sale** in a receipt, instead of summing amounts from ALL sales.
+
+**Example:**
+- Cart: Item A (₦24,000) + Item B (₦48,000) = ₦72,000 total
+- Partial payment: ₦60,000
+- Creates 2 sales: Sale A (paid ₦20,000) + Sale B (paid ₦40,000)
+- **Bug:** Sale details page showed ₦20,000 paid instead of ₦60,000 (only showing Sale A's payment)
+
+### Bug #2: Frontend - Wrong Payment Proportions (when discounts exist)
 In `CreateSale.tsx`, the proportional payment allocation uses **original prices** instead of **discounted prices** when calculating how much of the partial payment should be allocated to each product.
 
 ### Bug Location
@@ -75,9 +86,59 @@ BACKEND RECEIVES:
 - Sale B: totalAmount=₦1000, amountPaid=₦500 → amountDue=₦500 ✅
 ```
 
-## The Fix
+## The Fixes
 
-### Solution
+### Backend Fix (✅ ALREADY APPLIED)
+**File:** `/routes/warehouse.js` (lines 1241-1265)
+
+**What Changed:** Modified the receipt aggregation logic to sum debtor amounts from ALL sales in a receipt.
+
+**Before:**
+```javascript
+// ❌ Only captured first debtor
+if (sale.debtor && !aggregatedSale.debtor) {
+    aggregatedSale.debtor = {
+        id: sale.debtor.id,
+        amountPaid: Number(sale.debtor.amountPaid),  // Only first sale!
+        amountDue: Number(sale.debtor.amountDue),    // Only first sale!
+        status: sale.debtor.status,
+        dueDate: sale.debtor.dueDate
+    };
+}
+```
+
+**After:**
+```javascript
+// ✅ Aggregates ALL debtor amounts
+if (sale.debtor) {
+    if (!aggregatedSale.debtor) {
+        aggregatedSale.debtor = {
+            id: sale.debtor.id,
+            amountPaid: 0,
+            amountDue: 0,
+            status: sale.debtor.status,
+            dueDate: sale.debtor.dueDate
+        };
+    }
+
+    // Sum amounts from all sales
+    aggregatedSale.debtor.amountPaid += Number(sale.debtor.amountPaid);
+    aggregatedSale.debtor.amountDue += Number(sale.debtor.amountDue);
+
+    // Update status to worst case
+    const statusPriority = { 'OVERDUE': 4, 'PARTIAL': 3, 'OUTSTANDING': 2, 'PAID': 1 };
+    if (statusPriority[sale.debtor.status] > statusPriority[aggregatedSale.debtor.status]) {
+        aggregatedSale.debtor.status = sale.debtor.status;
+    }
+}
+```
+
+**Impact:** This fixes the immediate issue where sale details page shows wrong amounts. Your scenario (₦60,000 paid, ₦12,000 due) should now display correctly!
+
+### Frontend Fix (⚠️ STILL NEEDED for discount cases)
+**File:** `src/pages/warehouse/CreateSale.tsx`
+
+### Solution (Frontend)
 Replace the incorrect `itemTotal` calculation with the pre-calculated `finalTotal`:
 
 ```typescript
@@ -204,17 +265,31 @@ After applying the fix, test with this scenario:
 7. **Check Sale Details page:**
    - Outstanding debt should match debtor records
 
-## Files to Update
+## Files Updated
 
-1. **Frontend**: `src/pages/warehouse/CreateSale.tsx`
+### ✅ Backend (FIXED)
+1. **`/routes/warehouse.js`** (lines 1241-1265)
+   - ✅ Now properly aggregates debtor amounts from all sales in a receipt
+   - ✅ Status calculation uses worst-case priority
+   - **Status**: DEPLOYED
+
+### ⚠️ Frontend (STILL NEEDED)
+1. **`src/pages/warehouse/CreateSale.tsx`**
    - Change line in `createSaleMutation.mutationFn`
    - Replace `const itemTotal = item.quantity * item.unitPrice;`
    - With `const itemTotal = item.finalTotal;`
+   - **Status**: PENDING - Only affects sales with discounts
 
 ## Impact
 
-- **Severity**: High - Affects all credit sales with discounts and partial payments
-- **Affected**: Customer debt tracking, financial reports, payment reconciliation
+### Backend Fix (Already Applied)
+- **Severity**: Critical - Affects ALL multi-item credit sales with partial payments
+- **Fixed**: Sale details page now shows correct total amounts
+- **Backward Compatibility**: No breaking changes
+
+### Frontend Fix (Still Pending)
+- **Severity**: High - Only affects sales with discounts applied
+- **Affected**: Customer debt tracking when discounts are involved
 - **Risk**: Low - Single line change, well-isolated
 - **Backward Compatibility**: Existing incorrect debt records will need manual review/correction
 

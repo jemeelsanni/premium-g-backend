@@ -1238,15 +1238,30 @@ router.get('/sales/receipt/:receiptNumber',
         aggregatedSale.warehouseCustomer = sale.warehouseCustomer;
       }
 
-      // ✅ NEW: Capture debtor info from first sale that has it
-      if (sale.debtor && !aggregatedSale.debtor) {
-        aggregatedSale.debtor = {
-          id: sale.debtor.id,
-          amountPaid: Number(sale.debtor.amountPaid),
-          amountDue: Number(sale.debtor.amountDue),
-          status: sale.debtor.status,
-          dueDate: sale.debtor.dueDate
-        };
+      // ✅ FIXED: Aggregate debtor info from ALL sales with this receipt
+      if (sale.debtor) {
+        if (!aggregatedSale.debtor) {
+          // Initialize debtor object on first encounter
+          aggregatedSale.debtor = {
+            id: sale.debtor.id,
+            amountPaid: 0,
+            amountDue: 0,
+            status: sale.debtor.status,
+            dueDate: sale.debtor.dueDate
+          };
+        }
+
+        // Accumulate amounts from all sales in this receipt
+        aggregatedSale.debtor.amountPaid += Number(sale.debtor.amountPaid);
+        aggregatedSale.debtor.amountDue += Number(sale.debtor.amountDue);
+
+        // Update status to worst case (OVERDUE > PARTIAL > OUTSTANDING > PAID)
+        const statusPriority = { 'OVERDUE': 4, 'PARTIAL': 3, 'OUTSTANDING': 2, 'PAID': 1 };
+        const currentPriority = statusPriority[aggregatedSale.debtor.status] || 0;
+        const salePriority = statusPriority[sale.debtor.status] || 0;
+        if (salePriority > currentPriority) {
+          aggregatedSale.debtor.status = sale.debtor.status;
+        }
       }
 
       aggregatedSale.items.push({
