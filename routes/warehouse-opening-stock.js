@@ -9,28 +9,37 @@ const { query } = require('express-validator');
 
 /**
  * @route   GET /api/v1/warehouse/opening-stock
- * @desc    Get daily opening stock for products with date filtering
- * @access  Private (Warehouse Sales Manager, Admin)
+ * @desc    Get daily opening stock for products with date filtering and pagination
+ * @access  Private (Warehouse Sales Manager, Admin, Sales Officer, Cashier)
  * 
  * Query Params:
  * - date: specific date (YYYY-MM-DD) - defaults to today
  * - productId: filter by specific product
  * - location: filter by warehouse location
- * - startDate: for date range queries
- * - endDate: for date range queries
+ * - lowStockOnly: boolean - filter only low stock items
+ * - page: page number (default: 1)
+ * - limit: items per page (default: 20, max: 100)
  */
 router.get(
   '/',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN', 'WAREHOUSE_SALES_OFFICER']),
+  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN', 'WAREHOUSE_SALES_OFFICER', 'CASHIER']),
   [
     query('date').optional().isISO8601().withMessage('Invalid date format'),
-    query('startDate').optional().isISO8601().withMessage('Invalid start date format'),
-    query('endDate').optional().isISO8601().withMessage('Invalid end date format'),
     query('productId').optional().isString(),
-    query('location').optional().isString()
+    query('location').optional().isString(),
+    query('lowStockOnly').optional().isBoolean().toBoolean(),
+    query('page').optional().isInt({ min: 1 }).toInt(),
+    query('limit').optional().isInt({ min: 1, max: 100 }).toInt()
   ],
   asyncHandler(async (req, res) => {
-    const { date, productId, location, startDate, endDate } = req.query;
+    const { 
+      date, 
+      productId, 
+      location, 
+      lowStockOnly, 
+      page = 1, 
+      limit = 20 
+    } = req.query;
 
     // Parse the target date - default to today
     const targetDate = date ? new Date(date) : new Date();
@@ -44,7 +53,7 @@ router.get(
     if (productId) productFilter.id = productId;
     if (location) productFilter.warehouseInventory = { some: { location } };
 
-    // Get all products
+    // Get all products (before pagination)
     const products = await prisma.product.findMany({
       where: {
         isActive: true,
@@ -53,92 +62,87 @@ router.get(
       },
       include: {
         warehouseInventory: {
-          where: location ? { location } : undefined
+          where: location ? { location } : {}
         }
       },
-      orderBy: { name: 'asc' }
+      orderBy: {
+        productNo: 'asc'
+      }
     });
 
     // Calculate opening stock for each product
     const openingStockData = await Promise.all(
       products.map(async (product) => {
-        // Get all sales BEFORE the target date (this reduces the opening stock)
+        // Get all transactions before the target date (for opening stock)
+        const purchasesBeforeDate = await prisma.warehousePurchase.findMany({
+          where: {
+            productId: product.id,
+            purchaseDate: { lt: targetDate }
+          },
+          select: { quantity: true, unitType: true }
+        });
+
         const salesBeforeDate = await prisma.warehouseSale.findMany({
           where: {
             productId: product.id,
             createdAt: { lt: targetDate }
           },
-          select: {
-            quantity: true,
-            unitType: true
-          }
+          select: { quantity: true, unitType: true }
         });
 
-        // Get all purchases BEFORE the target date (this increases the opening stock)
-        const purchasesBeforeDate = await prisma.warehouseProductPurchase.findMany({
+        // Get transactions ON the target date
+        const purchasesOnDate = await prisma.warehousePurchase.findMany({
           where: {
             productId: product.id,
-            purchaseDate: { lt: targetDate }
+            purchaseDate: { gte: targetDate, lte: endOfDay }
           },
-          select: {
-            quantity: true,
-            unitType: true
-          }
+          select: { quantity: true, unitType: true }
         });
 
-        // Get sales ON the target date
         const salesOnDate = await prisma.warehouseSale.findMany({
           where: {
             productId: product.id,
             createdAt: { gte: targetDate, lte: endOfDay }
           },
-          select: {
-            quantity: true,
-            unitType: true,
-            totalAmount: true,
-            createdAt: true
-          }
+          select: { quantity: true, unitPrice: true, totalAmount: true, quantity: true, unitType: true }
         });
 
-        // Get purchases ON the target date
-        const purchasesOnDate = await prisma.warehouseProductPurchase.findMany({
-          where: {
-            productId: product.id,
-            purchaseDate: { gte: targetDate, lte: endOfDay }
-          },
-          select: {
-            quantity: true,
-            unitType: true,
-            totalCost: true,
-            purchaseDate: true
-          }
-        });
-
-        // Calculate opening stock (purchases - sales before target date)
+        // Calculate opening stock
         const openingStock = calculateStock(purchasesBeforeDate, salesBeforeDate);
-        
-        // Calculate closing stock (opening + purchases today - sales today)
-        const closingStock = {
-          pallets: openingStock.pallets + 
-                   calculateStockByType(purchasesOnDate, 'PALLETS') - 
-                   calculateStockByType(salesOnDate, 'PALLETS'),
-          packs: openingStock.packs + 
-                 calculateStockByType(purchasesOnDate, 'PACKS') - 
-                 calculateStockByType(salesOnDate, 'PACKS'),
-          units: openingStock.units + 
-                 calculateStockByType(purchasesOnDate, 'UNITS') - 
-                 calculateStockByType(salesOnDate, 'UNITS')
-        };
+        const totalOpeningStock = 
+          (openingStock.pallets * (product.packsPerPallet || 1)) + 
+          openingStock.packs + 
+          openingStock.units;
 
-        // Calculate total stock for comparison
-        const totalOpeningStock = openingStock.pallets + openingStock.packs + openingStock.units;
-        const totalClosingStock = closingStock.pallets + closingStock.packs + closingStock.units;
-        const totalSalesQuantity = salesOnDate.reduce((sum, sale) => sum + sale.quantity, 0);
-        const totalSalesRevenue = salesOnDate.reduce((sum, sale) => sum + parseFloat(sale.totalAmount), 0);
-        const totalPurchasesQuantity = purchasesOnDate.reduce((sum, purchase) => sum + purchase.quantity, 0);
+        // Calculate movements on the date
+        const totalSalesQuantity = salesOnDate.reduce((sum, sale) => {
+          if (sale.unitType === 'PALLETS') return sum + (sale.quantity * (product.packsPerPallet || 1));
+          if (sale.unitType === 'PACKS') return sum + sale.quantity;
+          if (sale.unitType === 'UNITS') return sum + sale.quantity;
+          return sum;
+        }, 0);
+
+        const totalSalesRevenue = salesOnDate.reduce((sum, sale) => sum + parseFloat(sale.totalAmount.toString()), 0);
+
+        const totalPurchasesQuantity = purchasesOnDate.reduce((sum, purchase) => {
+          if (purchase.unitType === 'PALLETS') return sum + (purchase.quantity * (product.packsPerPallet || 1));
+          if (purchase.unitType === 'PACKS') return sum + purchase.quantity;
+          if (purchase.unitType === 'UNITS') return sum + purchase.quantity;
+          return sum;
+        }, 0);
+
+        // Calculate closing stock
+        const allPurchases = [...purchasesBeforeDate, ...purchasesOnDate];
+        const allSales = [...salesBeforeDate, ...salesOnDate];
+        const closingStock = calculateStock(allPurchases, allSales);
+        const totalClosingStock = 
+          (closingStock.pallets * (product.packsPerPallet || 1)) + 
+          closingStock.packs + 
+          closingStock.units;
 
         // Get inventory location info
         const inventoryLocation = product.warehouseInventory[0]?.location || null;
+        const reorderLevel = product.warehouseInventory[0]?.reorderLevel || 0;
 
         return {
           productId: product.id,
@@ -176,18 +180,25 @@ router.get(
             total: totalClosingStock - totalOpeningStock
           },
           
-          reorderLevel: product.warehouseInventory[0]?.reorderLevel || 0,
-          stockStatus: totalClosingStock <= (product.warehouseInventory[0]?.reorderLevel || 0) 
-            ? 'LOW_STOCK' 
-            : 'NORMAL'
+          reorderLevel,
+          stockStatus: totalClosingStock <= reorderLevel ? 'LOW_STOCK' : 'NORMAL'
         };
       })
     );
 
     // Filter out products with zero opening stock if needed
-    const filteredData = openingStockData.filter(item => item.openingStock.total > 0 || item.movements.salesQuantity > 0 || item.movements.purchasesQuantity > 0);
+    let filteredData = openingStockData.filter(
+      item => item.openingStock.total > 0 || 
+              item.movements.salesQuantity > 0 || 
+              item.movements.purchasesQuantity > 0
+    );
 
-    // Calculate summary statistics
+    // Apply low stock filter if requested
+    if (lowStockOnly === true) {
+      filteredData = filteredData.filter(item => item.stockStatus === 'LOW_STOCK');
+    }
+
+    // Calculate summary statistics (from ALL filtered data, not just current page)
     const summary = {
       date: targetDate.toISOString().split('T')[0],
       totalProducts: filteredData.length,
@@ -199,11 +210,26 @@ router.get(
       lowStockItems: filteredData.filter(item => item.stockStatus === 'LOW_STOCK').length
     };
 
+    // Apply pagination
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const totalItems = filteredData.length;
+    const totalPages = Math.ceil(totalItems / limitNum);
+    const skip = (pageNum - 1) * limitNum;
+    
+    const paginatedData = filteredData.slice(skip, skip + limitNum);
+
     res.json({
       success: true,
       data: {
         summary,
-        openingStock: filteredData
+        openingStock: paginatedData,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total: totalItems,
+          totalPages: totalPages
+        }
       }
     });
   })
