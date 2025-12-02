@@ -13,6 +13,7 @@ import { warehouseService } from '../../services/warehouseService';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { globalToast } from '../../components/ui/Toast';
+import type { Product } from '../../types/warehouse';
 
 const productItemSchema = z.object({
     productId: z.string().min(1, 'Product is required'),
@@ -125,7 +126,7 @@ export const CreateSale: React.FC = () => {
     });
 
     // Fetch products
-    const { data: products } = useQuery({
+    const { data: products } = useQuery<Product[]>({
         queryKey: ['warehouse-products'],
         queryFn: () => warehouseService.getProducts(),
     });
@@ -145,7 +146,7 @@ export const CreateSale: React.FC = () => {
 
     // ✅ NEW: Real-time price validation
     useEffect(() => {
-        const product = products?.find((p: any) => p.id === watchedProductId);
+        const product = products?.find((p) => p.id === watchedProductId);
         const price = watchedUnitPrice;
 
         if (!product || !price || price <= 0) {
@@ -153,7 +154,7 @@ export const CreateSale: React.FC = () => {
             return;
         }
 
-        const hasRange = product.minSellingPrice || product.maxSellingPrice;
+        const hasRange = product.minSellingPrice !== null || product.maxSellingPrice !== null;
 
         if (!hasRange) {
             setPriceValidation({
@@ -165,20 +166,20 @@ export const CreateSale: React.FC = () => {
         }
 
         // Check minimum
-        if (product.minSellingPrice && price < product.minSellingPrice) {
+        if (product.minSellingPrice !== null && price < product.minSellingPrice) {
             setPriceValidation({
                 isValid: false,
-                message: `Below minimum (₦${parseFloat(product.minSellingPrice).toLocaleString()})`,
+                message: `Below minimum (₦${product.minSellingPrice.toLocaleString()})`,
                 color: 'red'
             });
             return;
         }
 
         // Check maximum
-        if (product.maxSellingPrice && price > product.maxSellingPrice) {
+        if (product.maxSellingPrice !== null && price > product.maxSellingPrice) {
             setPriceValidation({
                 isValid: false,
-                message: `Above maximum (₦${parseFloat(product.maxSellingPrice).toLocaleString()})`,
+                message: `Above maximum (₦${product.maxSellingPrice.toLocaleString()})`,
                 color: 'red'
             });
             return;
@@ -220,7 +221,7 @@ export const CreateSale: React.FC = () => {
 
     // ✅ UPDATED: Add product to cart with price range validation
     const handleAddProduct = (data: ProductItemFormData) => {
-        const product = products?.find((p: any) => p.id === data.productId);
+        const product = products?.find((p) => p.id === data.productId);
         if (!product) {
             globalToast.error('Product not found');
             return;
@@ -229,16 +230,16 @@ export const CreateSale: React.FC = () => {
         // ✅ NEW: Price range validation
         const price = data.unitPrice;
 
-        if (product.minSellingPrice && price < product.minSellingPrice) {
+        if (product.minSellingPrice !== null && price < product.minSellingPrice) {
             globalToast.error(
-                `Price ₦${price.toLocaleString()} is below minimum (₦${parseFloat(product.minSellingPrice).toLocaleString()}) for ${product.name}`
+                `Price ₦${price.toLocaleString()} is below minimum (₦${product.minSellingPrice.toLocaleString()}) for ${product.name}`
             );
             return;
         }
 
-        if (product.maxSellingPrice && price > product.maxSellingPrice) {
+        if (product.maxSellingPrice !== null && price > product.maxSellingPrice) {
             globalToast.error(
-                `Price ₦${price.toLocaleString()} exceeds maximum (₦${parseFloat(product.maxSellingPrice).toLocaleString()}) for ${product.name}`
+                `Price ₦${price.toLocaleString()} exceeds maximum (₦${product.maxSellingPrice.toLocaleString()}) for ${product.name}`
             );
             return;
         }
@@ -541,7 +542,7 @@ export const CreateSale: React.FC = () => {
                                 className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                             >
                                 <option value="">Select product</option>
-                                {products?.map((product: any) => (
+                                {products?.map((product) => (
                                     <option
                                         key={product.id}
                                         value={product.id}
@@ -651,10 +652,10 @@ export const CreateSale: React.FC = () => {
 
                     {/* ✅ NEW: Price Range Display */}
                     {watchedProductId && products && (() => {
-                        const selectedProduct = products.find((p: any) => p.id === watchedProductId);
+                        const selectedProduct = products.find((p) => p.id === watchedProductId);
                         if (!selectedProduct) return null;
 
-                        const hasRange = selectedProduct.minSellingPrice && selectedProduct.maxSellingPrice;
+                        const hasRange = selectedProduct.minSellingPrice !== null && selectedProduct.maxSellingPrice !== null;
 
                         return (
                             <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
@@ -663,7 +664,7 @@ export const CreateSale: React.FC = () => {
                                         <div className="flex justify-between">
                                             <span className="text-gray-600">Standard Price:</span>
                                             <span className="font-semibold text-gray-900">
-                                                ₦{parseFloat(selectedProduct.pricePerPack).toLocaleString()}
+                                                ₦{selectedProduct.pricePerPack.toLocaleString()}
                                             </span>
                                         </div>
                                     )}
@@ -672,9 +673,9 @@ export const CreateSale: React.FC = () => {
                                         <div className="flex justify-between items-center">
                                             <span className="text-gray-600">Allowed Range:</span>
                                             <span className="font-semibold text-green-700">
-                                                ₦{parseFloat(selectedProduct.minSellingPrice).toLocaleString()}
+                                                ₦{selectedProduct.minSellingPrice!.toLocaleString()}
                                                 {' - '}
-                                                ₦{parseFloat(selectedProduct.maxSellingPrice).toLocaleString()}
+                                                ₦{selectedProduct.maxSellingPrice!.toLocaleString()}
                                             </span>
                                         </div>
                                     ) : (
