@@ -83,7 +83,7 @@ router.get(
     const openingStockData = await Promise.all(
       products.map(async (product) => {
         // Get all transactions before the target date (for opening stock)
-        const purchasesBeforeDate = await prisma.warehousePurchase.findMany({
+        const purchasesBeforeDate = await prisma.warehouseProductPurchase.findMany({
           where: {
             productId: product.id,
             purchaseDate: { lt: targetDate }
@@ -100,7 +100,7 @@ router.get(
         });
 
         // Get transactions ON the target date
-        const purchasesOnDate = await prisma.warehousePurchase.findMany({
+        const purchasesOnDate = await prisma.warehouseProductPurchase.findMany({
           where: {
             productId: product.id,
             purchaseDate: { gte: targetDate, lte: endOfDay }
@@ -302,7 +302,7 @@ router.get(
           const endOfDay = new Date(date);
           endOfDay.setHours(23, 59, 59, 999);
 
-          const purchases = await prisma.warehousePurchase.findMany({
+          const purchases = await prisma.warehouseProductPurchase.findMany({
             where: {
               productId,
               purchaseDate: { lte: endOfDay }
