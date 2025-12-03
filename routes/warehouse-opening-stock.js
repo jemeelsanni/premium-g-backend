@@ -1,11 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
 const { asyncHandler } = require('../middleware/errorHandler');
 const { authorizeRole } = require('../middleware/auth');
-const { query } = require('express-validator');
+const { query, validationResult } = require('express-validator');
 
+// Use shared Prisma instance
+const prisma = new PrismaClient();
 
 /**
  * @route   GET /api/v1/warehouse/opening-stock
@@ -32,6 +33,16 @@ router.get(
     query('limit').optional().isInt({ min: 1, max: 100 }).toInt()
   ],
   asyncHandler(async (req, res) => {
+    // Validate request
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+
     const { 
       date, 
       productId, 
@@ -104,7 +115,7 @@ router.get(
             productId: product.id,
             createdAt: { gte: targetDate, lte: endOfDay }
           },
-          select: { quantity: true, unitPrice: true, totalAmount: true, quantity: true, unitType: true }
+          select: { quantity: true, unitPrice: true, totalAmount: true, unitType: true }
         });
 
         // Calculate opening stock
@@ -249,27 +260,35 @@ router.get(
     query('productId').optional().isString()
   ],
   asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+
     const { startDate, endDate, productId } = req.query;
 
     const start = new Date(startDate);
-    start.setHours(0, 0, 0, 0);
-    
     const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
 
-    // Get date range array
+    // Generate array of dates
     const dates = [];
     const currentDate = new Date(start);
     while (currentDate <= end) {
-      dates.push(new Date(currentDate).toISOString().split('T')[0]);
+      dates.push(new Date(currentDate));
       currentDate.setDate(currentDate.getDate() + 1);
     }
 
-    // If specific product requested
     if (productId) {
+      // Get product details
       const product = await prisma.product.findUnique({
         where: { id: productId },
-        include: { warehouseInventory: true }
+        include: {
+          warehouseInventory: true
+        }
       });
 
       if (!product) {
@@ -279,34 +298,36 @@ router.get(
         });
       }
 
-      // Calculate opening stock for each date
+      // Calculate stock for each date
       const history = await Promise.all(
         dates.map(async (date) => {
-          const targetDate = new Date(date);
-          targetDate.setHours(0, 0, 0, 0);
-          
-          const endOfDay = new Date(targetDate);
+          const endOfDay = new Date(date);
           endOfDay.setHours(23, 59, 59, 999);
 
-          const salesBeforeDate = await prisma.warehouseSale.findMany({
+          const purchases = await prisma.warehousePurchase.findMany({
             where: {
               productId,
-              createdAt: { lt: targetDate }
-            }
+              purchaseDate: { lte: endOfDay }
+            },
+            select: { quantity: true, unitType: true }
           });
 
-          const purchasesBeforeDate = await prisma.warehouseProductPurchase.findMany({
+          const sales = await prisma.warehouseSale.findMany({
             where: {
               productId,
-              purchaseDate: { lt: targetDate }
-            }
+              createdAt: { lte: endOfDay }
+            },
+            select: { quantity: true, unitType: true }
           });
 
-          const openingStock = calculateStock(purchasesBeforeDate, salesBeforeDate);
-          const totalOpeningStock = openingStock.pallets + openingStock.packs + openingStock.units;
+          const openingStock = calculateStock(purchases, sales);
+          const totalOpeningStock = 
+            (openingStock.pallets * (product.packsPerPallet || 1)) + 
+            openingStock.packs + 
+            openingStock.units;
 
           return {
-            date,
+            date: date.toISOString().split('T')[0],
             openingStock: {
               pallets: openingStock.pallets,
               packs: openingStock.packs,
@@ -363,15 +384,6 @@ function calculateStock(purchases, sales) {
   });
 
   return stock;
-}
-
-/**
- * Helper function to calculate stock by specific unit type
- */
-function calculateStockByType(transactions, unitType) {
-  return transactions
-    .filter(t => t.unitType === unitType)
-    .reduce((sum, t) => sum + t.quantity, 0);
 }
 
 module.exports = router;
