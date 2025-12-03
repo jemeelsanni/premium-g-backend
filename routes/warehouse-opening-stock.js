@@ -6,8 +6,6 @@ const { authorizeRole } = require('../middleware/auth');
 const { query, validationResult } = require('express-validator');
 
 // Use shared Prisma instance
-const prisma = new PrismaClient();
-
 /**
  * @route   GET /api/v1/warehouse/opening-stock
  * @desc    Get daily opening stock for products with date filtering and pagination
