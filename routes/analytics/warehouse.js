@@ -214,16 +214,43 @@ router.get('/summary',
     let lowStockItems = 0;
     let outOfStockItems = 0;
 
-    inventory.forEach(item => {
+    // ✅ FIXED (using purchase cost from batches):
+    for (const item of inventory) {
       const stockLevel = item.packs + (item.pallets * (item.product?.packsPerPallet || 1));
-      totalStockValue += stockLevel * parseFloat(item.product?.pricePerPack || 0);
+      
+      // Get weighted average cost from active batches
+      const activeBatches = await prisma.warehouseProductPurchase.findMany({
+        where: {
+          productId: item.productId,
+          batchStatus: 'ACTIVE',
+          quantityRemaining: { gt: 0 }
+        },
+        select: {
+          costPerUnit: true,
+          quantityRemaining: true
+        }
+      });
+      
+      let weightedAvgCost = 0;
+      if (activeBatches.length > 0) {
+        const totalCost = activeBatches.reduce((sum, batch) => 
+          sum + (parseFloat(batch.costPerUnit) * batch.quantityRemaining), 0
+        );
+        const totalQty = activeBatches.reduce((sum, batch) => 
+          sum + batch.quantityRemaining, 0
+        );
+        weightedAvgCost = totalQty > 0 ? totalCost / totalQty : 0;
+      }
+      
+      const stockValue = stockLevel * weightedAvgCost;
+      totalStockValue += stockValue;
       
       if (stockLevel === 0) {
         outOfStockItems++;
       } else if (stockLevel <= item.reorderLevel) {
         lowStockItems++;
       }
-    });
+    }
 
     const grossProfit = totalRevenue - totalCOGS;
     const profitMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
@@ -495,38 +522,64 @@ router.get('/inventory/status',
     });
 
     const categorizedInventory = {
-      inStock: [],
-      lowStock: [],
-      outOfStock: [],
-      overStock: []
-    };
+  inStock: [],
+  lowStock: [],
+  outOfStock: [],
+  overStock: []
+};
 
-    inventory.forEach(item => {
-      const totalPacks = item.packs + (item.pallets * (item.product?.packsPerPallet || 1));
-      const stockValue = totalPacks * parseFloat(item.product?.pricePerPack || 0);
+// ✅ FIXED: Calculate stock value using purchase cost from batches
+for (const item of inventory) {
+  const totalPacks = item.packs + (item.pallets * (item.product?.packsPerPallet || 1));
+  
+  // Get weighted average cost from active batches
+  const activeBatches = await prisma.warehouseProductPurchase.findMany({
+    where: {
+      productId: item.productId,
+      batchStatus: 'ACTIVE',
+      quantityRemaining: { gt: 0 }
+    },
+    select: {
+      costPerUnit: true,
+      quantityRemaining: true
+    }
+  });
+  
+  let weightedAvgCost = 0;
+  if (activeBatches.length > 0) {
+    const totalCost = activeBatches.reduce((sum, batch) => 
+      sum + (parseFloat(batch.costPerUnit) * batch.quantityRemaining), 0
+    );
+    const totalQty = activeBatches.reduce((sum, batch) => 
+      sum + batch.quantityRemaining, 0
+    );
+    weightedAvgCost = totalQty > 0 ? totalCost / totalQty : 0;
+  }
+  
+  const stockValue = totalPacks * weightedAvgCost;
 
-      const inventoryItem = {
-        id: item.id,
-        productName: item.product?.name,
-        productNo: item.product?.productNo,
-        totalPacks,
-        stockValue: parseFloat(stockValue.toFixed(2)),
-        reorderLevel: item.reorderLevel,
-        maxStockLevel: item.maxStockLevel,
-        location: item.location
-      };
+  const inventoryItem = {
+    id: item.id,
+    productName: item.product?.name,
+    productNo: item.product?.productNo,
+    totalPacks,
+    stockValue: parseFloat(stockValue.toFixed(2)),
+    costPerUnit: parseFloat(weightedAvgCost.toFixed(2)), // ✅ Added for transparency
+    reorderLevel: item.reorderLevel,
+    maxStockLevel: item.maxStockLevel,
+    location: item.location
+  };
 
-      if (totalPacks === 0) {
-        categorizedInventory.outOfStock.push(inventoryItem);
-      } else if (totalPacks <= item.reorderLevel) {
-        categorizedInventory.lowStock.push(inventoryItem);
-      } else if (item.maxStockLevel && totalPacks > item.maxStockLevel) {
-        categorizedInventory.overStock.push(inventoryItem);
-      } else {
-        categorizedInventory.inStock.push(inventoryItem);
-      }
-    });
-
+  if (totalPacks === 0) {
+    categorizedInventory.outOfStock.push(inventoryItem);
+  } else if (totalPacks <= item.reorderLevel) {
+    categorizedInventory.lowStock.push(inventoryItem);
+  } else if (item.maxStockLevel && totalPacks > item.maxStockLevel) {
+    categorizedInventory.overStock.push(inventoryItem);
+  } else {
+    categorizedInventory.inStock.push(inventoryItem);
+  }
+}
     res.json({
       success: true,
       data: {

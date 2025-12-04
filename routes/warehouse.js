@@ -1697,22 +1697,47 @@ router.get(
       .sort((a, b) => b.netProfit - a.netProfit)
       .slice(0, 10);
 
-    // Calculate inventory metrics
+    // ✅ FIXED: Calculate inventory metrics using PURCHASE COST
     let totalStockValue = 0;
     let lowStockItems = 0;
     let outOfStockItems = 0;
 
-    inventory.forEach(item => {
+    for (const item of inventory) {
       const stockLevel = item.packs + (item.pallets * (item.product?.packsPerPallet || 1));
-      totalStockValue += stockLevel * parseFloat(item.product?.pricePerPack || 0);
+      
+      // Get weighted average cost from active batches
+      const activeBatches = await prisma.warehouseProductPurchase.findMany({
+        where: {
+          productId: item.productId,
+          batchStatus: 'ACTIVE',
+          quantityRemaining: { gt: 0 }
+        },
+        select: {
+          costPerUnit: true,
+          quantityRemaining: true
+        }
+      });
+      
+      let weightedAvgCost = 0;
+      if (activeBatches.length > 0) {
+        const totalCost = activeBatches.reduce((sum, batch) => 
+          sum + (parseFloat(batch.costPerUnit) * batch.quantityRemaining), 0
+        );
+        const totalQty = activeBatches.reduce((sum, batch) => 
+          sum + batch.quantityRemaining, 0
+        );
+        weightedAvgCost = totalQty > 0 ? totalCost / totalQty : 0;
+      }
+      
+      const stockValue = stockLevel * weightedAvgCost;
+      totalStockValue += stockValue;
 
       if (stockLevel === 0) {
         outOfStockItems++;
       } else if (stockLevel <= item.reorderLevel) {
         lowStockItems++;
       }
-    });
-
+    }
 
     res.json({
       success: true,
@@ -1756,7 +1781,7 @@ router.get(
           totalPaid: parseFloat((debtorStats._sum.amountPaid || 0).toFixed(2))
         },
 
-        // Inventory summary
+        // Inventory summary (now using purchase cost)
         inventory: {
           totalStockValue: parseFloat(totalStockValue.toFixed(2)),
           totalItems: inventory.length,
