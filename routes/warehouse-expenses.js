@@ -49,10 +49,10 @@ const updateWarehouseExpenseValidation = [
 // ================================
 
 // @route   POST /api/v1/warehouse/expenses
-// @desc    Create new warehouse expense
-// @access  Private (Warehouse module access)
+// @desc    Create new warehouse expense (auto-approve for WAREHOUSE_ADMIN)
+// @access  Private (Warehouse Admin, Sales Officer)
+
 router.post('/expenses',
-  authorizeModule('warehouse', 'write'),
   createWarehouseExpenseValidation,
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -60,45 +60,68 @@ router.post('/expenses',
       throw new ValidationError('Invalid input data', errors.array());
     }
 
-    const {
-      expenseType,
-      category,
-      amount,
-      description,
-      expenseDate,
-      productId,
-      location,
-      vendorName,
-      vendorContact,
-      receiptNumber,
-      receiptUrl
-    } = req.body;
+    const expenseData = {
+      ...req.body,
+      createdBy: req.user.id,
+      // ✨ Auto-approve if created by WAREHOUSE_ADMIN
+      status: req.user.role === 'WAREHOUSE_ADMIN' ? 'APPROVED' : 'PENDING',
+      approvedBy: req.user.role === 'WAREHOUSE_ADMIN' ? req.user.id : null,
+      approvedAt: req.user.role === 'WAREHOUSE_ADMIN' ? new Date() : null,
+    };
 
-    const expense = await prisma.warehouseExpense.create({
-      data: {
-        expenseType,
-        category,
-        amount: parseFloat(amount),
-        description,
-        expenseDate: new Date(expenseDate),
-        productId,
-        location,
-        vendorName,
-        vendorContact,
-        receiptNumber,
-        receiptUrl,
-        createdBy: req.user.id
-      },
-      include: {
-        product: { select: { name: true, productNo: true } },
-        createdByUser: { select: { id: true, username: true } }
+    // Use transaction to create expense and cash flow together (if auto-approved)
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Create the expense
+      const expense = await tx.warehouseExpense.create({
+        data: expenseData,
+        include: {
+          product: { select: { name: true, productNo: true } },
+          createdByUser: { select: { username: true } },
+          approver: { select: { username: true } }
+        }
+      });
+
+      let cashFlowEntry = null;
+
+      // 2. ✨ AUTOMATICALLY CREATE CASH FLOW IF AUTO-APPROVED ✨
+      if (req.user.role === 'WAREHOUSE_ADMIN') {
+        const cashFlowDescription = expense.product
+          ? `Expense: ${expense.category} - ${expense.product.name} (${expense.expenseType.replace(/_/g, ' ')})`
+          : `Expense: ${expense.category} - ${expense.expenseType.replace(/_/g, ' ')}`;
+
+        cashFlowEntry = await tx.cashFlow.create({
+          data: {
+            transactionType: 'CASH_OUT',
+            amount: expense.amount,
+            paymentMethod: expense.paymentMethod || 'CASH',
+            description: cashFlowDescription,
+            referenceNumber: expense.receiptNumber || `EXP-${expense.id.slice(0, 8)}`,
+            cashier: req.user.id,
+            module: 'WAREHOUSE'
+          }
+        });
+
+        console.log('✅ Expense auto-approved and cash flow created:', {
+          expenseId: expense.id,
+          amount: expense.amount,
+          category: expense.category
+        });
       }
+
+      return { expense, cashFlowEntry };
     });
+
+    const message = req.user.role === 'WAREHOUSE_ADMIN' 
+      ? 'Warehouse expense created and automatically approved. Cash flow entry created.'
+      : 'Warehouse expense created successfully and submitted for approval';
 
     res.status(201).json({
       success: true,
-      message: 'Warehouse expense created successfully',
-      data: { expense }
+      message,
+      data: { 
+        expense: result.expense,
+        cashFlowRecorded: req.user.role === 'WAREHOUSE_ADMIN'
+      }
     });
   })
 );
