@@ -229,7 +229,10 @@ router.get('/inventory', asyncHandler(async (req, res) => {
     orderBy: { lastUpdated: 'desc' }
   });
 
-  let formattedInventory = inventory.map(inv => {
+  // ✅ FIXED: Calculate stock value using purchase cost from batches
+  const formattedInventory = [];
+  
+  for (const inv of inventory) {
     const product = inv.product;
     const packsPerPallet = product?.packsPerPallet || 1;
     
@@ -249,29 +252,33 @@ router.get('/inventory', asyncHandler(async (req, res) => {
       stockStatus = 'OVERSTOCK';
     }
 
-    // 🔍 DIAGNOSTIC LOGGING
-    console.log('📦 INVENTORY ITEM DEBUG:', {
-      productName: product?.name,
-      rawData: {
-        pallets: inv.pallets,
-        packs: inv.packs,
-        units: inv.units,
-        packsPerPallet: packsPerPallet
+    // ✅ NEW: Get weighted average cost from active batches
+    const activeBatches = await prisma.warehouseProductPurchase.findMany({
+      where: {
+        productId: inv.productId,
+        batchStatus: 'ACTIVE',
+        quantityRemaining: { gt: 0 }
       },
-      calculated: {
-        palletsToPacks,
-        totalPacks,
-        minimumStock,
-        maximumStock
-      },
-      result: {
-        currentStock: totalPacks,
-        stockStatus,
-        isLowStock: totalPacks <= minimumStock
+      select: {
+        costPerUnit: true,
+        quantityRemaining: true
       }
     });
+    
+    let weightedAvgCost = 0;
+    if (activeBatches.length > 0) {
+      const totalCost = activeBatches.reduce((sum, batch) => 
+        sum + (parseFloat(batch.costPerUnit) * batch.quantityRemaining), 0
+      );
+      const totalQty = activeBatches.reduce((sum, batch) => 
+        sum + batch.quantityRemaining, 0
+      );
+      weightedAvgCost = totalQty > 0 ? totalCost / totalQty : 0;
+    }
+    
+    const stockValue = totalPacks * weightedAvgCost;
 
-    return {
+    formattedInventory.push({
       id: inv.id,
       productId: inv.productId,
       product: inv.product,
@@ -279,23 +286,31 @@ router.get('/inventory', asyncHandler(async (req, res) => {
       pallets: inv.pallets ?? 0,
       packs: inv.packs ?? 0,
       units: inv.units ?? 0,
-      currentStock: totalPacks, // ✅ This should be the converted value
+      currentStock: totalPacks,
       minimumStock,
       maximumStock,
       lastRestocked: inv.lastUpdated ?? inv.createdAt,
-      stockStatus // ✅ This should be correctly calculated
-    };
-  });
+      stockStatus,
+      // ✅ NEW FIELDS: Stock valuation based on purchase cost
+      costPerUnit: parseFloat(weightedAvgCost.toFixed(2)),
+      stockValue: parseFloat(stockValue.toFixed(2)),
+      // ✅ OPTIONAL: Also include selling price for comparison
+      sellingPricePerUnit: parseFloat(product?.pricePerPack || 0),
+      potentialRevenue: parseFloat((totalPacks * parseFloat(product?.pricePerPack || 0)).toFixed(2))
+    });
+  }
 
+  // Apply low stock filter if requested
+  let filteredInventory = formattedInventory;
   if (lowStock === 'true') {
-    formattedInventory = formattedInventory.filter(
-      (inv) => inv.stockStatus === 'LOW_STOCK'
+    filteredInventory = formattedInventory.filter(
+      (inv) => inv.stockStatus === 'LOW_STOCK' || inv.stockStatus === 'OUT_OF_STOCK'
     );
   }
 
   res.json({
     success: true,
-    data: formattedInventory
+    data: filteredInventory
   });
 }));
 
