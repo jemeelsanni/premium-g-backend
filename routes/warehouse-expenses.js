@@ -1,57 +1,228 @@
-// routes/warehouse-expenses.js - New file for warehouse expense management
-
 const express = require('express');
-const { body, query, param, validationResult } = require('express-validator');
-const { PrismaClient } = require('@prisma/client');
-
-const { asyncHandler, ValidationError, NotFoundError, BusinessError } = require('../middleware/errorHandler');
-const { authorizeModule, authorizeRole } = require('../middleware/auth');
+const { body, param, validationResult } = require('express-validator');
+const router = express.Router();
+const prisma = require('../config/database');
+const { authenticate, authorizeRole } = require('../middleware/auth');
+const { asyncHandler } = require('../middleware/asyncHandler');
+const { 
+  NotFoundError, 
+  ValidationError, 
+  BusinessError 
+} = require('../utils/errors');
 const { validateCuid } = require('../utils/validators');
 
-const router = express.Router();
-const prisma = new PrismaClient();
+// Apply authentication to all routes
+router.use(authenticate);
 
-// ================================
-// VALIDATION RULES
-// ================================
-
+// Validation rules
 const createWarehouseExpenseValidation = [
   body('expenseType')
     .trim()
     .notEmpty()
     .withMessage('Expense type is required')
     .isIn([
-      'UTILITIES', 'RENT', 'EQUIPMENT', 'SUPPLIES', 'MAINTENANCE', 
-      'INVENTORY_PROCUREMENT', 'PACKAGING_MATERIALS', 'SECURITY', 
-      'CLEANING_SERVICES', 'INSURANCE', 'OTHER'
+      'UTILITIES', 
+      'RENT', 
+      'EQUIPMENT', 
+      'SUPPLIES', 
+      'MAINTENANCE',
+      'INVENTORY_PROCUREMENT',
+      'PACKAGING_MATERIALS',
+      'SECURITY',
+      'CLEANING_SERVICES',
+      'INSURANCE',
+      'OFFLOAD',
+      'OTHER'
     ])
     .withMessage('Invalid expense type'),
-  body('category').trim().notEmpty().withMessage('Category is required'),
-  body('amount').isFloat({ min: 0 }).withMessage('Amount must be greater than 0'),
-  body('description').optional().trim(),
-  body('expenseDate').isISO8601().withMessage('Valid expense date is required'),
-  body('productId').optional().custom(validateCuid('product ID')),
-  body('location').optional().trim(),
-  body('vendorName').optional().trim(),
-  body('vendorContact').optional().trim(),
-  body('receiptNumber').optional().trim()
+  body('category')
+    .trim()
+    .notEmpty()
+    .withMessage('Category is required')
+    .isLength({ max: 100 })
+    .withMessage('Category must not exceed 100 characters'),
+  body('amount')
+    .isFloat({ min: 0.01 })
+    .withMessage('Amount must be greater than 0'),
+  body('description')
+    .optional()
+    .trim()
+    .isLength({ max: 500 })
+    .withMessage('Description must not exceed 500 characters'),
+  body('receiptNumber')
+    .optional()
+    .trim()
+    .isLength({ max: 50 })
+    .withMessage('Receipt number must not exceed 50 characters'),
+  body('paymentMethod')
+    .optional()
+    .isIn(['CASH', 'BANK_TRANSFER', 'CHEQUE'])
+    .withMessage('Invalid payment method'),
+  body('productId')
+    .optional()
+    .custom(validateCuid('product ID'))
 ];
 
 const updateWarehouseExpenseValidation = [
-  body('status').optional().isIn(['PENDING', 'APPROVED', 'REJECTED', 'PAID']),
-  body('rejectionReason').optional().trim(),
-  body('paymentMethod').optional().isIn(['CASH', 'BANK_TRANSFER', 'CHECK', 'CARD', 'MOBILE_MONEY']),
-  body('paymentReference').optional().trim()
+  body('expenseType')
+    .optional()
+    .trim()
+    .isIn([
+      'UTILITIES', 
+      'RENT', 
+      'EQUIPMENT', 
+      'SUPPLIES', 
+      'MAINTENANCE',
+      'INVENTORY_PROCUREMENT',
+      'PACKAGING_MATERIALS',
+      'SECURITY',
+      'CLEANING_SERVICES',
+      'INSURANCE',
+      'OFFLOAD',
+      'OTHER'
+    ])
+    .withMessage('Invalid expense type'),
+  body('category')
+    .optional()
+    .trim()
+    .isLength({ max: 100 })
+    .withMessage('Category must not exceed 100 characters'),
+  body('amount')
+    .optional()
+    .isFloat({ min: 0.01 })
+    .withMessage('Amount must be greater than 0'),
+  body('description')
+    .optional()
+    .trim()
+    .isLength({ max: 500 })
+    .withMessage('Description must not exceed 500 characters'),
+  body('status')
+    .optional()
+    .isIn(['PENDING', 'APPROVED', 'REJECTED', 'PAID'])
+    .withMessage('Invalid status'),
+  body('rejectionReason')
+    .optional()
+    .trim()
+    .isLength({ max: 500 })
+    .withMessage('Rejection reason must not exceed 500 characters'),
+  body('receiptNumber')
+    .optional()
+    .trim()
+    .isLength({ max: 50 })
+    .withMessage('Receipt number must not exceed 50 characters'),
+  body('paymentMethod')
+    .optional()
+    .isIn(['CASH', 'BANK_TRANSFER', 'CHEQUE'])
+    .withMessage('Invalid payment method'),
+  body('productId')
+    .optional()
+    .custom(validateCuid('product ID'))
 ];
 
-// ================================
-// WAREHOUSE EXPENSE ROUTES
-// ================================
+// @route   GET /api/v1/warehouse/expenses
+// @desc    Get all warehouse expenses with filters
+// @access  Private (Warehouse Admin, Sales Officer, Super Admin)
+router.get('/expenses',
+  asyncHandler(async (req, res) => {
+    const { 
+      page = 1, 
+      limit = 10, 
+      status, 
+      expenseType,
+      startDate,
+      endDate,
+      search 
+    } = req.query;
+
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+    const skip = (pageNum - 1) * limitNum;
+
+    // Build filter conditions
+    const where = {};
+
+    if (status) {
+      where.status = status;
+    }
+
+    if (expenseType) {
+      where.expenseType = expenseType;
+    }
+
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) {
+        where.createdAt.gte = new Date(startDate);
+      }
+      if (endDate) {
+        where.createdAt.lte = new Date(endDate);
+      }
+    }
+
+    if (search) {
+      where.OR = [
+        { category: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+        { receiptNumber: { contains: search, mode: 'insensitive' } }
+      ];
+    }
+
+    // Role-based filtering
+    if (!['SUPER_ADMIN', 'WAREHOUSE_ADMIN'].includes(req.user.role)) {
+      where.createdBy = req.user.id;
+    }
+
+    const [expenses, total] = await Promise.all([
+      prisma.warehouseExpense.findMany({
+        where,
+        skip,
+        take: limitNum,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          product: {
+            select: { 
+              id: true,
+              name: true, 
+              productNo: true 
+            }
+          },
+          createdByUser: {
+            select: { 
+              id: true,
+              username: true,
+              fullName: true
+            }
+          },
+          approver: {
+            select: { 
+              id: true,
+              username: true,
+              fullName: true
+            }
+          }
+        }
+      }),
+      prisma.warehouseExpense.count({ where })
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        expenses,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          totalPages: Math.ceil(total / limitNum)
+        }
+      }
+    });
+  })
+);
 
 // @route   POST /api/v1/warehouse/expenses
 // @desc    Create new warehouse expense (auto-approve for WAREHOUSE_ADMIN)
-// @access  Private (Warehouse Admin, Sales Officer)
-
+// @access  Private (Warehouse Admin, Sales Officer, Super Admin)
 router.post('/expenses',
   createWarehouseExpenseValidation,
   asyncHandler(async (req, res) => {
@@ -60,13 +231,42 @@ router.post('/expenses',
       throw new ValidationError('Invalid input data', errors.array());
     }
 
+    const { 
+      expenseType, 
+      category, 
+      amount, 
+      description,
+      receiptNumber,
+      paymentMethod,
+      productId 
+    } = req.body;
+
+    // Validate product exists if provided
+    if (productId) {
+      const product = await prisma.product.findUnique({
+        where: { id: productId }
+      });
+      
+      if (!product) {
+        throw new NotFoundError('Product not found');
+      }
+    }
+
+    // ✨ Auto-approve if created by WAREHOUSE_ADMIN
+    const isWarehouseAdmin = req.user.role === 'WAREHOUSE_ADMIN';
+    
     const expenseData = {
-      ...req.body,
+      expenseType,
+      category,
+      amount,
+      description: description || null,
+      receiptNumber: receiptNumber || null,
+      paymentMethod: paymentMethod || 'CASH',
+      productId: productId || null,
       createdBy: req.user.id,
-      // ✨ Auto-approve if created by WAREHOUSE_ADMIN
-      status: req.user.role === 'WAREHOUSE_ADMIN' ? 'APPROVED' : 'PENDING',
-      approvedBy: req.user.role === 'WAREHOUSE_ADMIN' ? req.user.id : null,
-      approvedAt: req.user.role === 'WAREHOUSE_ADMIN' ? new Date() : null,
+      status: isWarehouseAdmin ? 'APPROVED' : 'PENDING',
+      approvedBy: isWarehouseAdmin ? req.user.id : null,
+      approvedAt: isWarehouseAdmin ? new Date() : null
     };
 
     // Use transaction to create expense and cash flow together (if auto-approved)
@@ -75,16 +275,34 @@ router.post('/expenses',
       const expense = await tx.warehouseExpense.create({
         data: expenseData,
         include: {
-          product: { select: { name: true, productNo: true } },
-          createdByUser: { select: { username: true } },
-          approver: { select: { username: true } }
+          product: { 
+            select: { 
+              id: true,
+              name: true, 
+              productNo: true 
+            } 
+          },
+          createdByUser: { 
+            select: { 
+              id: true,
+              username: true,
+              fullName: true
+            } 
+          },
+          approver: { 
+            select: { 
+              id: true,
+              username: true,
+              fullName: true
+            } 
+          }
         }
       });
 
       let cashFlowEntry = null;
 
       // 2. ✨ AUTOMATICALLY CREATE CASH FLOW IF AUTO-APPROVED ✨
-      if (req.user.role === 'WAREHOUSE_ADMIN') {
+      if (isWarehouseAdmin) {
         const cashFlowDescription = expense.product
           ? `Expense: ${expense.category} - ${expense.product.name} (${expense.expenseType.replace(/_/g, ' ')})`
           : `Expense: ${expense.category} - ${expense.expenseType.replace(/_/g, ' ')}`;
@@ -104,14 +322,15 @@ router.post('/expenses',
         console.log('✅ Expense auto-approved and cash flow created:', {
           expenseId: expense.id,
           amount: expense.amount,
-          category: expense.category
+          category: expense.category,
+          cashFlowId: cashFlowEntry.id
         });
       }
 
       return { expense, cashFlowEntry };
     });
 
-    const message = req.user.role === 'WAREHOUSE_ADMIN' 
+    const message = isWarehouseAdmin 
       ? 'Warehouse expense created and automatically approved. Cash flow entry created.'
       : 'Warehouse expense created successfully and submitted for approval';
 
@@ -120,110 +339,50 @@ router.post('/expenses',
       message,
       data: { 
         expense: result.expense,
-        cashFlowRecorded: req.user.role === 'WAREHOUSE_ADMIN'
-      }
-    });
-  })
-);
-
-// @route   GET /api/v1/warehouse/expenses
-// @desc    Get warehouse expenses with filtering and pagination
-// @access  Private (Warehouse module access)
-router.get('/expenses',
-  authorizeModule('warehouse'),
-  [
-    query('page').optional().isInt({ min: 1 }),
-    query('limit').optional().isInt({ min: 1, max: 100 }),
-    query('status').optional().isIn(['PENDING', 'APPROVED', 'REJECTED', 'PAID']),
-    query('expenseType').optional(),
-    query('startDate').optional().isISO8601(),
-    query('endDate').optional().isISO8601()
-  ],
-  asyncHandler(async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      throw new ValidationError('Invalid query parameters', errors.array());
-    }
-
-    const {
-      page = 1,
-      limit = 20,
-      status,
-      expenseType,
-      category,
-      location,
-      startDate,
-      endDate,
-      isPaid
-    } = req.query;
-
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const take = parseInt(limit);
-
-    const where = {};
-
-    if (status) where.status = status;
-    if (expenseType) where.expenseType = expenseType;
-    if (category) where.category = category;
-    if (location) where.location = { contains: location, mode: 'insensitive' };
-    if (isPaid !== undefined) where.isPaid = isPaid === 'true';
-
-    if (startDate || endDate) {
-      where.expenseDate = {};
-      if (startDate) where.expenseDate.gte = new Date(startDate);
-      if (endDate) where.expenseDate.lte = new Date(endDate);
-    }
-
-    // Role-based access control
-    if (!['SUPER_ADMIN', 'WAREHOUSE_ADMIN'].includes(req.user.role)) {
-      where.createdBy = req.user.id;
-    }
-
-    const [expenses, total] = await Promise.all([
-      prisma.warehouseExpense.findMany({
-        where,
-        include: {
-          product: { select: { name: true, productNo: true } },
-          createdByUser: { select: { username: true } },
-          approver: { select: { username: true } }
-        },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take
-      }),
-      prisma.warehouseExpense.count({ where })
-    ]);
-
-    res.json({
-      success: true,
-      data: {
-        expenses,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total,
-          totalPages: Math.ceil(total / parseInt(limit))
-        }
+        cashFlowRecorded: isWarehouseAdmin,
+        autoApproved: isWarehouseAdmin
       }
     });
   })
 );
 
 // @route   GET /api/v1/warehouse/expenses/:id
-// @desc    Get specific warehouse expense
-// @access  Private (Warehouse module access)
+// @desc    Get single warehouse expense
+// @access  Private (Warehouse Admin, creator, Super Admin)
 router.get('/expenses/:id',
-  authorizeModule('warehouse'),
   param('id').custom(validateCuid('expense ID')),
   asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
     const { id } = req.params;
 
     const expense = await prisma.warehouseExpense.findUnique({
       where: { id },
       include: {
-        product: { select: { name: true, productNo: true } },
-        createdByUser: { select: { username: true, role: true } },
-        approver: { select: { username: true, role: true } }
+        product: { 
+          select: { 
+            id: true,
+            name: true, 
+            productNo: true 
+          } 
+        },
+        createdByUser: { 
+          select: { 
+            id: true,
+            username: true,
+            fullName: true
+          } 
+        },
+        approver: { 
+          select: { 
+            id: true,
+            username: true,
+            fullName: true
+          } 
+        }
       }
     });
 
@@ -231,7 +390,7 @@ router.get('/expenses/:id',
       throw new NotFoundError('Warehouse expense not found');
     }
 
-    // Check access permissions
+    // Check permissions - only creator, warehouse admin, or super admin can view
     if (!['SUPER_ADMIN', 'WAREHOUSE_ADMIN'].includes(req.user.role) && 
         expense.createdBy !== req.user.id) {
       throw new BusinessError('Access denied', 'INSUFFICIENT_PERMISSIONS');
@@ -246,7 +405,7 @@ router.get('/expenses/:id',
 
 // @route   PUT /api/v1/warehouse/expenses/:id
 // @desc    Update warehouse expense (with automatic cash flow on approval)
-// @access  Private (Warehouse Admin or creator)
+// @access  Private (Warehouse Admin, Super Admin, or creator for pending expenses)
 router.put('/expenses/:id',
   param('id').custom(validateCuid('expense ID')),
   updateWarehouseExpenseValidation,
@@ -262,8 +421,8 @@ router.put('/expenses/:id',
     const expense = await prisma.warehouseExpense.findUnique({
       where: { id },
       include: {
-        product: { select: { name: true, productNo: true } },
-        createdByUser: { select: { username: true } }
+        product: { select: { id: true, name: true, productNo: true } },
+        createdByUser: { select: { id: true, username: true, fullName: true } }
       }
     });
 
@@ -274,7 +433,7 @@ router.put('/expenses/:id',
     // Check permissions
     const canUpdate = 
       ['SUPER_ADMIN', 'WAREHOUSE_ADMIN'].includes(req.user.role) ||
-      expense.createdBy === req.user.id;
+      (expense.createdBy === req.user.id && expense.status === 'PENDING');
 
     if (!canUpdate) {
       throw new BusinessError('Access denied', 'INSUFFICIENT_PERMISSIONS');
@@ -296,6 +455,17 @@ router.put('/expenses/:id',
       updateData.paymentDate = new Date();
     }
 
+    // Validate product if being updated
+    if (updateData.productId) {
+      const product = await prisma.product.findUnique({
+        where: { id: updateData.productId }
+      });
+      
+      if (!product) {
+        throw new NotFoundError('Product not found');
+      }
+    }
+
     // ✨ Check if we need to create cash flow (expense is being approved)
     const isBeingApproved = updateData.status === 'APPROVED' && expense.status === 'PENDING';
 
@@ -306,9 +476,9 @@ router.put('/expenses/:id',
         where: { id },
         data: updateData,
         include: {
-          product: { select: { name: true, productNo: true } },
-          createdByUser: { select: { username: true } },
-          approver: { select: { username: true } }
+          product: { select: { id: true, name: true, productNo: true } },
+          createdByUser: { select: { id: true, username: true, fullName: true } },
+          approver: { select: { id: true, username: true, fullName: true } }
         }
       });
 
@@ -324,12 +494,11 @@ router.put('/expenses/:id',
           data: {
             transactionType: 'CASH_OUT',
             amount: expense.amount,
-            paymentMethod: expense.paymentMethod || 'CASH', // Default to CASH if not specified
+            paymentMethod: expense.paymentMethod || 'CASH',
             description: cashFlowDescription,
             referenceNumber: expense.receiptNumber || `EXP-${id.slice(0, 8)}`,
             cashier: req.user.id,
-            module: 'WAREHOUSE'  // ✨ ADD THIS
-
+            module: 'WAREHOUSE'
           }
         });
 
@@ -337,7 +506,8 @@ router.put('/expenses/:id',
           transactionType: 'CASH_OUT',
           amount: expense.amount,
           expenseId: id,
-          category: expense.category
+          category: expense.category,
+          cashFlowId: cashFlowEntry.id
         });
       }
 
@@ -361,7 +531,7 @@ router.put('/expenses/:id',
 
 // @route   POST /api/v1/warehouse/expenses/bulk-approve
 // @desc    Bulk approve warehouse expenses (with automatic cash flow)
-// @access  Private (Warehouse Admin only)
+// @access  Private (Warehouse Admin, Super Admin)
 router.post('/expenses/bulk-approve',
   authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
   [
@@ -380,38 +550,41 @@ router.post('/expenses/bulk-approve',
     const updateData = {
       status: action === 'approve' ? 'APPROVED' : 'REJECTED',
       approvedBy: req.user.id,
-      approvedAt: new Date(),
-      ...(action === 'reject' && rejectionReason && { rejectionReason })
+      approvedAt: new Date()
     };
 
-    // ✨ Use transaction to update expenses and create cash flows atomically
-    const result = await prisma.$transaction(async (tx) => {
-      // Fetch expenses first to get details for cash flow
-      const expenses = await tx.warehouseExpense.findMany({
-        where: {
-          id: { in: expenseIds },
-          status: 'PENDING' // Only update pending expenses
-        },
-        include: {
-          product: { select: { name: true, productNo: true } }
-        }
-      });
+    if (action === 'reject' && rejectionReason) {
+      updateData.rejectionReason = rejectionReason;
+    }
 
-      if (expenses.length === 0) {
-        throw new BusinessError('No pending expenses found to update', 'NO_PENDING_EXPENSES');
+    // Get all expenses to be updated
+    const expenses = await prisma.warehouseExpense.findMany({
+      where: {
+        id: { in: expenseIds },
+        status: 'PENDING'
+      },
+      include: {
+        product: { select: { id: true, name: true, productNo: true } }
       }
+    });
 
+    if (expenses.length === 0) {
+      throw new NotFoundError('No pending expenses found with provided IDs');
+    }
+
+    // Use transaction for bulk update and cash flow creation
+    const result = await prisma.$transaction(async (tx) => {
       // Update all expenses
-      await tx.warehouseExpense.updateMany({
+      const updatedExpenses = await tx.warehouseExpense.updateMany({
         where: {
-          id: { in: expenseIds },
-          status: 'PENDING'
+          id: { in: expenses.map(e => e.id) }
         },
         data: updateData
       });
 
-      // Create cash flow entries only for approved expenses
-      let cashFlowEntries = [];
+      const cashFlowEntries = [];
+
+      // Create cash flow entries for approved expenses
       if (action === 'approve') {
         for (const expense of expenses) {
           const cashFlowDescription = expense.product
@@ -426,33 +599,28 @@ router.post('/expenses/bulk-approve',
               description: cashFlowDescription,
               referenceNumber: expense.receiptNumber || `EXP-${expense.id.slice(0, 8)}`,
               cashier: req.user.id,
-              module: 'WAREHOUSE'  // ✨ ADD THIS
-
+              module: 'WAREHOUSE'
             }
           });
 
           cashFlowEntries.push(cashFlowEntry);
         }
 
-        console.log(`✅ Created ${cashFlowEntries.length} cash flow entries for bulk approved expenses`);
+        console.log(`✅ Bulk approved ${expenses.length} expenses with cash flow entries`);
       }
 
-      return { 
-        updatedCount: expenses.length,
-        cashFlowEntries 
-      };
+      return { updatedExpenses, cashFlowEntries };
     });
 
-    const successMessage = action === 'approve'
-      ? `${result.updatedCount} expense(s) approved successfully. ${result.cashFlowEntries.length} cash flow entry(ies) created.`
-      : `${result.updatedCount} expense(s) rejected successfully`;
+    const message = action === 'approve'
+      ? `Successfully approved ${expenses.length} expense(s). Cash flow entries created.`
+      : `Successfully rejected ${expenses.length} expense(s)`;
 
     res.json({
       success: true,
-      message: successMessage,
+      message,
       data: {
-        updatedCount: result.updatedCount,
-        action,
+        updated: result.updatedExpenses.count,
         cashFlowRecorded: action === 'approve'
       }
     });
@@ -460,11 +628,16 @@ router.post('/expenses/bulk-approve',
 );
 
 // @route   DELETE /api/v1/warehouse/expenses/:id
-// @desc    Delete warehouse expense (soft delete by marking as rejected)
-// @access  Private (Warehouse Admin or creator)
+// @desc    Delete warehouse expense (only if pending)
+// @access  Private (Warehouse Admin, Super Admin, or creator)
 router.delete('/expenses/:id',
   param('id').custom(validateCuid('expense ID')),
   asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
     const { id } = req.params;
 
     const expense = await prisma.warehouseExpense.findUnique({
@@ -475,24 +648,25 @@ router.delete('/expenses/:id',
       throw new NotFoundError('Warehouse expense not found');
     }
 
+    // Only allow deletion of pending expenses
+    if (expense.status !== 'PENDING') {
+      throw new BusinessError(
+        'Cannot delete expense that has been approved or rejected',
+        'INVALID_OPERATION'
+      );
+    }
+
     // Check permissions
     const canDelete = 
       ['SUPER_ADMIN', 'WAREHOUSE_ADMIN'].includes(req.user.role) ||
-      (expense.createdBy === req.user.id && expense.status === 'PENDING');
+      expense.createdBy === req.user.id;
 
     if (!canDelete) {
-      throw new BusinessError('Cannot delete this expense', 'INSUFFICIENT_PERMISSIONS');
+      throw new BusinessError('Access denied', 'INSUFFICIENT_PERMISSIONS');
     }
 
-    // Soft delete by marking as rejected
-    await prisma.warehouseExpense.update({
-      where: { id },
-      data: {
-        status: 'REJECTED',
-        rejectionReason: 'Deleted by user',
-        approvedBy: req.user.id,
-        approvedAt: new Date()
-      }
+    await prisma.warehouseExpense.delete({
+      where: { id }
     });
 
     res.json({
@@ -502,73 +676,76 @@ router.delete('/expenses/:id',
   })
 );
 
-// @route   GET /api/v1/warehouse/expenses/analytics/summary
-// @desc    Get warehouse expense analytics
-// @access  Private (Warehouse Admin)
-router.get('/expenses/analytics/summary',
+// @route   GET /api/v1/warehouse/expenses/stats/summary
+// @desc    Get warehouse expenses summary statistics
+// @access  Private (Warehouse Admin, Super Admin)
+router.get('/expenses/stats/summary',
   authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
-  [
-    query('startDate').optional().isISO8601(),
-    query('endDate').optional().isISO8601()
-  ],
   asyncHandler(async (req, res) => {
     const { startDate, endDate } = req.query;
-    
+
     const dateFilter = {};
-    if (startDate) dateFilter.gte = new Date(startDate);
-    if (endDate) dateFilter.lte = new Date(endDate);
-
-    const expenses = await prisma.warehouseExpense.findMany({
-      where: {
-        expenseDate: Object.keys(dateFilter).length > 0 ? dateFilter : undefined,
-        status: { in: ['APPROVED', 'PAID'] }
+    if (startDate || endDate) {
+      dateFilter.createdAt = {};
+      if (startDate) {
+        dateFilter.createdAt.gte = new Date(startDate);
       }
-    });
-
-    // Calculate expense analytics
-    let totalExpenses = 0;
-    const expensesByType = {};
-    const expensesByCategory = {};
-    const monthlyExpenses = {};
-
-    expenses.forEach(expense => {
-      const amount = parseFloat(expense.amount);
-      totalExpenses += amount;
-
-      // By type
-      if (!expensesByType[expense.expenseType]) {
-        expensesByType[expense.expenseType] = 0;
+      if (endDate) {
+        dateFilter.createdAt.lte = new Date(endDate);
       }
-      expensesByType[expense.expenseType] += amount;
+    }
 
-      // By category
-      if (!expensesByCategory[expense.category]) {
-        expensesByCategory[expense.category] = 0;
-      }
-      expensesByCategory[expense.category] += amount;
-
-      // Monthly breakdown
-      const month = expense.expenseDate.toISOString().slice(0, 7); // YYYY-MM
-      if (!monthlyExpenses[month]) {
-        monthlyExpenses[month] = 0;
-      }
-      monthlyExpenses[month] += amount;
-    });
+    const [
+      totalExpenses,
+      pendingExpenses,
+      approvedExpenses,
+      rejectedExpenses,
+      totalAmount,
+      approvedAmount,
+      expensesByType
+    ] = await Promise.all([
+      prisma.warehouseExpense.count({ where: dateFilter }),
+      prisma.warehouseExpense.count({ 
+        where: { ...dateFilter, status: 'PENDING' } 
+      }),
+      prisma.warehouseExpense.count({ 
+        where: { ...dateFilter, status: 'APPROVED' } 
+      }),
+      prisma.warehouseExpense.count({ 
+        where: { ...dateFilter, status: 'REJECTED' } 
+      }),
+      prisma.warehouseExpense.aggregate({
+        where: dateFilter,
+        _sum: { amount: true }
+      }),
+      prisma.warehouseExpense.aggregate({
+        where: { ...dateFilter, status: 'APPROVED' },
+        _sum: { amount: true }
+      }),
+      prisma.warehouseExpense.groupBy({
+        by: ['expenseType'],
+        where: { ...dateFilter, status: 'APPROVED' },
+        _sum: { amount: true },
+        _count: { id: true }
+      })
+    ]);
 
     res.json({
       success: true,
       data: {
         summary: {
-          totalExpenses: parseFloat(totalExpenses.toFixed(2)),
-          totalRecords: expenses.length,
-          averageExpense: expenses.length > 0 ? parseFloat((totalExpenses / expenses.length).toFixed(2)) : 0
+          totalExpenses,
+          pendingExpenses,
+          approvedExpenses,
+          rejectedExpenses,
+          totalAmount: totalAmount._sum.amount || 0,
+          approvedAmount: approvedAmount._sum.amount || 0
         },
-        breakdown: {
-          byType: expensesByType,
-          byCategory: expensesByCategory,
-          monthly: monthlyExpenses
-        },
-        period: { startDate, endDate }
+        byType: expensesByType.map(item => ({
+          expenseType: item.expenseType,
+          count: item._count.id,
+          totalAmount: item._sum.amount || 0
+        }))
       }
     });
   })
