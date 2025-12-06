@@ -1374,7 +1374,7 @@ router.put('/sales/:id',
       where: { id },
       include: {
         product: true,
-        batchSales: true,
+        warehouseBatchSales: true,
         debtor: true
       }
     });
@@ -1449,7 +1449,7 @@ router.delete('/sales/:id',
     const sale = await prisma.warehouseSale.findUnique({
       where: { id },
       include: {
-        batchSales: {
+        warehouseBatchSales: {
           include: {
             batch: true
           }
@@ -1472,7 +1472,7 @@ router.delete('/sales/:id',
 
     await prisma.$transaction(async (tx) => {
       // 1. Reverse batch sales - add quantity back
-      for (const batchSale of sale.batchSales) {
+      for (const batchSale of sale.warehouseBatchSales) {
         await tx.warehouseProductPurchase.update({
           where: { id: batchSale.batchId },
           data: {
