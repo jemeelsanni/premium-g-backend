@@ -509,4 +509,192 @@ router.get('/:id',
   })
 );
 
+// ================================
+// UPDATE PURCHASE
+// ================================
+router.put('/:id',
+  authorizeModule('warehouse', 'admin'),
+  [
+    body('quantity').optional().isInt({ min: 1 }),
+    body('costPerUnit').optional().isFloat({ min: 0 }),
+    body('expiryDate').optional().isISO8601(),
+    body('batchNumber').optional().trim(),
+    body('vendorName').optional().trim(),
+    body('paymentStatus').optional().isIn(['PAID', 'PARTIAL', 'PENDING']),
+    body('amountPaid').optional().isFloat({ min: 0 })
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
+    const { id } = req.params;
+    const updateData = req.body;
+
+    const existingPurchase = await prisma.warehouseProductPurchase.findUnique({
+      where: { id },
+      include: {
+        batchSales: true
+      }
+    });
+
+    if (!existingPurchase) {
+      throw new NotFoundError('Purchase not found');
+    }
+
+    // Check if batch has been used in sales
+    if (existingPurchase.batchSales.length > 0 && updateData.quantity) {
+      const totalSold = existingPurchase.quantitySold;
+      if (updateData.quantity < totalSold) {
+        throw new BusinessError(
+          `Cannot reduce quantity below ${totalSold} - this amount has already been sold`,
+          'QUANTITY_BELOW_SOLD'
+        );
+      }
+    }
+
+    // Recalculate if quantity or cost changed
+    if (updateData.quantity || updateData.costPerUnit) {
+      const quantity = updateData.quantity || existingPurchase.quantity;
+      const costPerUnit = updateData.costPerUnit || existingPurchase.costPerUnit;
+      
+      updateData.totalCost = quantity * costPerUnit;
+      updateData.quantityRemaining = quantity - existingPurchase.quantitySold;
+      
+      // Update batch status if needed
+      if (updateData.quantityRemaining === 0) {
+        updateData.batchStatus = 'DEPLETED';
+      } else if (updateData.quantityRemaining > 0) {
+        updateData.batchStatus = 'ACTIVE';
+      }
+    }
+
+    // Recalculate payment if amounts changed
+    if (updateData.amountPaid !== undefined || updateData.totalCost !== undefined) {
+      const totalCost = updateData.totalCost || existingPurchase.totalCost;
+      const amountPaid = updateData.amountPaid !== undefined ? updateData.amountPaid : existingPurchase.amountPaid;
+      updateData.amountDue = totalCost - amountPaid;
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Update the purchase
+      const updatedPurchase = await tx.warehouseProductPurchase.update({
+        where: { id },
+        data: updateData,
+        include: {
+          product: {
+            select: { name: true, productNo: true }
+          },
+          createdByUser: {
+            select: { username: true }
+          }
+        }
+      });
+
+      // If quantity changed, update inventory
+      if (updateData.quantity && updateData.quantity !== existingPurchase.quantity) {
+        const quantityDiff = updateData.quantity - existingPurchase.quantity;
+        const inventory = await tx.warehouseInventory.findFirst({
+          where: { productId: existingPurchase.productId }
+        });
+
+        if (inventory) {
+          const updates = {};
+          if (existingPurchase.unitType === 'PALLETS') {
+            updates.pallets = inventory.pallets + quantityDiff;
+          } else if (existingPurchase.unitType === 'PACKS') {
+            updates.packs = inventory.packs + quantityDiff;
+          } else if (existingPurchase.unitType === 'UNITS') {
+            updates.units = inventory.units + quantityDiff;
+          }
+
+          await tx.warehouseInventory.update({
+            where: { id: inventory.id },
+            data: updates
+          });
+        }
+      }
+
+      return updatedPurchase;
+    });
+
+    res.json({
+      success: true,
+      message: 'Purchase updated successfully',
+      data: { purchase: result }
+    });
+  })
+);
+
+// ================================
+// DELETE PURCHASE
+// ================================
+router.delete('/:id',
+  authorizeModule('warehouse', 'admin'),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+
+    const purchase = await prisma.warehouseProductPurchase.findUnique({
+      where: { id },
+      include: {
+        batchSales: true
+      }
+    });
+
+    if (!purchase) {
+      throw new NotFoundError('Purchase not found');
+    }
+
+    // Cannot delete if batch has been used
+    if (purchase.batchSales.length > 0 || purchase.quantitySold > 0) {
+      throw new BusinessError(
+        'Cannot delete purchase - batch has been used in sales',
+        'BATCH_IN_USE'
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // Reverse inventory
+      const inventory = await tx.warehouseInventory.findFirst({
+        where: { productId: purchase.productId }
+      });
+
+      if (inventory) {
+        const updates = {};
+        if (purchase.unitType === 'PALLETS') {
+          updates.pallets = Math.max(0, inventory.pallets - purchase.quantity);
+        } else if (purchase.unitType === 'PACKS') {
+          updates.packs = Math.max(0, inventory.packs - purchase.quantity);
+        } else if (purchase.unitType === 'UNITS') {
+          updates.units = Math.max(0, inventory.units - purchase.quantity);
+        }
+
+        await tx.warehouseInventory.update({
+          where: { id: inventory.id },
+          data: updates
+        });
+      }
+
+      // Delete cash flow entry if exists
+      await tx.cashFlow.deleteMany({
+        where: {
+          module: 'WAREHOUSE',
+          referenceNumber: purchase.invoiceNumber || purchase.orderNumber || `PUR-${id.slice(-8)}`
+        }
+      });
+
+      // Delete the purchase
+      await tx.warehouseProductPurchase.delete({
+        where: { id }
+      });
+    });
+
+    res.json({
+      success: true,
+      message: 'Purchase deleted successfully. Inventory has been adjusted.'
+    });
+  })
+);
+
 module.exports = router;

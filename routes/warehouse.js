@@ -1347,6 +1347,184 @@ router.get('/sales/:id',
   })
 );
 
+
+// @route   PUT /api/v1/warehouse/sales/:id
+// @desc    Update warehouse sale (admin only)
+// @access  Private (Warehouse Admin, Super Admin)
+router.put('/sales/:id',
+  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
+  [
+    param('id').custom(validateCuid('sale ID')),
+    body('quantity').optional().isInt({ min: 1 }),
+    body('unitPrice').optional().isFloat({ min: 0 }),
+    body('customerName').optional().trim(),
+    body('customerPhone').optional().trim(),
+    body('notes').optional().trim(),
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
+    const { id } = req.params;
+    const updateData = req.body;
+
+    const existingSale = await prisma.warehouseSale.findUnique({
+      where: { id },
+      include: {
+        product: true,
+        batchSales: true,
+        debtor: true
+      }
+    });
+
+    if (!existingSale) {
+      throw new NotFoundError('Sale not found');
+    }
+
+    // Don't allow editing sales with outstanding debt
+    if (existingSale.debtor && existingSale.debtor.amountDue > 0) {
+      throw new BusinessError(
+        'Cannot edit sale with outstanding debt. Clear debt first.',
+        'OUTSTANDING_DEBT'
+      );
+    }
+
+    // Recalculate totals if price or quantity changed
+    if (updateData.quantity || updateData.unitPrice) {
+      const quantity = updateData.quantity || existingSale.quantity;
+      const unitPrice = updateData.unitPrice || existingSale.unitPrice;
+      
+      updateData.totalAmount = quantity * unitPrice;
+      
+      // Recalculate with discount if applicable
+      if (existingSale.discountApplied && existingSale.discountPercentage) {
+        const discountAmount = (updateData.totalAmount * existingSale.discountPercentage) / 100;
+        updateData.totalDiscountAmount = discountAmount;
+        updateData.totalAmount -= discountAmount;
+      }
+
+      // Recalculate profit
+      const costPerUnit = existingSale.costPerUnit || 0;
+      updateData.totalCost = quantity * costPerUnit;
+      updateData.grossProfit = updateData.totalAmount - updateData.totalCost;
+    }
+
+    const updatedSale = await prisma.warehouseSale.update({
+      where: { id },
+      data: updateData,
+      include: {
+        product: true,
+        salesOfficerUser: {
+          select: { username: true }
+        }
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Sale updated successfully',
+      data: { sale: updatedSale }
+    });
+  })
+);
+
+// @route   DELETE /api/v1/warehouse/sales/:id
+// @desc    Delete warehouse sale (reverse inventory and cash flow)
+// @access  Private (Warehouse Admin, Super Admin)
+router.delete('/sales/:id',
+  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
+  [
+    param('id').custom(validateCuid('sale ID'))
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
+    const { id } = req.params;
+
+    const sale = await prisma.warehouseSale.findUnique({
+      where: { id },
+      include: {
+        batchSales: {
+          include: {
+            batch: true
+          }
+        },
+        debtor: true
+      }
+    });
+
+    if (!sale) {
+      throw new NotFoundError('Sale not found');
+    }
+
+    // Check if sale has outstanding debt
+    if (sale.debtor && sale.debtor.amountDue > 0) {
+      throw new BusinessError(
+        'Cannot delete sale with outstanding debt. Clear debt first.',
+        'OUTSTANDING_DEBT'
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // 1. Reverse batch sales - add quantity back
+      for (const batchSale of sale.batchSales) {
+        await tx.warehouseProductPurchase.update({
+          where: { id: batchSale.batchId },
+          data: {
+            quantityRemaining: {
+              increment: batchSale.quantitySold
+            },
+            quantitySold: {
+              decrement: batchSale.quantitySold
+            },
+            batchStatus: 'ACTIVE'
+          }
+        });
+      }
+
+      // 2. Delete batch sale records
+      await tx.warehouseBatchSale.deleteMany({
+        where: { saleId: id }
+      });
+
+      // 3. Delete debtor record if exists
+      if (sale.debtor) {
+        // Delete payments first
+        await tx.warehouseDebtorPayment.deleteMany({
+          where: { debtorId: sale.debtor.id }
+        });
+        
+        await tx.warehouseDebtor.delete({
+          where: { id: sale.debtor.id }
+        });
+      }
+
+      // 4. Reverse cash flow entry if exists
+      await tx.cashFlow.deleteMany({
+        where: {
+          module: 'WAREHOUSE',
+          referenceNumber: sale.receiptNumber
+        }
+      });
+
+      // 5. Delete the sale
+      await tx.warehouseSale.delete({
+        where: { id }
+      });
+    });
+
+    res.json({
+      success: true,
+      message: 'Sale deleted successfully. Inventory has been restored.'
+    });
+  })
+);
+
 // ================================
 // CASH FLOW ROUTES
 // ================================
