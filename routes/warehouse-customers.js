@@ -59,7 +59,7 @@ router.get('/customers',
   authorizeModule('warehouse', 'read'),
   [
     query('sortBy').optional().isIn([
-      'name', 'recent', 'topSpender', 'topPurchases', 'creditScore'
+      'name', 'recent', 'topSpender', 'topPurchases', 'topProfit', 'creditScore'
     ]),
     query('customerType').optional().isIn(['INDIVIDUAL', 'BUSINESS', 'RETAILER']),
     query('hasOutstandingDebt').optional().isBoolean(),
@@ -151,24 +151,30 @@ router.get('/customers',
 
     // Dynamic sorting - default to topPurchases
     let orderBy = {};
-    switch (sortBy) {
-      case 'recent':
-        orderBy = { lastPurchaseDate: 'desc' };
-        break;
-      case 'topSpender':
-        orderBy = { totalSpent: 'desc' };
-        break;
-      case 'topPurchases':
-        orderBy = { totalPurchases: 'desc' };
-        break;
-      case 'creditScore':
-        orderBy = { paymentReliabilityScore: 'desc' };
-        break;
-      case 'name':
-        orderBy = { name: 'asc' };
-        break;
-      default:
-        orderBy = { totalPurchases: 'desc' }; // ✅ Default sorting
+    const sortByProfit = sortBy === 'topProfit';
+
+    // For profit sorting, we need to fetch all customers and sort in-memory
+    // For other sorts, we can use database-level sorting
+    if (!sortByProfit) {
+      switch (sortBy) {
+        case 'recent':
+          orderBy = { lastPurchaseDate: 'desc' };
+          break;
+        case 'topSpender':
+          orderBy = { totalSpent: 'desc' };
+          break;
+        case 'topPurchases':
+          orderBy = { totalPurchases: 'desc' };
+          break;
+        case 'creditScore':
+          orderBy = { paymentReliabilityScore: 'desc' };
+          break;
+        case 'name':
+          orderBy = { name: 'asc' };
+          break;
+        default:
+          orderBy = { totalPurchases: 'desc' }; // ✅ Default sorting
+      }
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -176,9 +182,9 @@ router.get('/customers',
     const [customers, total, analytics] = await Promise.all([
       prisma.warehouseCustomer.findMany({
         where,
-        skip,
-        take: parseInt(limit),
-        orderBy,
+        // When sorting by profit, fetch all and paginate later
+        ...(sortByProfit ? {} : { skip, take: parseInt(limit) }),
+        ...(sortByProfit ? {} : { orderBy }),
         include: {
           _count: {
             select: {
@@ -225,7 +231,7 @@ router.get('/customers',
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const enrichedCustomers = customers.map(customer => {
+    let enrichedCustomers = customers.map(customer => {
       // Calculate total profit from sales
       const totalProfit = customer.sales.reduce((sum, sale) => {
         return sum + (parseFloat(sale.grossProfit) || 0);
@@ -241,6 +247,12 @@ router.get('/customers',
         debtCount: customer._count.debtors
       };
     });
+
+    // If sorting by profit, sort in-memory and paginate
+    if (sortByProfit) {
+      enrichedCustomers.sort((a, b) => b.totalProfit - a.totalProfit);
+      enrichedCustomers = enrichedCustomers.slice(skip, skip + parseInt(limit));
+    }
 
     res.json({
       success: true,
