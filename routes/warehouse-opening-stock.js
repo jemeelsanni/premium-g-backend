@@ -116,13 +116,6 @@ router.get(
           select: { quantity: true, unitPrice: true, totalAmount: true, unitType: true }
         });
 
-        // Calculate opening stock
-        const openingStock = calculateStock(purchasesBeforeDate, salesBeforeDate);
-        const totalOpeningStock = 
-          (openingStock.pallets * (product.packsPerPallet || 1)) + 
-          openingStock.packs + 
-          openingStock.units;
-
         // Calculate movements on the date
         const totalSalesQuantity = salesOnDate.reduce((sum, sale) => {
           if (sale.unitType === 'PALLETS') return sum + (sale.quantity * (product.packsPerPallet || 1));
@@ -140,18 +133,45 @@ router.get(
           return sum;
         }, 0);
 
-        // Calculate closing stock
-        const allPurchases = [...purchasesBeforeDate, ...purchasesOnDate];
-        const allSales = [...salesBeforeDate, ...salesOnDate];
-        const closingStock = calculateStock(allPurchases, allSales);
-        const totalClosingStock = 
-          (closingStock.pallets * (product.packsPerPallet || 1)) + 
-          closingStock.packs + 
-          closingStock.units;
-
-        // Get inventory location info
+        // Get inventory location info and current stock (source of truth)
         const inventoryLocation = product.warehouseInventory[0]?.location || null;
         const reorderLevel = product.warehouseInventory[0]?.reorderLevel || 0;
+        const currentPallets = product.warehouseInventory[0]?.pallets || 0;
+        const currentPacks = product.warehouseInventory[0]?.packs || 0;
+        const currentUnits = product.warehouseInventory[0]?.units || 0;
+
+        // Use current inventory as closing stock (if today) or calculate from transactions
+        const isToday = targetDate.toDateString() === new Date().toDateString();
+        let closingStock, totalClosingStock;
+
+        if (isToday) {
+          // For today, use actual inventory as closing stock
+          closingStock = {
+            pallets: currentPallets,
+            packs: currentPacks,
+            units: currentUnits
+          };
+          totalClosingStock = (currentPallets * (product.packsPerPallet || 1)) + currentPacks + currentUnits;
+        } else {
+          // For past dates, calculate from transactions
+          const allPurchases = [...purchasesBeforeDate, ...purchasesOnDate];
+          const allSales = [...salesBeforeDate, ...salesOnDate];
+          closingStock = calculateStock(allPurchases, allSales);
+          totalClosingStock =
+            (closingStock.pallets * (product.packsPerPallet || 1)) +
+            closingStock.packs +
+            closingStock.units;
+        }
+
+        // Calculate opening stock: Closing Stock + Sales Today - Purchases Today
+        const totalOpeningStock = totalClosingStock + totalSalesQuantity - totalPurchasesQuantity;
+
+        // Distribute opening stock across pallets/packs/units (simplified: keep as packs)
+        const openingStock = {
+          pallets: 0,
+          packs: totalOpeningStock,
+          units: 0
+        };
 
         return {
           productId: product.id,
