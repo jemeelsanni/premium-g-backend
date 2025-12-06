@@ -195,12 +195,8 @@ router.get(
       })
     );
 
-    // Filter out products with zero opening stock if needed
-    let filteredData = openingStockData.filter(
-      item => item.openingStock.total > 0 || 
-              item.movements.salesQuantity > 0 || 
-              item.movements.purchasesQuantity > 0
-    );
+    // Include all products (don't filter out products with zero activity)
+    let filteredData = openingStockData;
 
     // Apply low stock filter if requested
     if (lowStockOnly === true) {
