@@ -530,7 +530,15 @@ router.put('/:id',
     }
 
     const { id } = req.params;
-    const updateData = req.body;
+    const updateData = { ...req.body };
+
+    // Convert date strings to Date objects
+    if (updateData.expiryDate) {
+      updateData.expiryDate = new Date(updateData.expiryDate);
+    }
+    if (updateData.purchaseDate) {
+      updateData.purchaseDate = new Date(updateData.purchaseDate);
+    }
 
     const existingPurchase = await prisma.warehouseProductPurchase.findUnique({
       where: { id },
