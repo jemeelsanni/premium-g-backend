@@ -185,6 +185,11 @@ router.get('/customers',
               sales: true,
               debtors: true
             }
+          },
+          sales: {
+            select: {
+              grossProfit: true
+            }
           }
         }
       }),
@@ -220,14 +225,22 @@ router.get('/customers',
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const enrichedCustomers = customers.map(customer => ({
-      ...customer,
-      isVIP: vipIds.includes(customer.id),
-      isRecent: customer.lastPurchaseDate && 
-                customer.lastPurchaseDate >= thirtyDaysAgo,
-      hasDebt: parseFloat(customer.outstandingDebt || 0) > 0,
-      debtCount: customer._count.debtors
-    }));
+    const enrichedCustomers = customers.map(customer => {
+      // Calculate total profit from sales
+      const totalProfit = customer.sales.reduce((sum, sale) => {
+        return sum + (parseFloat(sale.grossProfit) || 0);
+      }, 0);
+
+      return {
+        ...customer,
+        totalProfit,
+        isVIP: vipIds.includes(customer.id),
+        isRecent: customer.lastPurchaseDate &&
+                  customer.lastPurchaseDate >= thirtyDaysAgo,
+        hasDebt: parseFloat(customer.outstandingDebt || 0) > 0,
+        debtCount: customer._count.debtors
+      };
+    });
 
     res.json({
       success: true,
