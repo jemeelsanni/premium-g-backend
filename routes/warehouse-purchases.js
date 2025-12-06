@@ -535,7 +535,7 @@ router.put('/:id',
     const existingPurchase = await prisma.warehouseProductPurchase.findUnique({
       where: { id },
       include: {
-        batchSales: true
+        warehouseBatchSales: true
       }
     });
 
@@ -544,7 +544,7 @@ router.put('/:id',
     }
 
     // Check if batch has been used in sales
-    if (existingPurchase.batchSales.length > 0 && updateData.quantity) {
+    if (existingPurchase.warehouseBatchSales.length > 0 && updateData.quantity) {
       const totalSold = existingPurchase.quantitySold;
       if (updateData.quantity < totalSold) {
         throw new BusinessError(
@@ -616,6 +616,80 @@ router.put('/:id',
         }
       }
 
+      // ✨ UPDATE CASH FLOW ENTRY IF PAYMENT DETAILS CHANGED ✨
+      const paymentChanged = updateData.amountPaid !== undefined ||
+                            updateData.paymentStatus !== undefined ||
+                            updateData.totalCost !== undefined;
+
+      if (paymentChanged) {
+        const referenceNumber = existingPurchase.invoiceNumber ||
+                               existingPurchase.orderNumber ||
+                               `PUR-${id.slice(-8)}`;
+
+        // Find existing cash flow entry
+        const existingCashFlow = await tx.cashFlow.findFirst({
+          where: {
+            module: 'WAREHOUSE',
+            referenceNumber: referenceNumber
+          }
+        });
+
+        const newAmountPaid = updatedPurchase.amountPaid;
+        const newPaymentStatus = updatedPurchase.paymentStatus;
+
+        // Determine what to do with cash flow
+        if (newPaymentStatus === 'PAID' || newPaymentStatus === 'PARTIAL') {
+          // Should have a cash flow entry
+          if (newAmountPaid > 0) {
+            const cashFlowDescription = `Purchase: ${updatedPurchase.product.name} (${updatedPurchase.quantity} ${updatedPurchase.unitType}) from ${updatedPurchase.vendorName}`;
+
+            if (existingCashFlow) {
+              // Update existing cash flow entry
+              await tx.cashFlow.update({
+                where: { id: existingCashFlow.id },
+                data: {
+                  amount: newAmountPaid,
+                  paymentMethod: updatedPurchase.paymentMethod,
+                  description: cashFlowDescription
+                }
+              });
+              console.log('✅ Cash flow entry updated for purchase:', {
+                purchaseId: id,
+                oldAmount: existingCashFlow.amount,
+                newAmount: newAmountPaid
+              });
+            } else {
+              // Create new cash flow entry (didn't exist before)
+              await tx.cashFlow.create({
+                data: {
+                  transactionType: 'CASH_OUT',
+                  amount: newAmountPaid,
+                  paymentMethod: updatedPurchase.paymentMethod,
+                  description: cashFlowDescription,
+                  referenceNumber: referenceNumber,
+                  cashier: req.user.id,
+                  module: 'WAREHOUSE'
+                }
+              });
+              console.log('✅ Cash flow entry created for updated purchase:', {
+                purchaseId: id,
+                amount: newAmountPaid
+              });
+            }
+          }
+        } else if (newPaymentStatus === 'PENDING') {
+          // Should NOT have a cash flow entry (delete if exists)
+          if (existingCashFlow) {
+            await tx.cashFlow.delete({
+              where: { id: existingCashFlow.id }
+            });
+            console.log('✅ Cash flow entry deleted for purchase (status changed to PENDING):', {
+              purchaseId: id
+            });
+          }
+        }
+      }
+
       return updatedPurchase;
     });
 
@@ -638,7 +712,7 @@ router.delete('/:id',
     const purchase = await prisma.warehouseProductPurchase.findUnique({
       where: { id },
       include: {
-        batchSales: true
+        warehouseBatchSales: true
       }
     });
 
@@ -647,7 +721,7 @@ router.delete('/:id',
     }
 
     // Cannot delete if batch has been used
-    if (purchase.batchSales.length > 0 || purchase.quantitySold > 0) {
+    if (purchase.warehouseBatchSales.length > 0 || purchase.quantitySold > 0) {
       throw new BusinessError(
         'Cannot delete purchase - batch has been used in sales',
         'BATCH_IN_USE'
