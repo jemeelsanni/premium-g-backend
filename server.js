@@ -33,6 +33,9 @@ const distributionAnalyticsRoutes = require('./routes/analytics/distribution');
 const transportAnalyticsRoutes = require('./routes/analytics/transport');
 const warehouseAnalyticsRoutes = require('./routes/analytics/warehouse');
 
+// AUDIT LOG ROUTES
+const auditLogRoutes = require('./routes/audit-logs');
+
 
 const app = express();
 const prisma = new PrismaClient();
@@ -375,6 +378,9 @@ app.use(`/api/${apiVersion}/analytics/warehouse`, authenticateToken, warehouseAn
 
 // Admin routes (Super Admin only)
 app.use(`/api/${apiVersion}/admin`, authenticateToken, adminRoutes);
+
+// Audit log routes (Super Admin, Warehouse Admin)
+app.use(`/api/${apiVersion}/audit-logs`, authenticateToken, auditLogRoutes);
 
 // ================================
 // API DOCUMENTATION

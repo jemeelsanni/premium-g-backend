@@ -326,7 +326,8 @@ router.put('/inventory/:id',
     body('pallets').optional().isInt({ min: 0 }),
     body('packs').optional().isInt({ min: 0 }),
     body('units').optional().isInt({ min: 0 }),
-    body('reorderLevel').optional().isInt({ min: 0 })
+    body('reorderLevel').optional().isInt({ min: 0 }),
+    body('reason').optional().isString().notEmpty().withMessage('Reason is recommended for inventory changes')
   ],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -335,14 +336,53 @@ router.put('/inventory/:id',
     }
 
     const { id } = req.params;
-    const updateData = req.body;
+    const { reason, ...updateData } = req.body;
 
+    // Get old inventory values before update
+    const oldInventory = await prisma.warehouseInventory.findUnique({
+      where: { id },
+      include: { product: true }
+    });
+
+    if (!oldInventory) {
+      throw new NotFoundError('Inventory not found');
+    }
+
+    // Update inventory
     const inventory = await prisma.warehouseInventory.update({
       where: { id },
       data: updateData,
       include: {
         product: true
       }
+    });
+
+    // Create audit log
+    const { logInventoryChange, getRequestMetadata } = require('../utils/auditLogger');
+    const { ipAddress, userAgent } = getRequestMetadata(req);
+
+    await logInventoryChange({
+      userId: req.user.id,
+      action: 'UPDATE',
+      inventoryId: inventory.id,
+      productId: inventory.productId,
+      productName: inventory.product.name,
+      oldInventory: {
+        pallets: oldInventory.pallets,
+        packs: oldInventory.packs,
+        units: oldInventory.units,
+        reorderLevel: oldInventory.reorderLevel
+      },
+      newInventory: {
+        pallets: inventory.pallets,
+        packs: inventory.packs,
+        units: inventory.units,
+        reorderLevel: inventory.reorderLevel
+      },
+      reason: reason || 'No reason provided',
+      triggeredBy: 'MANUAL_ADJUSTMENT',
+      ipAddress,
+      userAgent
     });
 
     res.json({
@@ -1471,6 +1511,16 @@ router.delete('/sales/:id',
     }
 
     await prisma.$transaction(async (tx) => {
+      // Get product info and inventory for logging
+      const product = await tx.product.findUnique({
+        where: { id: sale.productId },
+        select: { name: true, productNo: true }
+      });
+
+      const inventoryBefore = await tx.warehouseInventory.findFirst({
+        where: { productId: sale.productId }
+      });
+
       // 1. Reverse batch sales - add quantity back
       for (const batchSale of sale.warehouseBatchSales) {
         await tx.warehouseProductPurchase.update({
@@ -1487,24 +1537,95 @@ router.delete('/sales/:id',
         });
       }
 
-      // 2. Delete batch sale records
+      // 2. Restore inventory (reverse the sale deduction)
+      if (inventoryBefore) {
+        const oldInventoryState = {
+          pallets: inventoryBefore.pallets,
+          packs: inventoryBefore.packs,
+          units: inventoryBefore.units
+        };
+
+        const updates = {};
+        if (sale.unitType === 'PALLETS') {
+          updates.pallets = inventoryBefore.pallets + sale.quantity;
+        } else if (sale.unitType === 'PACKS') {
+          updates.packs = inventoryBefore.packs + sale.quantity;
+        } else if (sale.unitType === 'UNITS') {
+          updates.units = inventoryBefore.units + sale.quantity;
+        }
+
+        const updatedInventory = await tx.warehouseInventory.update({
+          where: { id: inventoryBefore.id },
+          data: updates
+        });
+
+        // Log inventory restoration
+        const { logInventoryChange, getRequestMetadata } = require('../utils/auditLogger');
+        const { ipAddress, userAgent } = getRequestMetadata(req);
+
+        await logInventoryChange({
+          userId: req.user.id,
+          action: 'UPDATE',
+          inventoryId: inventoryBefore.id,
+          productId: sale.productId,
+          productName: product?.name || 'Unknown',
+          oldInventory: oldInventoryState,
+          newInventory: {
+            pallets: updatedInventory.pallets,
+            packs: updatedInventory.packs,
+            units: updatedInventory.units
+          },
+          reason: `Sale deleted (Receipt: ${sale.receiptNumber}) - restored ${sale.quantity} ${sale.unitType}`,
+          triggeredBy: 'SALE_DELETE',
+          referenceId: id,
+          ipAddress,
+          userAgent
+        }, tx);
+      }
+
+      // 3. Log sale deletion
+      const { logSaleChange, getRequestMetadata } = require('../utils/auditLogger');
+      const { ipAddress, userAgent } = getRequestMetadata(req);
+
+      await logSaleChange({
+        userId: req.user.id,
+        action: 'DELETE',
+        saleId: id,
+        oldSale: {
+          receiptNumber: sale.receiptNumber,
+          productId: sale.productId,
+          productName: product?.name || 'Unknown',
+          quantity: sale.quantity,
+          unitType: sale.unitType,
+          unitPrice: sale.unitPrice,
+          totalAmount: sale.totalAmount,
+          customerName: sale.customerName,
+          customerPhone: sale.customerPhone
+        },
+        newSale: null,
+        reason: `Sale deleted${sale.debtor ? ' (debt cleared)' : ''}`,
+        ipAddress,
+        userAgent
+      }, tx);
+
+      // 4. Delete batch sale records
       await tx.warehouseBatchSale.deleteMany({
         where: { saleId: id }
       });
 
-      // 3. Delete debtor record if exists
+      // 5. Delete debtor record if exists
       if (sale.debtor) {
         // Delete payments first
         await tx.warehouseDebtorPayment.deleteMany({
           where: { debtorId: sale.debtor.id }
         });
-        
+
         await tx.warehouseDebtor.delete({
           where: { id: sale.debtor.id }
         });
       }
 
-      // 4. Reverse cash flow entry if exists
+      // 6. Reverse cash flow entry if exists
       await tx.cashFlow.deleteMany({
         where: {
           module: 'WAREHOUSE',
@@ -1512,7 +1633,7 @@ router.delete('/sales/:id',
         }
       });
 
-      // 5. Delete the sale
+      // 7. Delete the sale
       await tx.warehouseSale.delete({
         where: { id }
       });

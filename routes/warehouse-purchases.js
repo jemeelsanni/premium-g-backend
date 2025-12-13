@@ -608,6 +608,12 @@ router.put('/:id',
         });
 
         if (inventory) {
+          const oldInventoryState = {
+            pallets: inventory.pallets,
+            packs: inventory.packs,
+            units: inventory.units
+          };
+
           const updates = {};
           if (existingPurchase.unitType === 'PALLETS') {
             updates.pallets = inventory.pallets + quantityDiff;
@@ -617,10 +623,33 @@ router.put('/:id',
             updates.units = inventory.units + quantityDiff;
           }
 
-          await tx.warehouseInventory.update({
+          const updatedInventory = await tx.warehouseInventory.update({
             where: { id: inventory.id },
             data: updates
           });
+
+          // Log inventory change caused by purchase update
+          const { logInventoryChange, getRequestMetadata } = require('../utils/auditLogger');
+          const { ipAddress, userAgent } = getRequestMetadata(req);
+
+          await logInventoryChange({
+            userId: req.user.id,
+            action: 'UPDATE',
+            inventoryId: inventory.id,
+            productId: existingPurchase.productId,
+            productName: updatedPurchase.product.name,
+            oldInventory: oldInventoryState,
+            newInventory: {
+              pallets: updatedInventory.pallets,
+              packs: updatedInventory.packs,
+              units: updatedInventory.units
+            },
+            reason: `Purchase quantity ${quantityDiff > 0 ? 'increased' : 'decreased'} by ${Math.abs(quantityDiff)} ${existingPurchase.unitType}`,
+            triggeredBy: 'PURCHASE_UPDATE',
+            referenceId: id,
+            ipAddress,
+            userAgent
+          }, tx);
         }
       }
 
@@ -737,12 +766,24 @@ router.delete('/:id',
     }
 
     await prisma.$transaction(async (tx) => {
+      // Get product info for logging
+      const product = await tx.product.findUnique({
+        where: { id: purchase.productId },
+        select: { name: true, productNo: true }
+      });
+
       // Reverse inventory
       const inventory = await tx.warehouseInventory.findFirst({
         where: { productId: purchase.productId }
       });
 
       if (inventory) {
+        const oldInventoryState = {
+          pallets: inventory.pallets,
+          packs: inventory.packs,
+          units: inventory.units
+        };
+
         const updates = {};
         if (purchase.unitType === 'PALLETS') {
           updates.pallets = Math.max(0, inventory.pallets - purchase.quantity);
@@ -752,11 +793,58 @@ router.delete('/:id',
           updates.units = Math.max(0, inventory.units - purchase.quantity);
         }
 
-        await tx.warehouseInventory.update({
+        const updatedInventory = await tx.warehouseInventory.update({
           where: { id: inventory.id },
           data: updates
         });
+
+        // Log inventory change caused by purchase deletion
+        const { logInventoryChange, getRequestMetadata } = require('../utils/auditLogger');
+        const { ipAddress, userAgent } = getRequestMetadata(req);
+
+        await logInventoryChange({
+          userId: req.user.id,
+          action: 'UPDATE',
+          inventoryId: inventory.id,
+          productId: purchase.productId,
+          productName: product?.name || 'Unknown',
+          oldInventory: oldInventoryState,
+          newInventory: {
+            pallets: updatedInventory.pallets,
+            packs: updatedInventory.packs,
+            units: updatedInventory.units
+          },
+          reason: `Purchase deleted - reversed ${purchase.quantity} ${purchase.unitType}`,
+          triggeredBy: 'PURCHASE_DELETE',
+          referenceId: id,
+          ipAddress,
+          userAgent
+        }, tx);
       }
+
+      // Log purchase deletion
+      const { logPurchaseChange, getRequestMetadata } = require('../utils/auditLogger');
+      const { ipAddress, userAgent } = getRequestMetadata(req);
+
+      await logPurchaseChange({
+        userId: req.user.id,
+        action: 'DELETE',
+        purchaseId: id,
+        oldPurchase: {
+          productId: purchase.productId,
+          productName: product?.name || 'Unknown',
+          vendorName: purchase.vendorName,
+          quantity: purchase.quantity,
+          unitType: purchase.unitType,
+          totalCost: purchase.totalCost,
+          batchNumber: purchase.batchNumber,
+          expiryDate: purchase.expiryDate
+        },
+        newPurchase: null,
+        reason: 'Purchase record deleted',
+        ipAddress,
+        userAgent
+      }, tx);
 
       // Delete cash flow entry if exists
       await tx.cashFlow.deleteMany({

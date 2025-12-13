@@ -10,8 +10,9 @@ const prisma = new PrismaClient();
  */
 async function markExpiredBatches() {
   const today = new Date();
-  
-  const result = await prisma.warehouseProductPurchase.updateMany({
+
+  // First, find the batches that will be marked as expired
+  const batchesToExpire = await prisma.warehouseProductPurchase.findMany({
     where: {
       expiryDate: {
         lt: today // Expiry date has passed
@@ -20,13 +21,39 @@ async function markExpiredBatches() {
         not: 'EXPIRED' // Not already marked as expired
       }
     },
-    data: {
-      batchStatus: 'EXPIRED'
+    include: {
+      product: {
+        select: { name: true, productNo: true }
+      }
     }
   });
 
-  console.log(`✅ Marked ${result.count} batches as EXPIRED`);
-  return result.count;
+  // Update batches and create audit logs
+  const { logBatchStatusChange } = require('../utils/auditLogger');
+
+  for (const batch of batchesToExpire) {
+    await prisma.warehouseProductPurchase.update({
+      where: { id: batch.id },
+      data: { batchStatus: 'EXPIRED' }
+    });
+
+    // Create audit log for each expired batch
+    await logBatchStatusChange({
+      userId: 'SYSTEM',
+      action: 'AUTO_EXPIRE',
+      batchId: batch.id,
+      oldStatus: batch.batchStatus,
+      newStatus: 'EXPIRED',
+      reason: `Batch expired on ${batch.expiryDate?.toISOString().split('T')[0]} - Auto-marked by system`,
+      quantityRemaining: batch.quantityRemaining,
+      expiryDate: batch.expiryDate
+    });
+
+    console.log(`📦 Expired batch: ${batch.product?.name} (${batch.batchNumber || 'No batch #'}) - ${batch.quantityRemaining} remaining`);
+  }
+
+  console.log(`✅ Marked ${batchesToExpire.length} batches as EXPIRED`);
+  return batchesToExpire.length;
 }
 
 /**
