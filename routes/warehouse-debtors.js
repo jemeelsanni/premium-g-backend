@@ -460,13 +460,21 @@ router.post('/:debtorId/payments',
         ? ((allPayments - latePayments) / allPayments) * 100
         : 100;
 
+      // ✅ Prepare customer update data
+      const customerUpdateData = {
+        outstandingDebt: totalOutstanding._sum.amountDue || 0,
+        lastPaymentDate: new Date(paymentDate),
+        paymentReliabilityScore: reliabilityScore
+      };
+
+      // ✅ If debt is fully paid, decrement totalCreditPurchases
+      if (newStatus === 'PAID' && debtor.status !== 'PAID') {
+        customerUpdateData.totalCreditPurchases = { decrement: 1 };
+      }
+
       await tx.warehouseCustomer.update({
         where: { id: debtor.warehouseCustomerId },
-        data: {
-          outstandingDebt: totalOutstanding._sum.amountDue || 0,
-          lastPaymentDate: new Date(paymentDate),
-          paymentReliabilityScore: reliabilityScore
-        }
+        data: customerUpdateData
       });
 
       return { payment, debtor: updatedDebtor, cashFlowEntry };
@@ -680,13 +688,27 @@ router.post('/receipt/:receiptNumber/payment',
         ? ((allPayments - latePayments) / allPayments) * 100
         : 100;
 
+      // ✅ Count how many debts were fully paid in this transaction
+      const fullyPaidCount = debtorsUpdated.filter((updatedDebtor, index) => {
+        const originalDebtor = receiptDebtors[index];
+        return updatedDebtor.status === 'PAID' && originalDebtor.status !== 'PAID';
+      }).length;
+
+      // ✅ Prepare customer update data
+      const customerUpdateData = {
+        outstandingDebt: totalOutstandingAfter._sum.amountDue || 0,
+        lastPaymentDate: new Date(paymentDate),
+        paymentReliabilityScore: reliabilityScore
+      };
+
+      // ✅ Decrement totalCreditPurchases by the number of debts that were fully paid
+      if (fullyPaidCount > 0) {
+        customerUpdateData.totalCreditPurchases = { decrement: fullyPaidCount };
+      }
+
       await tx.warehouseCustomer.update({
         where: { id: customerId },
-        data: {
-          outstandingDebt: totalOutstandingAfter._sum.amountDue || 0,
-          lastPaymentDate: new Date(paymentDate),
-          paymentReliabilityScore: reliabilityScore
-        }
+        data: customerUpdateData
       });
 
       return {
@@ -895,13 +917,27 @@ router.post('/customer/:customerId/payment',
         ? ((allPayments - latePayments) / allPayments) * 100
         : 100;
 
+      // ✅ Count how many debts were fully paid in this transaction
+      const fullyPaidCount = debtorsUpdated.filter((updatedDebtor, index) => {
+        const originalDebtor = customerDebts[index];
+        return updatedDebtor.status === 'PAID' && originalDebtor.status !== 'PAID';
+      }).length;
+
+      // ✅ Prepare customer update data
+      const customerUpdateData = {
+        outstandingDebt: totalOutstandingAfter._sum.amountDue || 0,
+        lastPaymentDate: new Date(paymentDate),
+        paymentReliabilityScore: reliabilityScore
+      };
+
+      // ✅ Decrement totalCreditPurchases by the number of debts that were fully paid
+      if (fullyPaidCount > 0) {
+        customerUpdateData.totalCreditPurchases = { decrement: fullyPaidCount };
+      }
+
       await tx.warehouseCustomer.update({
         where: { id: customerId },
-        data: {
-          outstandingDebt: totalOutstandingAfter._sum.amountDue || 0,
-          lastPaymentDate: new Date(paymentDate),
-          paymentReliabilityScore: reliabilityScore
-        }
+        data: customerUpdateData
       });
 
       return {

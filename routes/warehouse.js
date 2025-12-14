@@ -1537,31 +1537,33 @@ router.delete('/sales/:id',
         });
       }
 
-      // 2. Restore inventory (reverse the sale deduction)
-      if (inventoryBefore) {
-        const oldInventoryState = {
-          pallets: inventoryBefore.pallets,
-          packs: inventoryBefore.packs,
-          units: inventoryBefore.units
-        };
-
-        const updates = {};
-        if (sale.unitType === 'PALLETS') {
-          updates.pallets = inventoryBefore.pallets + sale.quantity;
-        } else if (sale.unitType === 'PACKS') {
-          updates.packs = inventoryBefore.packs + sale.quantity;
-        } else if (sale.unitType === 'UNITS') {
-          updates.units = inventoryBefore.units + sale.quantity;
-        }
-
-        const updatedInventory = await tx.warehouseInventory.update({
-          where: { id: inventoryBefore.id },
-          data: updates
+      // 2. Restore inventory (reverse the sale deduction using updateMany to match sale creation behavior)
+      if (sale.unitType === 'PACKS') {
+        await tx.warehouseInventory.updateMany({
+          where: { productId: sale.productId },
+          data: { packs: { increment: sale.quantity } }
         });
+      } else if (sale.unitType === 'PALLETS') {
+        await tx.warehouseInventory.updateMany({
+          where: { productId: sale.productId },
+          data: { pallets: { increment: sale.quantity } }
+        });
+      } else if (sale.unitType === 'UNITS') {
+        await tx.warehouseInventory.updateMany({
+          where: { productId: sale.productId },
+          data: { units: { increment: sale.quantity } }
+        });
+      }
 
-        // Log inventory restoration
+      // Log inventory restoration
+      if (inventoryBefore) {
         const { logInventoryChange, getRequestMetadata } = require('../utils/auditLogger');
         const { ipAddress, userAgent } = getRequestMetadata(req);
+
+        // Fetch updated inventory for logging
+        const updatedInventory = await tx.warehouseInventory.findFirst({
+          where: { productId: sale.productId }
+        });
 
         await logInventoryChange({
           userId: req.user.id,
@@ -1569,11 +1571,15 @@ router.delete('/sales/:id',
           inventoryId: inventoryBefore.id,
           productId: sale.productId,
           productName: product?.name || 'Unknown',
-          oldInventory: oldInventoryState,
+          oldInventory: {
+            pallets: inventoryBefore.pallets,
+            packs: inventoryBefore.packs,
+            units: inventoryBefore.units
+          },
           newInventory: {
-            pallets: updatedInventory.pallets,
-            packs: updatedInventory.packs,
-            units: updatedInventory.units
+            pallets: updatedInventory?.pallets || 0,
+            packs: updatedInventory?.packs || 0,
+            units: updatedInventory?.units || 0
           },
           reason: `Sale deleted (Receipt: ${sale.receiptNumber}) - restored ${sale.quantity} ${sale.unitType}`,
           triggeredBy: 'SALE_DELETE',
