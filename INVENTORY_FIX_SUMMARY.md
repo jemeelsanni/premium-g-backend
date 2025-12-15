@@ -122,6 +122,23 @@ MALT: +5 packs restored
 VIJU WHEAT: +1 pack restored
 ```
 
+### 2b. **Created Historical Discrepancy Fix Script** 🔧
+**File:** `scripts/fix-historical-discrepancy.js`
+
+**Purpose:** Correct the 2-pack discrepancy caused by historical double-deductions before the bug fix
+
+**Discovery:**
+- Batch system showed: 2,500 packs sold (includes 2 double-deductions)
+- Sales table showed: 2,498 packs sold (actual sales)
+- Difference: 2 packs were erroneously deducted before Dec 15 fix
+
+**Result:**
+```
+35CL BIGI: +2 packs restored (2533 → 2535)
+✅ Stock now matches sales table exactly
+📝 Audit log created for manual adjustment
+```
+
 ### 3. **Enabled Global Audit Logging** 🔐
 **File:** `server.js` lines 13, 129
 
@@ -196,18 +213,19 @@ Missing: 49 packs
 
 ### After Fix:
 ```
-35CL BIGI Stock: 2,536 packs
+35CL BIGI Stock: 2,535 packs
 Total Purchased (all time): 5,033 packs
-Total Sold (all time): 2,497 packs
-Expected: 2,536 packs
+Total Sold (all time): 2,498 packs
+Expected: 2,535 packs
 ✅ MATCH!
 ```
 
 ### Batch Verification:
 ```
 Total Purchased: 5,033 packs
-Total Sold (from batches): 2,497 packs
-Total Remaining: 2,536 packs
+Total Sold (from batches): 2,500 packs (2 historical double-deductions)
+Total Sold (from sales table): 2,498 packs (actual sales)
+Total Remaining: 2,535 packs
 ✅ Remaining matches expected: true
 ```
 
@@ -236,12 +254,12 @@ Dec 14:
   Closing: 2,563 packs
 
 Dec 15:
-  Sales: -25 packs (2 transactions)
-  Expected Closing: 2,538 packs
-  Actual (after fix): 2,536 packs ✅
+  Sales: -28 packs (3 transactions: 10 + 15 + 3)
+  Expected Closing: 2,535 packs
+  Actual (after fix): 2,535 packs ✅
 ```
 
-**Note:** The 2-pack difference is due to historical double-deductions that occurred before the fix. The recalculation script corrected the inventory to match batch data (2,536 packs).
+**Note:** The initial 2-pack discrepancy was due to 2 historical double-deductions that occurred before the fix. This was corrected using the `fix-historical-discrepancy.js` script.
 
 ---
 
@@ -269,9 +287,11 @@ Dec 15:
 1. `routes/warehouse.js` - Fixed double-deduction bug, added audit logging
 2. `server.js` - Enabled global audit logging middleware
 3. `scripts/recalculate-inventory.js` - **NEW** inventory recalculation script
+4. `scripts/fix-historical-discrepancy.js` - **NEW** historical fix script
+5. `INVENTORY_FIX_SUMMARY.md` - **NEW** comprehensive documentation
 
 ### Frontend:
-4. `src/pages/warehouse/WarehouseDashboard.tsx` - Added audit logs link
+6. `src/pages/warehouse/WarehouseDashboard.tsx` - Added audit logs link
 
 ---
 
@@ -289,11 +309,15 @@ Dec 15:
 ## ✅ Testing Checklist
 
 - [x] Verify inventory matches batch data
+- [x] Verify inventory matches sales table
 - [x] Test sale creation (no double-deduction)
 - [x] Confirm audit logs are created
 - [x] Check dashboard audit log link works
 - [x] Run recalculation script successfully
 - [x] Verify all 9 products corrected
+- [x] Fix 2-pack historical discrepancy
+- [x] Verify Dec 15 opening stock = 2563
+- [x] Verify Dec 15 closing stock = 2535
 - [x] Document all changes
 
 ---

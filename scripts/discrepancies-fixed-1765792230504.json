@@ -1,0 +1,436 @@
+[
+  {
+    "productId": "cmht0z3cf008crg0qfv8de6vs",
+    "productName": "35CL BIGI",
+    "productNo": "PRD-2025-001",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 5033,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 2503,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 2530,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 2535,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": -5,
+      "units": 0
+    },
+    "inventoryId": "cmht0z3cl008erg0q9uogquuz"
+  },
+  {
+    "productId": "cmht1gag3008jrg0qhq8vryik",
+    "productName": "60CL BIGI",
+    "productNo": "PRD-2025-002",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 764,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 327,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 437,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 442,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": -5,
+      "units": 0
+    },
+    "inventoryId": "cmht1gag9008lrg0qr6lxjlub"
+  },
+  {
+    "productId": "cmht1s7bf008qrg0qqeonrb16",
+    "productName": "FEARLESS",
+    "productNo": "PRD-2025-003",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 1458,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 851,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 607,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 614,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": -7,
+      "units": 0
+    },
+    "inventoryId": "cmht1s7bk008srg0qlf0t11qp"
+  },
+  {
+    "productId": "cmht25xay008xrg0q7ugewahd",
+    "productName": "BIGI WATER",
+    "productNo": "PRD-2025-004",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 3297,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 2199,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 1098,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 1107,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": -9,
+      "units": 0
+    },
+    "inventoryId": "cmht25xb80090rg0q3g73801n"
+  },
+  {
+    "productId": "cmht35hew009jrg0q3usstxph",
+    "productName": "VIJUMILK BIG",
+    "productNo": "PRD-2025-007",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 371,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 175,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 196,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 198,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": -2,
+      "units": 0
+    },
+    "inventoryId": "cmht35hfs009lrg0q9kfmq57w"
+  },
+  {
+    "productId": "cmht3amze009trg0qrtq7mvag",
+    "productName": "NUTRI BIG",
+    "productNo": "PRD-2025-009",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 221,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 181,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 40,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 43,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": -3,
+      "units": 0
+    },
+    "inventoryId": "cmht3amzj009vrg0ql1u5rkvq"
+  },
+  {
+    "productId": "cmht3kt9c00a5rg0qcr1io8da",
+    "productName": "COKE",
+    "productNo": "PRD-2025-013",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 445,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 290,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 155,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 160,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": -5,
+      "units": 0
+    },
+    "inventoryId": "cmht3kt9i00a7rg0q13cubail"
+  },
+  {
+    "productId": "cmht3loim00a8rg0q37oa1ic2",
+    "productName": "FANTA",
+    "productNo": "PRD-2025-014",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 154,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 62,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 92,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 93,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": -1,
+      "units": 0
+    },
+    "inventoryId": "cmht3loir00aarg0qm0boyvjn"
+  },
+  {
+    "productId": "cmht3p0ep00ahrg0qrvr1xhtf",
+    "productName": "PEPSI",
+    "productNo": "PRD-2025-017",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 172,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 126,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 46,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 50,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": -4,
+      "units": 0
+    },
+    "inventoryId": "cmht3p0ev00ajrg0qljiadjx8"
+  },
+  {
+    "productId": "cmht3dcx2009zrg0q8rcgmwcl",
+    "productName": "MALT",
+    "productNo": "PRD-2025-011",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 261,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 191,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 70,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 80,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": -10,
+      "units": 0
+    },
+    "inventoryId": "cmht3dcxk00a1rg0q5nv0nshg"
+  },
+  {
+    "productId": "cmht3qm0j00akrg0qradd3cmd",
+    "productName": "MIRINDA",
+    "productNo": "PRD-2025-018",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 31,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 9,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 22,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 23,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": -1,
+      "units": 0
+    },
+    "inventoryId": "cmht3qm0o00amrg0qk8bn29k0"
+  },
+  {
+    "productId": "cmi8zhv3v01nsrg0q0htfr5n3",
+    "productName": "35CL FEARLESS ",
+    "productNo": "PRD-2025-024",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 349,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 233,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 116,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 117,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": -1,
+      "units": 0
+    },
+    "inventoryId": "cmi8zhv4901nurg0qq6zhcmin"
+  },
+  {
+    "productId": "cmht2k5oy0095rg0q2zjogzvr",
+    "productName": "1LITER SOSA",
+    "productNo": "PRD-2025-005",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 393,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 211,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 182,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 180,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": 2,
+      "units": 0
+    },
+    "inventoryId": "cmht2k5p40097rg0qz805h2pi"
+  },
+  {
+    "productId": "cmiygxs2700c6pb0qt1ly8onu",
+    "productName": "MACA",
+    "productNo": "PRD-2025-026",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 50,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 39,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 11,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 14,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": -3,
+      "units": 0
+    },
+    "inventoryId": "cmiygxs2e00c8pb0qbmrivr9v"
+  }
+]
