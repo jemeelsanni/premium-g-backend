@@ -525,11 +525,18 @@ async function allocateSaleQuantityFEFO(tx, productId, quantityToSell, unitType)
 
 /**
  * Update batches and create batch-sale records
+ * Now includes audit logging for inventory changes
  */
-async function updateBatchesAfterSale(tx, saleId, allocations) {
+async function updateBatchesAfterSale(tx, saleId, allocations, userId, ipAddress, userAgent) {
   const batchSaleRecords = [];
+  const { logInventoryChange } = require('../utils/auditLogger');
 
   for (const allocation of allocations) {
+    // Get the batch before update (for audit logging)
+    const batchBefore = await tx.warehouseProductPurchase.findUnique({
+      where: { id: allocation.batchId }
+    });
+
     // Determine new batch status
     let newStatus = 'ACTIVE';
     if (allocation.newRemainingQty === 0) {
@@ -537,7 +544,7 @@ async function updateBatchesAfterSale(tx, saleId, allocations) {
     }
 
     // Update batch quantities and status
-    await tx.warehouseProductPurchase.update({
+    const updatedBatch = await tx.warehouseProductPurchase.update({
       where: { id: allocation.batchId },
       data: {
         quantityRemaining: allocation.newRemainingQty,
@@ -545,6 +552,33 @@ async function updateBatchesAfterSale(tx, saleId, allocations) {
         batchStatus: newStatus
       }
     });
+
+    // Log the inventory change to audit log
+    await logInventoryChange({
+      userId,
+      action: 'UPDATE',
+      entity: 'WarehouseBatch',
+      entityId: allocation.batchId,
+      oldValues: {
+        batchNumber: batchBefore.batchNumber,
+        quantityRemaining: batchBefore.quantityRemaining,
+        quantitySold: batchBefore.quantitySold,
+        batchStatus: batchBefore.batchStatus
+      },
+      newValues: {
+        batchNumber: updatedBatch.batchNumber,
+        quantityRemaining: updatedBatch.quantityRemaining,
+        quantitySold: updatedBatch.quantitySold,
+        batchStatus: updatedBatch.batchStatus
+      },
+      ipAddress,
+      userAgent,
+      metadata: {
+        triggeredBy: 'SALE',
+        saleId,
+        quantityAllocated: allocation.quantityAllocated
+      }
+    }, tx);
 
     // Create batch-sale tracking record
     const batchSale = await tx.warehouseBatchSale.create({
@@ -873,28 +907,19 @@ router.post(
           });
         }
 
-        // Step 4: Inventory update
-        if (unitType === 'PACKS') {
-          await tx.warehouseInventory.updateMany({
-            where: { productId },
-            data: { packs: { decrement: quantity } }
-          });
-        } else if (unitType === 'PALLETS') {
-          await tx.warehouseInventory.updateMany({
-            where: { productId },
-            data: { pallets: { decrement: quantity } }
-          });
-        } else if (unitType === 'UNITS') {
-          await tx.warehouseInventory.updateMany({
-            where: { productId },
-            data: { units: { decrement: quantity } }
-          });
-        }
+        // Step 4: Update batches (inventory is calculated from batches, not decremented directly)
+        // ⚠️ IMPORTANT: We removed the direct inventory decrement to fix double-deduction bug
+        // The batch system is the source of truth, inventory is synced from batches
+        const { logInventoryChange, getRequestMetadata } = require('../utils/auditLogger');
+        const metadata = getRequestMetadata(req);
 
         const batchSaleRecords = await updateBatchesAfterSale(
           tx,
           warehouseSale.id,
-          batchAllocations
+          batchAllocations,
+          req.user.id,
+          metadata.ipAddress,
+          metadata.userAgent
         );
 
         console.log(`Sale used ${batchSaleRecords.length} batch(es)`)

@@ -10,6 +10,7 @@ const { PrismaClient, Prisma } = require('@prisma/client');
 
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 const { authenticateToken } = require('./middleware/auth');
+const { auditLogger } = require('./middleware/auditLogger');
 
 const { manageBatchStatus } = require('./jobs/batch-status-manager');
 
@@ -120,6 +121,12 @@ if (process.env.NODE_ENV !== 'test') {
     skip: function (req, res) { return res.statusCode < 400 }
   }));
 }
+
+// ================================
+// AUDIT LOGGING MIDDLEWARE
+// ================================
+// Apply audit logging to all authenticated API routes
+app.use('/api/', auditLogger);
 
 // ================================
 // API VERSION AND HEALTH CHECK
