@@ -239,10 +239,18 @@ router.get('/inventory', asyncHandler(async (req, res) => {
     // Convert to packs
     const palletsToPacks = (inv.pallets ?? 0) * packsPerPallet;
     const totalPacks = palletsToPacks + (inv.packs ?? 0);
-    
-    const minimumStock = inv.reorderLevel ?? 0;
+
+    // Get configured reorder levels
+    let minimumStock = inv.reorderLevel ?? 0;
     const maximumStock = inv.maxStockLevel ?? 0;
-    
+
+    // ✅ FIX: If reorderLevel is not set (0), use intelligent default of 10% of current stock
+    // This ensures products show LOW_STOCK when they're actually running low
+    if (minimumStock === 0 && totalPacks > 0) {
+      // Use 20 packs or 10% of total stock, whichever is smaller
+      minimumStock = Math.min(20, Math.ceil(totalPacks * 0.1));
+    }
+
     let stockStatus = 'NORMAL';
     if (totalPacks === 0) {
       stockStatus = 'OUT_OF_STOCK';
