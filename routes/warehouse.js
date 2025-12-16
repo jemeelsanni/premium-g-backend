@@ -924,6 +924,45 @@ router.post(
 
         console.log(`Sale used ${batchSaleRecords.length} batch(es)`)
 
+        // Step 5: Auto-sync inventory from batches (ensures inventory is always accurate)
+        // Calculate current stock from all active batches
+        const allBatches = await tx.warehouseProductPurchase.findMany({
+          where: {
+            productId,
+            batchStatus: { in: ['ACTIVE', 'DEPLETED'] }
+          }
+        });
+
+        // Sum up quantities by unit type
+        const calculatedInventory = {
+          pallets: 0,
+          packs: 0,
+          units: 0
+        };
+
+        allBatches.forEach(batch => {
+          const remaining = batch.quantityRemaining || 0;
+          if (batch.unitType === 'PALLETS') {
+            calculatedInventory.pallets += remaining;
+          } else if (batch.unitType === 'PACKS') {
+            calculatedInventory.packs += remaining;
+          } else if (batch.unitType === 'UNITS') {
+            calculatedInventory.units += remaining;
+          }
+        });
+
+        // Update inventory table to match batch calculations
+        await tx.warehouseInventory.updateMany({
+          where: { productId },
+          data: {
+            pallets: calculatedInventory.pallets,
+            packs: calculatedInventory.packs,
+            units: calculatedInventory.units,
+            lastUpdated: new Date()
+          }
+        });
+
+        console.log(`✅ Inventory auto-synced: P:${calculatedInventory.pallets} | Pk:${calculatedInventory.packs} | U:${calculatedInventory.units}`);
 
         if (customerId) {
           const amountToRecord = isCreditSale ? amountPaid : totalAmount;
@@ -1542,10 +1581,6 @@ router.delete('/sales/:id',
         select: { name: true, productNo: true }
       });
 
-      const inventoryBefore = await tx.warehouseInventory.findFirst({
-        where: { productId: sale.productId }
-      });
-
       // 1. Reverse batch sales - add quantity back
       for (const batchSale of sale.warehouseBatchSales) {
         await tx.warehouseProductPurchase.update({
@@ -1562,57 +1597,45 @@ router.delete('/sales/:id',
         });
       }
 
-      // 2. Restore inventory (reverse the sale deduction using updateMany to match sale creation behavior)
-      if (sale.unitType === 'PACKS') {
-        await tx.warehouseInventory.updateMany({
-          where: { productId: sale.productId },
-          data: { packs: { increment: sale.quantity } }
-        });
-      } else if (sale.unitType === 'PALLETS') {
-        await tx.warehouseInventory.updateMany({
-          where: { productId: sale.productId },
-          data: { pallets: { increment: sale.quantity } }
-        });
-      } else if (sale.unitType === 'UNITS') {
-        await tx.warehouseInventory.updateMany({
-          where: { productId: sale.productId },
-          data: { units: { increment: sale.quantity } }
-        });
-      }
-
-      // Log inventory restoration
-      if (inventoryBefore) {
-        const { logInventoryChange, getRequestMetadata } = require('../utils/auditLogger');
-        const { ipAddress, userAgent } = getRequestMetadata(req);
-
-        // Fetch updated inventory for logging
-        const updatedInventory = await tx.warehouseInventory.findFirst({
-          where: { productId: sale.productId }
-        });
-
-        await logInventoryChange({
-          userId: req.user.id,
-          action: 'UPDATE',
-          inventoryId: inventoryBefore.id,
+      // 2. Auto-sync inventory from batches (ensures inventory is always accurate)
+      // Calculate current stock from all active batches
+      const allBatches = await tx.warehouseProductPurchase.findMany({
+        where: {
           productId: sale.productId,
-          productName: product?.name || 'Unknown',
-          oldInventory: {
-            pallets: inventoryBefore.pallets,
-            packs: inventoryBefore.packs,
-            units: inventoryBefore.units
-          },
-          newInventory: {
-            pallets: updatedInventory?.pallets || 0,
-            packs: updatedInventory?.packs || 0,
-            units: updatedInventory?.units || 0
-          },
-          reason: `Sale deleted (Receipt: ${sale.receiptNumber}) - restored ${sale.quantity} ${sale.unitType}`,
-          triggeredBy: 'SALE_DELETE',
-          referenceId: id,
-          ipAddress,
-          userAgent
-        }, tx);
-      }
+          batchStatus: { in: ['ACTIVE', 'DEPLETED'] }
+        }
+      });
+
+      // Sum up quantities by unit type
+      const calculatedInventory = {
+        pallets: 0,
+        packs: 0,
+        units: 0
+      };
+
+      allBatches.forEach(batch => {
+        const remaining = batch.quantityRemaining || 0;
+        if (batch.unitType === 'PALLETS') {
+          calculatedInventory.pallets += remaining;
+        } else if (batch.unitType === 'PACKS') {
+          calculatedInventory.packs += remaining;
+        } else if (batch.unitType === 'UNITS') {
+          calculatedInventory.units += remaining;
+        }
+      });
+
+      // Update inventory table to match batch calculations
+      await tx.warehouseInventory.updateMany({
+        where: { productId: sale.productId },
+        data: {
+          pallets: calculatedInventory.pallets,
+          packs: calculatedInventory.packs,
+          units: calculatedInventory.units,
+          lastUpdated: new Date()
+        }
+      });
+
+      console.log(`✅ Inventory auto-synced after deletion: P:${calculatedInventory.pallets} | Pk:${calculatedInventory.packs} | U:${calculatedInventory.units}`);
 
       // 3. Log sale deletion
       const { logSaleChange, getRequestMetadata } = require('../utils/auditLogger');
@@ -1850,10 +1873,11 @@ router.get(
         },
       }),
 
-      // 🆕 Debtor statistics
+      // 🆕 Debtor statistics (all-time, not date-filtered)
+      // Note: Debtors represent ongoing debt relationships, so we show ALL active debtors
+      // regardless of when the credit sale was made
       prisma.debtor.aggregate({
         where: {
-          createdAt: dateFilter.createdAt,
           status: { in: ['OUTSTANDING', 'PARTIAL', 'OVERDUE'] }
         },
         _sum: {
