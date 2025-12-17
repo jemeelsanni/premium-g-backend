@@ -1882,18 +1882,19 @@ router.get(
       }),
 
       // 🆕 Debtor statistics (all-time, not date-filtered)
-      // Note: Debtors represent ongoing debt relationships, so we show ALL active debtors
-      // regardless of when the credit sale was made
-      prisma.debtor.aggregate({
+      // Note: Count unique customers with outstanding debt (not individual debtor records)
+      // Each customer may have multiple debtor records (one per product in credit sale)
+      prisma.debtor.groupBy({
+        by: ['warehouseCustomerId'],
         where: {
-          status: { in: ['OUTSTANDING', 'PARTIAL', 'OVERDUE'] }
+          status: { in: ['OUTSTANDING', 'PARTIAL', 'OVERDUE'] },
+          amountDue: { gt: 0 } // Only count customers with actual outstanding debt
         },
         _sum: {
           totalAmount: true,
           amountPaid: true,
           amountDue: true
-        },
-        _count: true
+        }
       }),
 
       prisma.warehouseCustomer.count(),
@@ -2152,10 +2153,10 @@ router.get(
         },
 
         debtorSummary: {
-          totalDebtors: debtorStats._count || 0,
-          totalOutstanding: parseFloat((debtorStats._sum.amountDue || 0).toFixed(2)),
-          totalCreditSales: parseFloat((debtorStats._sum.totalAmount || 0).toFixed(2)),
-          totalPaid: parseFloat((debtorStats._sum.amountPaid || 0).toFixed(2))
+          totalDebtors: debtorStats.length || 0, // Count unique customers with outstanding debt
+          totalOutstanding: parseFloat(debtorStats.reduce((sum, d) => sum + parseFloat(d._sum.amountDue || 0), 0).toFixed(2)),
+          totalCreditSales: parseFloat(debtorStats.reduce((sum, d) => sum + parseFloat(d._sum.totalAmount || 0), 0).toFixed(2)),
+          totalPaid: parseFloat(debtorStats.reduce((sum, d) => sum + parseFloat(d._sum.amountPaid || 0), 0).toFixed(2))
         },
 
         // Inventory summary (now using purchase cost)
