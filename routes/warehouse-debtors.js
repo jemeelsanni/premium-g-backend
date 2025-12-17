@@ -196,25 +196,31 @@ router.get('/',
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const paginatedDebtors = groupedDebtors.slice(skip, skip + parseInt(limit));
 
-    // Calculate analytics
+    // Calculate analytics - group by customer AND status to count unique customers per status
     const analyticsData = await prisma.debtor.groupBy({
-      by: ['status'],
+      by: ['warehouseCustomerId', 'status'],
       where,
       _sum: {
         totalAmount: true,
         amountPaid: true,
         amountDue: true
-      },
-      _count: true
+      }
     });
 
+    // Aggregate by status, counting unique customers
     const summary = analyticsData.reduce((acc, item) => {
-      acc[item.status] = {
-        count: item._count,
-        totalAmount: item._sum.totalAmount || 0,
-        amountPaid: item._sum.amountPaid || 0,
-        amountDue: item._sum.amountDue || 0
-      };
+      if (!acc[item.status]) {
+        acc[item.status] = {
+          count: 0,
+          totalAmount: 0,
+          amountPaid: 0,
+          amountDue: 0
+        };
+      }
+      acc[item.status].count += 1; // Count unique customers
+      acc[item.status].totalAmount += parseFloat(item._sum.totalAmount || 0);
+      acc[item.status].amountPaid += parseFloat(item._sum.amountPaid || 0);
+      acc[item.status].amountDue += parseFloat(item._sum.amountDue || 0);
       return acc;
     }, {});
 
