@@ -31,9 +31,12 @@ async function scanAllProducts() {
     const discrepancies = [];
 
     for (const product of products) {
-      // Get all purchases
+      // Get all active/depleted purchases (EXPIRED batches should not affect current inventory)
       const purchases = await prisma.warehouseProductPurchase.findMany({
-        where: { productId: product.id }
+        where: {
+          productId: product.id,
+          batchStatus: { in: ['ACTIVE', 'DEPLETED'] }
+        }
       });
 
       // Get all sales

@@ -1,0 +1,126 @@
+[
+  {
+    "productId": "cmht25xay008xrg0q7ugewahd",
+    "productName": "BIGI WATER",
+    "productNo": "PRD-2025-004",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 3297,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 2328,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 969,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 978,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": -9,
+      "units": 0
+    },
+    "inventoryId": "cmht25xb80090rg0q3g73801n"
+  },
+  {
+    "productId": "cmht3kt9c00a5rg0qcr1io8da",
+    "productName": "COKE",
+    "productNo": "PRD-2025-013",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 445,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 292,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 153,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 154,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": -1,
+      "units": 0
+    },
+    "inventoryId": "cmht3kt9i00a7rg0q13cubail"
+  },
+  {
+    "productId": "cmht3dcx2009zrg0q8rcgmwcl",
+    "productName": "MALT",
+    "productNo": "PRD-2025-011",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 261,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 202,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 59,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 64,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": -5,
+      "units": 0
+    },
+    "inventoryId": "cmht3dcxk00a1rg0q5nv0nshg"
+  },
+  {
+    "productId": "cmhxl75be00rcrg0qlnrttumy",
+    "productName": "VIJU CHOCO",
+    "productNo": "PRD-2025-022",
+    "totalPurchased": {
+      "pallets": 0,
+      "packs": 31,
+      "units": 0
+    },
+    "totalSold": {
+      "pallets": 0,
+      "packs": 30,
+      "units": 0
+    },
+    "expectedStock": {
+      "pallets": 0,
+      "packs": 1,
+      "units": 0
+    },
+    "currentStock": {
+      "pallets": 0,
+      "packs": 2,
+      "units": 0
+    },
+    "difference": {
+      "pallets": 0,
+      "packs": -1,
+      "units": 0
+    },
+    "inventoryId": "cmhxl75bn00rerg0q9unf25n5"
+  }
+]

@@ -83,10 +83,12 @@ router.get(
     const openingStockData = await Promise.all(
       products.map(async (product) => {
         // Get all transactions before the target date (for opening stock)
+        // Only include ACTIVE and DEPLETED batches (exclude EXPIRED)
         const purchasesBeforeDate = await prisma.warehouseProductPurchase.findMany({
           where: {
             productId: product.id,
-            purchaseDate: { lt: targetDate }
+            purchaseDate: { lt: targetDate },
+            batchStatus: { in: ['ACTIVE', 'DEPLETED'] }
           },
           select: { quantity: true, unitType: true }
         });
@@ -100,10 +102,12 @@ router.get(
         });
 
         // Get transactions ON the target date
+        // Only include ACTIVE and DEPLETED batches (exclude EXPIRED)
         const purchasesOnDate = await prisma.warehouseProductPurchase.findMany({
           where: {
             productId: product.id,
-            purchaseDate: { gte: targetDate, lte: endOfDay }
+            purchaseDate: { gte: targetDate, lte: endOfDay },
+            batchStatus: { in: ['ACTIVE', 'DEPLETED'] }
           },
           select: { quantity: true, unitType: true }
         });
@@ -321,7 +325,8 @@ router.get(
           const purchases = await prisma.warehouseProductPurchase.findMany({
             where: {
               productId,
-              purchaseDate: { lte: endOfDay }
+              purchaseDate: { lte: endOfDay },
+              batchStatus: { in: ['ACTIVE', 'DEPLETED'] }
             },
             select: { quantity: true, unitType: true }
           });
