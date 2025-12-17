@@ -13,6 +13,7 @@ const { authenticateToken } = require('./middleware/auth');
 const { auditLogger } = require('./middleware/auditLogger');
 
 const { manageBatchStatus } = require('./jobs/batch-status-manager');
+const { startInventorySyncCron } = require('./cron/inventorySyncCron');
 
 
 // Import routes
@@ -355,6 +356,13 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 console.log('✅ Batch status management cron job scheduled');
+
+// ================================
+// INVENTORY AUTO-SYNC CRON JOB
+// ================================
+// Automatically syncs inventory with batch data every 5 minutes
+// This ensures the system self-heals from any discrepancies
+startInventorySyncCron();
 
 
 // ================================

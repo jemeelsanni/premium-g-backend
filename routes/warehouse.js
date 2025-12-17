@@ -8,6 +8,7 @@ const { Parser } = require('json2csv');
 const { asyncHandler, ValidationError, NotFoundError, BusinessError } = require('../middleware/errorHandler');
 const { authorizeModule, authorizeRole } = require('../middleware/auth');
 const { validateCuid } = require('../utils/validators');
+const { syncProductInventory } = require('../services/inventorySyncService');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -1002,6 +1003,11 @@ router.post(
     const result = await withReceiptConflictRetry(() => createSaleOperation());
 
     // ============================================================================
+    // AUTO-SYNC INVENTORY (Ensure inventory matches batch data)
+    // ============================================================================
+    await syncProductInventory(productId, null, 'sale_creation');
+
+    // ============================================================================
     // SUCCESS MESSAGE
     // ============================================================================
     let message = '';
@@ -1700,6 +1706,11 @@ router.delete('/sales/:id',
         where: { id }
       });
     });
+
+    // ============================================================================
+    // FINAL AUTO-SYNC (Double-check inventory matches batch data)
+    // ============================================================================
+    await syncProductInventory(sale.productId, null, 'sale_deletion');
 
     res.json({
       success: true,

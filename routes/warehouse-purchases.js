@@ -6,6 +6,7 @@ const prisma = new PrismaClient();
 
 const { asyncHandler, ValidationError, BusinessError, NotFoundError } = require('../middleware/errorHandler');
 const { authorizeModule } = require('../middleware/auth');
+const { syncProductInventory } = require('../services/inventorySyncService');
 
 // ================================
 // CREATE WAREHOUSE PURCHASE
@@ -184,6 +185,11 @@ router.post('/',
 
       return { purchase, inventory: updates, expiryAlert, cashFlowEntry };
     });
+
+    // ============================================================================
+    // AUTO-SYNC INVENTORY (Ensure inventory matches batch data)
+    // ============================================================================
+    await syncProductInventory(productId, null, 'purchase_creation');
 
     const responseData = {
       success: true,
@@ -859,6 +865,11 @@ router.delete('/:id',
         where: { id }
       });
     });
+
+    // ============================================================================
+    // AUTO-SYNC INVENTORY (Ensure inventory matches batch data)
+    // ============================================================================
+    await syncProductInventory(purchase.productId, null, 'purchase_deletion');
 
     res.json({
       success: true,
