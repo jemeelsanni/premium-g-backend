@@ -273,19 +273,28 @@ router.get('/inventory', asyncHandler(async (req, res) => {
         quantityRemaining: true
       }
     });
-    
+
     let weightedAvgCost = 0;
     if (activeBatches.length > 0) {
-      const totalCost = activeBatches.reduce((sum, batch) => 
+      const totalCost = activeBatches.reduce((sum, batch) =>
         sum + (parseFloat(batch.costPerUnit) * batch.quantityRemaining), 0
       );
-      const totalQty = activeBatches.reduce((sum, batch) => 
+      const totalQty = activeBatches.reduce((sum, batch) =>
         sum + batch.quantityRemaining, 0
       );
       weightedAvgCost = totalQty > 0 ? totalCost / totalQty : 0;
     }
-    
+
     const stockValue = totalPacks * weightedAvgCost;
+
+    // ✅ FIX: Get the actual last purchase date (most recent restock)
+    const lastPurchase = await prisma.warehouseProductPurchase.findFirst({
+      where: {
+        productId: inv.productId
+      },
+      orderBy: { purchaseDate: 'desc' },
+      select: { purchaseDate: true }
+    });
 
     formattedInventory.push({
       id: inv.id,
@@ -298,7 +307,7 @@ router.get('/inventory', asyncHandler(async (req, res) => {
       currentStock: totalPacks,
       minimumStock,
       maximumStock,
-      lastRestocked: inv.lastUpdated ?? inv.createdAt,
+      lastRestocked: lastPurchase?.purchaseDate ?? inv.createdAt,
       stockStatus,
       // ✅ NEW FIELDS: Stock valuation based on purchase cost
       costPerUnit: parseFloat(weightedAvgCost.toFixed(2)),
