@@ -484,6 +484,43 @@ router.get('/products', asyncHandler(async (req, res) => {
 // ================================
 
 
+/**
+ * Calculate simple average purchase cost from all active batches
+ * Average = (Sum of all batch prices) / (Number of batches)
+ */
+async function calculateSimpleAverageCost(tx, productId, unitType) {
+  const allBatches = await tx.warehouseProductPurchase.findMany({
+    where: {
+      productId,
+      unitType,
+      batchStatus: 'ACTIVE',
+      quantityRemaining: { gt: 0 }
+    }
+  });
+
+  if (allBatches.length === 0) {
+    throw new BusinessError('No active batches available for cost calculation', 'NO_BATCHES');
+  }
+
+  // Simple average: Add all batch prices and divide by number of batches
+  const sumOfPrices = allBatches.reduce((sum, batch) => {
+    return sum + parseFloat(batch.costPerUnit);
+  }, 0);
+
+  const averageCost = sumOfPrices / allBatches.length;
+
+  console.log('📊 Simple Average Cost Calculation:', {
+    product: productId,
+    unitType,
+    numberOfBatches: allBatches.length,
+    batchPrices: allBatches.map(b => parseFloat(b.costPerUnit)),
+    sumOfPrices,
+    averageCost: averageCost.toFixed(2)
+  });
+
+  return parseFloat(averageCost.toFixed(2));
+}
+
 async function allocateSaleQuantityFEFO(tx, productId, quantityToSell, unitType) {
   // Fetch available batches sorted by expiry date (FEFO - First Expired, First Out)
   const availableBatches = await tx.warehouseProductPurchase.findMany({
@@ -505,7 +542,7 @@ async function allocateSaleQuantityFEFO(tx, productId, quantityToSell, unitType)
 
   // Calculate total available quantity
   const totalAvailable = availableBatches.reduce(
-    (sum, batch) => sum + batch.quantityRemaining, 
+    (sum, batch) => sum + batch.quantityRemaining,
     0
   );
 
@@ -524,7 +561,7 @@ async function allocateSaleQuantityFEFO(tx, productId, quantityToSell, unitType)
     if (remainingToSell === 0) break;
 
     const quantityFromThisBatch = Math.min(remainingToSell, batch.quantityRemaining);
-    
+
     allocations.push({
       batchId: batch.id,
       batchNumber: batch.batchNumber,
@@ -797,26 +834,24 @@ router.post(
           expiry: b.expiryDate
         })));
 
-        // Calculate weighted average cost from allocated batches
-        const weightedTotalCost = batchAllocations.reduce((sum, alloc) => 
-          sum + (alloc.costPerUnit * alloc.quantityAllocated), 0
-        );
+        // Calculate SIMPLE AVERAGE cost from all active batches
+        const averagePurchaseCost = await calculateSimpleAverageCost(tx, productId, unitType);
+        const totalCostUsingAverage = parseFloat((averagePurchaseCost * quantity).toFixed(2));
 
         // ✅ ADD SAFETY CHECK
-        if (weightedTotalCost === 0 || !isFinite(weightedTotalCost)) {
-          console.error('❌ Invalid cost calculation:', { 
-            batchAllocations, 
-            weightedTotalCost 
+        if (totalCostUsingAverage === 0 || !isFinite(totalCostUsingAverage)) {
+          console.error('❌ Invalid cost calculation:', {
+            averagePurchaseCost,
+            totalCostUsingAverage
           });
           throw new BusinessError(
             'Unable to calculate cost. Please check batch data.',
             'COST_CALCULATION_ERROR'
           );
         }
-        const calculatedCostPerUnit = weightedTotalCost / quantity;
 
         // ✅ FINAL VALIDATION
-        if (!isFinite(calculatedCostPerUnit)) {
+        if (!isFinite(averagePurchaseCost)) {
           throw new BusinessError(
             'Invalid cost calculation result',
             'INVALID_COST'
@@ -833,10 +868,10 @@ router.post(
             unitType,
             unitPrice: price,
             totalAmount,
-            costPerUnit: calculatedCostPerUnit,  // Changed from: costPerUnit
-            totalCost: weightedTotalCost,         // Changed from: totalCost
-            grossProfit: totalAmount - weightedTotalCost,  // Recalculate
-            profitMargin: totalAmount > 0 ? ((totalAmount - weightedTotalCost) / totalAmount) * 100 : 0,
+            costPerUnit: averagePurchaseCost,  // Simple average cost per unit
+            totalCost: totalCostUsingAverage,  // Total cost using average
+            grossProfit: totalAmount - totalCostUsingAverage,  // Revenue - Average Cost
+            profitMargin: totalAmount > 0 ? ((totalAmount - totalCostUsingAverage) / totalAmount) * 100 : 0,
             paymentMethod: isCreditSale 
               ? (amountPaid > 0 ? initialPaymentMethod : null)
               : paymentMethod,            
