@@ -1151,6 +1151,12 @@ router.get('/sales',
             limit: pageSize,
             total: 0,
             totalPages: 0
+          },
+          summary: {
+            totalRevenue: 0,
+            totalQuantitySold: 0,
+            totalDiscounts: 0,
+            totalSales: 0
           }
         }
       });
@@ -1179,6 +1185,12 @@ router.get('/sales',
             limit: pageSize,
             total,
             totalPages: Math.ceil(total / pageSize)
+          },
+          summary: {
+            totalRevenue: 0,
+            totalQuantitySold: 0,
+            totalDiscounts: 0,
+            totalSales: total
           }
         }
       });
@@ -1303,6 +1315,23 @@ router.get('/sales',
         itemsCount: aggregate.items.length
       }));
 
+    // Calculate summary statistics for ALL filtered sales (not just current page)
+    const allFilteredSales = await prisma.warehouseSale.findMany({
+      where: groupWhere,
+      select: {
+        totalAmount: true,
+        quantity: true,
+        totalDiscountAmount: true
+      }
+    });
+
+    const summary = {
+      totalRevenue: allFilteredSales.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0),
+      totalQuantitySold: allFilteredSales.reduce((sum, sale) => sum + Number(sale.quantity || 0), 0),
+      totalDiscounts: allFilteredSales.reduce((sum, sale) => sum + Number(sale.totalDiscountAmount || 0), 0),
+      totalSales: total
+    };
+
     res.json({
       success: true,
       data: {
@@ -1312,7 +1341,8 @@ router.get('/sales',
           limit: pageSize,
           total,
           totalPages: Math.ceil(total / pageSize)
-        }
+        },
+        summary
       }
     });
   })
