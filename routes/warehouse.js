@@ -1758,11 +1758,11 @@ router.delete('/sales/:id',
       // 5. Delete debtor record if exists
       if (sale.debtor) {
         // Delete payments first
-        await tx.warehouseDebtorPayment.deleteMany({
+        await tx.debtorPayment.deleteMany({
           where: { debtorId: sale.debtor.id }
         });
 
-        await tx.warehouseDebtor.delete({
+        await tx.debtor.delete({
           where: { id: sale.debtor.id }
         });
       }
