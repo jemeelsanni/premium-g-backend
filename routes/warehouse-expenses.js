@@ -21,9 +21,9 @@ const createWarehouseExpenseValidation = [
     .notEmpty()
     .withMessage('Expense type is required')
     .isIn([
-      'UTILITIES', 'RENT', 'EQUIPMENT', 'SUPPLIES', 'MAINTENANCE', 
-      'INVENTORY_PROCUREMENT', 'PACKAGING_MATERIALS', 'SECURITY', 
-      'CLEANING_SERVICES', 'INSURANCE', 'OFFLOAD', 'OTHER'
+      'UTILITIES', 'RENT', 'EQUIPMENT', 'SUPPLIES', 'MAINTENANCE',
+      'INVENTORY_PROCUREMENT', 'PACKAGING_MATERIALS', 'SECURITY',
+      'CLEANING_SERVICES', 'INSURANCE', 'SALARY_AND_WAGES', 'OFFLOAD', 'OTHER'
     ])
     .withMessage('Invalid expense type'),
   body('category').trim().notEmpty().withMessage('Category is required'),
