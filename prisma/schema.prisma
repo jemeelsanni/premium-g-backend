@@ -200,14 +200,35 @@ model Location {
   @@map("locations")
 }
 
+model SupplierCompany {
+  id            String  @id @default(cuid())
+  name          String  @unique
+  code          String  @unique
+  email         String?
+  phone         String?
+  address       String?
+  contactPerson String? @map("contact_person")
+  paymentTerms  String? @map("payment_terms")
+  notes         String?
+  isActive      Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  distributionOrders DistributionOrder[]
+
+  @@map("supplier_companies")
+}
+
 model DistributionOrder {
   id          String  @id @default(cuid())
-  orderNumber String? @unique @map("order_number") // ✅ Add this line
+  orderNumber String? @unique @map("order_number")
 
-  customerId String @map("customer_id")
-  locationId String @map("location_id")
+  customerId        String  @map("customer_id")
+  locationId        String  @map("location_id")
+  supplierCompanyId String? @map("supplier_company_id")
 
-  deliveryLocation String? @map("delivery_location") // Optional text field for delivery address
+  deliveryLocation String? @map("delivery_location")
 
   totalPallets   Int     @map("total_pallets")
   totalPacks     Int     @map("total_packs")
@@ -223,15 +244,15 @@ model DistributionOrder {
   paymentConfirmedAt DateTime?      @map("payment_confirmed_at")
   paymentNotes       String?        @map("payment_notes")
 
-  paidToRiteFoods        Boolean         @default(false) @map("paid_to_rite_foods")
-  amountPaidToRiteFoods  Decimal?        @map("amount_paid_to_rite_foods") @db.Decimal(12, 2)
-  paymentDateToRiteFoods DateTime?       @map("payment_date_to_rite_foods")
-  riteFoodsOrderNumber   String?         @map("rite_foods_order_number")
-  riteFoodsInvoiceNumber String?         @map("rite_foods_invoice_number")
-  riteFoodsStatus        RiteFoodsStatus @default(NOT_SENT) @map("rite_foods_status")
-  orderRaisedByRFL       Boolean         @default(false) @map("order_raised_by_rfl")
-  orderRaisedAt          DateTime?       @map("order_raised_at")
-  riteFoodsLoadedDate    DateTime?       @map("rite_foods_loaded_date")
+  paidToSupplier        Boolean        @default(false) @map("paid_to_supplier")
+  amountPaidToSupplier  Decimal?       @map("amount_paid_to_supplier") @db.Decimal(12, 2)
+  paymentDateToSupplier DateTime?      @map("payment_date_to_supplier")
+  supplierOrderNumber   String?        @map("supplier_order_number")
+  supplierInvoiceNumber String?        @map("supplier_invoice_number")
+  supplierStatus        SupplierStatus @default(NOT_SENT) @map("supplier_status")
+  orderRaisedBySupplier Boolean        @default(false) @map("order_raised_by_supplier")
+  orderRaisedAt         DateTime?      @map("order_raised_at")
+  supplierLoadedDate    DateTime?      @map("supplier_loaded_date")
 
   deliveryStatus        DeliveryStatus @default(PENDING) @map("delivery_status")
   deliveredPallets      Int?           @default(0) @map("delivered_pallets")
@@ -254,11 +275,12 @@ model DistributionOrder {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  customer         Customer @relation(fields: [customerId], references: [id])
-  location         Location @relation(fields: [locationId], references: [id])
-  createdByUser    User     @relation("DistributionOrderCreator", fields: [createdBy], references: [id])
-  paymentConfirmer User?    @relation("PaymentConfirmer", fields: [paymentConfirmedBy], references: [id])
-  deliveryReviewer User?    @relation("DeliveryReviewer", fields: [deliveryReviewedBy], references: [id])
+  customer         Customer         @relation(fields: [customerId], references: [id])
+  location         Location         @relation(fields: [locationId], references: [id])
+  supplierCompany  SupplierCompany? @relation(fields: [supplierCompanyId], references: [id])
+  createdByUser    User             @relation("DistributionOrderCreator", fields: [createdBy], references: [id])
+  paymentConfirmer User?            @relation("PaymentConfirmer", fields: [paymentConfirmedBy], references: [id])
+  deliveryReviewer User?            @relation("DeliveryReviewer", fields: [deliveryReviewedBy], references: [id])
 
   orderItems       DistributionOrderItem[]
   priceAdjustments PriceAdjustment[]
@@ -1065,14 +1087,14 @@ enum PaymentMethod {
 
 enum PaymentType {
   TO_COMPANY
-  TO_RITE_FOODS
+  TO_SUPPLIER
 }
 
-enum RiteFoodsStatus {
-  NOT_SENT // Haven't paid Rite Foods yet
-  PAYMENT_SENT // Payment sent to Rite Foods
-  ORDER_RAISED // Rite Foods acknowledged order
-  PROCESSING // Rite Foods preparing products
+enum SupplierStatus {
+  NOT_SENT // Haven't paid supplier yet
+  PAYMENT_SENT // Payment sent to supplier
+  ORDER_RAISED // Supplier acknowledged order
+  PROCESSING // Supplier preparing products
   LOADED // Products ready for pickup ⭐ CAN ASSIGN TRANSPORT NOW
   DISPATCHED // Products dispatched (transport assigned)
 }

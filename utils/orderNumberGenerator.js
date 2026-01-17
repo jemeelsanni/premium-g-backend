@@ -34,15 +34,15 @@ const generateDistributionOrderNumber = async () => {
 };
 
 /**
- * Generate payment reference for Rite Foods payments
- * Format: TRX-RF-001
+ * Generate payment reference for supplier payments
+ * Format: TRX-SUP-001
  */
 const generatePaymentReference = async () => {
-  const prefix = 'TRX-RF-';
+  const prefix = 'TRX-SUP-';
 
   const lastPayment = await prisma.paymentHistory.findFirst({
     where: {
-      paymentType: 'TO_RITE_FOODS',
+      paymentType: 'TO_SUPPLIER',
       reference: {
         startsWith: prefix
       }
@@ -65,30 +65,30 @@ const generatePaymentReference = async () => {
 };
 
 /**
- * Generate Rite Foods order number
- * Format: RFL-ORD-2025-001
+ * Generate supplier order number
+ * Format: SUP-ORD-2025-001
  */
-const generateRiteFoodsOrderNumber = async () => {
+const generateSupplierOrderNumber = async () => {
   const year = new Date().getFullYear();
-  const prefix = `RFL-ORD-${year}-`;
+  const prefix = `SUP-ORD-${year}-`;
 
   const lastOrder = await prisma.distributionOrder.findFirst({
     where: {
-      riteFoodsOrderNumber: {
+      supplierOrderNumber: {
         startsWith: prefix
       }
     },
     orderBy: {
-      riteFoodsOrderNumber: 'desc'
+      supplierOrderNumber: 'desc'
     },
     select: {
-      riteFoodsOrderNumber: true
+      supplierOrderNumber: true
     }
   });
 
   let nextNumber = 1;
-  if (lastOrder && lastOrder.riteFoodsOrderNumber) {
-    const lastNumberStr = lastOrder.riteFoodsOrderNumber.split('-')[3];
+  if (lastOrder && lastOrder.supplierOrderNumber) {
+    const lastNumberStr = lastOrder.supplierOrderNumber.split('-')[3];
     nextNumber = parseInt(lastNumberStr) + 1;
   }
 
@@ -96,30 +96,30 @@ const generateRiteFoodsOrderNumber = async () => {
 };
 
 /**
- * Generate Rite Foods invoice number
- * Format: RFL-INV-2025-001
+ * Generate supplier invoice number
+ * Format: SUP-INV-2025-001
  */
-const generateRiteFoodsInvoiceNumber = async () => {
+const generateSupplierInvoiceNumber = async () => {
   const year = new Date().getFullYear();
-  const prefix = `RFL-INV-${year}-`;
+  const prefix = `SUP-INV-${year}-`;
 
   const lastOrder = await prisma.distributionOrder.findFirst({
     where: {
-      riteFoodsInvoiceNumber: {
+      supplierInvoiceNumber: {
         startsWith: prefix
       }
     },
     orderBy: {
-      riteFoodsInvoiceNumber: 'desc'
+      supplierInvoiceNumber: 'desc'
     },
     select: {
-      riteFoodsInvoiceNumber: true
+      supplierInvoiceNumber: true
     }
   });
 
   let nextNumber = 1;
-  if (lastOrder && lastOrder.riteFoodsInvoiceNumber) {
-    const lastNumberStr = lastOrder.riteFoodsInvoiceNumber.split('-')[3];
+  if (lastOrder && lastOrder.supplierInvoiceNumber) {
+    const lastNumberStr = lastOrder.supplierInvoiceNumber.split('-')[3];
     nextNumber = parseInt(lastNumberStr) + 1;
   }
 
@@ -129,6 +129,6 @@ const generateRiteFoodsInvoiceNumber = async () => {
 module.exports = {
   generateDistributionOrderNumber,
   generatePaymentReference,
-  generateRiteFoodsOrderNumber,
-  generateRiteFoodsInvoiceNumber
+  generateSupplierOrderNumber,
+  generateSupplierInvoiceNumber
 };

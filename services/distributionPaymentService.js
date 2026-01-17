@@ -4,8 +4,8 @@ const prisma = new PrismaClient();
 
 const {
   generatePaymentReference,
-  generateRiteFoodsOrderNumber,
-  generateRiteFoodsInvoiceNumber
+  generateSupplierOrderNumber,
+  generateSupplierInvoiceNumber
 } = require('../utils/orderNumberGenerator');
 
 class DistributionPaymentService {
@@ -171,21 +171,22 @@ class DistributionPaymentService {
   }
 
   // Record payment to Rite Foods
-  async recordPaymentToRiteFoods({
+  async recordPaymentToSupplier({
     orderId,
     amount,
     paymentMethod,
     reference,
-    riteFoodsOrderNumber,
-    riteFoodsInvoiceNumber,
+    supplierOrderNumber,
+    supplierInvoiceNumber,
     userId
   }) {
-    // Get order
+    // Get order with supplier company
     const order = await prisma.distributionOrder.findUnique({
       where: { id: orderId },
       include: {
         customer: true,
         location: true,
+        supplierCompany: true,
         orderItems: {
           include: { product: true }
         }
@@ -196,13 +197,17 @@ class DistributionPaymentService {
       throw new NotFoundError('Order not found');
     }
 
-    // Validation
-    if (order.paymentStatus !== 'CONFIRMED') {
-      throw new BusinessError('Customer payment must be confirmed before paying Rite Foods');
+    if (!order.supplierCompany) {
+      throw new BusinessError('No supplier company assigned to this order');
     }
 
-    if (order.paidToRiteFoods) {
-      throw new BusinessError('Payment to Rite Foods has already been recorded for this order');
+    // Validation
+    if (order.paymentStatus !== 'CONFIRMED') {
+      throw new BusinessError(`Customer payment must be confirmed before paying ${order.supplierCompany.name}`);
+    }
+
+    if (order.paidToSupplier) {
+      throw new BusinessError(`Payment to ${order.supplierCompany.name} has already been recorded for this order`);
     }
 
     const paymentAmount = parseFloat(amount);
@@ -212,20 +217,20 @@ class DistributionPaymentService {
 
     // ✅ Generate numbers automatically if not provided
     const finalReference = reference || await generatePaymentReference();
-    const finalRFOrderNumber = riteFoodsOrderNumber || await generateRiteFoodsOrderNumber();
-    const finalRFInvoiceNumber = riteFoodsInvoiceNumber || await generateRiteFoodsInvoiceNumber();
+    const finalSupplierOrderNumber = supplierOrderNumber || await generateSupplierOrderNumber();
+    const finalSupplierInvoiceNumber = supplierInvoiceNumber || await generateSupplierInvoiceNumber();
 
     // Record payment in transaction
     const result = await prisma.$transaction(async (tx) => {
-      // Record payment to Rite Foods
+      // Record payment to supplier
       const payment = await tx.paymentHistory.create({
         data: {
           orderId,
           amount: paymentAmount,
           paymentMethod: paymentMethod,
-          paymentType: 'TO_RITE_FOODS',
+          paymentType: 'TO_SUPPLIER',
           reference: finalReference,
-          notes: `Payment to Rite Foods - ${finalReference}`,
+          notes: `Payment to ${order.supplierCompany.name} - ${finalReference}`,
         }
       });
 
@@ -233,16 +238,18 @@ class DistributionPaymentService {
       const updatedOrder = await tx.distributionOrder.update({
         where: { id: orderId },
         data: {
-          paidToRiteFoods: true,
-          paymentDateToRiteFoods: new Date(),
-          riteFoodsStatus: 'PAYMENT_SENT',
-          riteFoodsOrderNumber: finalRFOrderNumber,
-          riteFoodsInvoiceNumber: finalRFInvoiceNumber,
+          paidToSupplier: true,
+          amountPaidToSupplier: paymentAmount,
+          paymentDateToSupplier: new Date(),
+          supplierStatus: 'PAYMENT_SENT',
+          supplierOrderNumber: finalSupplierOrderNumber,
+          supplierInvoiceNumber: finalSupplierInvoiceNumber,
           status: 'SENT_TO_RITE_FOODS'
         },
         include: {
           customer: true,
           location: true,
+          supplierCompany: true,
           orderItems: {
             include: { product: true }
           }
@@ -253,14 +260,15 @@ class DistributionPaymentService {
       await tx.auditLog.create({
         data: {
           userId,
-          action: 'PAY_RITE_FOODS',
+          action: 'PAY_SUPPLIER',
           entity: 'DistributionOrder',
           entityId: orderId,
           newValues: {
             paymentReference: finalReference,
-            riteFoodsOrderNumber: finalRFOrderNumber,
-            riteFoodsInvoiceNumber: finalRFInvoiceNumber,
-            amount: paymentAmount
+            supplierOrderNumber: finalSupplierOrderNumber,
+            supplierInvoiceNumber: finalSupplierInvoiceNumber,
+            amount: paymentAmount,
+            supplierName: order.supplierCompany.name
           }
         }
       });
@@ -269,47 +277,54 @@ class DistributionPaymentService {
         order: updatedOrder,
         payment,
         paymentReference: finalReference,
-        riteFoodsOrderNumber: finalRFOrderNumber,
-        riteFoodsInvoiceNumber: finalRFInvoiceNumber
+        supplierOrderNumber: finalSupplierOrderNumber,
+        supplierInvoiceNumber: finalSupplierInvoiceNumber
       };
     });
 
     return result;
   }
 
-  // Update Rite Foods order status
-  async updateRiteFoodsStatus({
+  // Update supplier order status
+  async updateSupplierStatus({
     orderId,
-    riteFoodsStatus,
+    supplierStatus,
     orderRaisedAt,
     loadedDate,
     userId
   }) {
     const order = await prisma.distributionOrder.findUnique({
-      where: { id: orderId }
+      where: { id: orderId },
+      include: {
+        supplierCompany: true
+      }
     });
 
     if (!order) {
       throw new NotFoundError('Order not found');
     }
 
+    if (!order.supplierCompany) {
+      throw new BusinessError('No supplier company assigned to this order');
+    }
+
     const updateData = {
-      riteFoodsStatus
+      supplierStatus
     };
 
     // Handle specific status updates
-    if (riteFoodsStatus === 'ORDER_RAISED') {
-      updateData.orderRaisedByRFL = true;
+    if (supplierStatus === 'ORDER_RAISED') {
+      updateData.orderRaisedBySupplier = true;
       updateData.orderRaisedAt = orderRaisedAt || new Date();
       updateData.status = 'PROCESSING_BY_RFL';
     }
 
-    if (riteFoodsStatus === 'LOADED') {
-      updateData.riteFoodsLoadedDate = loadedDate || new Date();
+    if (supplierStatus === 'LOADED') {
+      updateData.supplierLoadedDate = loadedDate || new Date();
       updateData.status = 'LOADED';
     }
 
-    if (riteFoodsStatus === 'DISPATCHED') {
+    if (supplierStatus === 'DISPATCHED') {
       updateData.status = 'IN_TRANSIT';
     }
 
@@ -319,7 +334,8 @@ class DistributionPaymentService {
         data: updateData,
         include: {
           customer: true,
-          location: true
+          location: true,
+          supplierCompany: true
         }
       });
 

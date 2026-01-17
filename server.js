@@ -24,6 +24,7 @@ const userRoutes = require('./routes/users');
 const distributionRoutes = require('./routes/distribution');
 const transportRoutes = require('./routes/transport');
 const warehouseRoutes = require('./routes/warehouse');
+const supplierCompanyRoutes = require('./routes/supplierCompany');
 
 // SUPPORTING ROUTES
 const targetRoutes = require('./routes/targets'); // Distribution targets only
@@ -385,6 +386,7 @@ app.use(`/api/${apiVersion}/transport`, authenticateToken, truckRoutes);
 // MODULE-SPECIFIC SUPPORTING ROUTES
 app.use(`/api/${apiVersion}/targets`, authenticateToken, targetRoutes); // Distribution only
 app.use(`/api/${apiVersion}/trucks`, authenticateToken, truckRoutes); // Transport only
+app.use(`/api/${apiVersion}/supplier-companies`, authenticateToken, supplierCompanyRoutes); // Distribution suppliers
 
 // SEPARATE ANALYTICS ENDPOINTS
 app.use(`/api/${apiVersion}/analytics/distribution`, authenticateToken, distributionAnalyticsRoutes);

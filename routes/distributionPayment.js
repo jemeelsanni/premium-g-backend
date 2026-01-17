@@ -9,8 +9,8 @@ const { ValidationError } = require('../middleware/errorHandler');
 const { PrismaClient } = require('@prisma/client');  // ✅ ADD THIS LINE
 const {
   generatePaymentReference,
-  generateRiteFoodsOrderNumber,
-  generateRiteFoodsInvoiceNumber
+  generateSupplierOrderNumber,
+  generateSupplierInvoiceNumber
 } = require('../utils/orderNumberGenerator');
 
 
@@ -120,18 +120,18 @@ router.post('/payments/confirm',
   })
 );
 
-// @route   POST /api/v1/distribution/payments/rite-foods
-// @desc    Record payment to Rite Foods (Admin only)
+// @route   POST /api/v1/distribution/payments/supplier
+// @desc    Record payment to supplier (Admin only)
 // @access  Private (Admin)
-router.post('/payments/rite-foods',
+router.post('/payments/supplier',
   authorizeModule('distribution', 'admin'),
   [
     body('orderId').custom(validateCuid('order ID')),
     body('amount').isFloat({ min: 0.01 }).withMessage('Amount must be greater than 0'),
     body('paymentMethod').isIn(['BANK_TRANSFER', 'CHECK']),
-    body('reference').optional().trim(), // ✅ Make optional
-    body('riteFoodsOrderNumber').optional().trim(),
-    body('riteFoodsInvoiceNumber').optional().trim()
+    body('reference').optional().trim(),
+    body('supplierOrderNumber').optional().trim(),
+    body('supplierInvoiceNumber').optional().trim()
   ],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -144,36 +144,36 @@ router.post('/payments/rite-foods',
       amount,
       paymentMethod,
       reference,
-      riteFoodsOrderNumber,
-      riteFoodsInvoiceNumber
+      supplierOrderNumber,
+      supplierInvoiceNumber
     } = req.body;
 
-    const result = await distributionPaymentService.recordPaymentToRiteFoods({
+    const result = await distributionPaymentService.recordPaymentToSupplier({
       orderId,
       amount,
       paymentMethod,
-      reference, // Can be undefined, will be auto-generated
-      riteFoodsOrderNumber, // Can be undefined, will be auto-generated
-      riteFoodsInvoiceNumber, // Can be undefined, will be auto-generated
+      reference,
+      supplierOrderNumber,
+      supplierInvoiceNumber,
       userId: req.user.id
     });
 
     res.status(201).json({
       success: true,
-      message: 'Payment to Rite Foods recorded successfully',
+      message: 'Payment to supplier recorded successfully',
       data: result
     });
   })
 );
 
-// @route   PUT /api/v1/distribution/payments/rite-foods/status
-// @desc    Update Rite Foods order status (Admin only)
+// @route   PUT /api/v1/distribution/payments/supplier/status
+// @desc    Update supplier order status (Admin only)
 // @access  Private (Admin)
-router.put('/payments/rite-foods/status',
+router.put('/payments/supplier/status',
   authorizeModule('distribution', 'admin'),
   [
     body('orderId').custom(validateCuid('order ID')),
-    body('riteFoodsStatus').isIn(['PAYMENT_SENT', 'ORDER_RAISED', 'PROCESSING', 'LOADED', 'DISPATCHED']),
+    body('supplierStatus').isIn(['PAYMENT_SENT', 'ORDER_RAISED', 'PROCESSING', 'LOADED', 'DISPATCHED']),
     body('orderRaisedAt').optional().isISO8601(),
     body('loadedDate').optional().isISO8601()
   ],
@@ -185,14 +185,14 @@ router.put('/payments/rite-foods/status',
 
     const {
       orderId,
-      riteFoodsStatus,
+      supplierStatus,
       orderRaisedAt,
       loadedDate
     } = req.body;
 
-    const order = await distributionPaymentService.updateRiteFoodsStatus({
+    const order = await distributionPaymentService.updateSupplierStatus({
       orderId,
-      riteFoodsStatus,
+      supplierStatus,
       orderRaisedAt: orderRaisedAt ? new Date(orderRaisedAt) : null,
       loadedDate: loadedDate ? new Date(loadedDate) : null,
       userId: req.user.id
@@ -200,7 +200,7 @@ router.put('/payments/rite-foods/status',
 
     res.json({
       success: true,
-      message: 'Rite Foods status updated successfully',
+      message: 'Supplier status updated successfully',
       data: { order }
     });
   })
