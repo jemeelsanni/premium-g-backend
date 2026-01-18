@@ -969,8 +969,8 @@ router.put('/orders/:id/status',
     body('status').isIn([
       'PENDING',
       'PAYMENT_CONFIRMED',
-      'SENT_TO_RITE_FOODS',
-      'PROCESSING_BY_RFL',
+      'SENT_TO_SUPPLIER',
+      'PROCESSING_BY_SUPPLIER',
       'LOADED',
       'IN_TRANSIT',
       'DELIVERED',
@@ -1004,9 +1004,9 @@ router.put('/orders/:id/status',
     // Validate status transitions
     const validTransitions = {
       'PENDING': ['PAYMENT_CONFIRMED', 'CANCELLED'],
-      'PAYMENT_CONFIRMED': ['SENT_TO_RITE_FOODS', 'CANCELLED'],
-      'SENT_TO_RITE_FOODS': ['PROCESSING_BY_RFL', 'CANCELLED'],
-      'PROCESSING_BY_RFL': ['LOADED', 'CANCELLED'],
+      'PAYMENT_CONFIRMED': ['SENT_TO_SUPPLIER', 'CANCELLED'],
+      'SENT_TO_SUPPLIER': ['PROCESSING_BY_SUPPLIER', 'CANCELLED'],
+      'PROCESSING_BY_SUPPLIER': ['LOADED', 'CANCELLED'],
       'LOADED': ['IN_TRANSIT', 'CANCELLED'],
       'IN_TRANSIT': ['DELIVERED', 'PARTIALLY_DELIVERED', 'RETURNED'],
       'DELIVERED': [],
@@ -2418,9 +2418,9 @@ router.get('/orders/:id/export/pdf',
        })}`, 400, 60, { align: 'right' });
 
     // Status badge
-    const statusColor = 
+    const statusColor =
       order.status === 'DELIVERED' ? '#10b981' :
-      order.status === 'PROCESSING' || order.status === 'PROCESSING_BY_RFL' ? '#3b82f6' :
+      order.status === 'PROCESSING' || order.status === 'PROCESSING_BY_SUPPLIER' ? '#3b82f6' :
       order.status === 'PENDING' ? '#f59e0b' : '#6b7280';
     
     doc.rect(400, 80, 145, 25)

@@ -66,11 +66,11 @@ const generatePaymentReference = async () => {
 
 /**
  * Generate supplier order number
- * Format: SUP-ORD-2025-001
+ * Format: {SUPPLIER_CODE}-ORD-2025-001 (e.g., RFL-ORD-2025-001)
  */
-const generateSupplierOrderNumber = async () => {
+const generateSupplierOrderNumber = async (supplierCode) => {
   const year = new Date().getFullYear();
-  const prefix = `SUP-ORD-${year}-`;
+  const prefix = `${supplierCode}-ORD-${year}-`;
 
   const lastOrder = await prisma.distributionOrder.findFirst({
     where: {
@@ -97,11 +97,11 @@ const generateSupplierOrderNumber = async () => {
 
 /**
  * Generate supplier invoice number
- * Format: SUP-INV-2025-001
+ * Format: {SUPPLIER_CODE}-INV-2025-001 (e.g., RFL-INV-2025-001)
  */
-const generateSupplierInvoiceNumber = async () => {
+const generateSupplierInvoiceNumber = async (supplierCode) => {
   const year = new Date().getFullYear();
-  const prefix = `SUP-INV-${year}-`;
+  const prefix = `${supplierCode}-INV-${year}-`;
 
   const lastOrder = await prisma.distributionOrder.findFirst({
     where: {

@@ -1058,9 +1058,9 @@ enum BatchStatus {
 enum OrderStatus {
   PENDING // Order created, awaiting payment
   PAYMENT_CONFIRMED // Payment confirmed by accountant
-  SENT_TO_RITE_FOODS // Payment sent to Rite Foods
-  PROCESSING_BY_RFL // Rite Foods processing order
-  LOADED // Products loaded at Rite Foods ⭐ READY FOR TRANSPORT
+  SENT_TO_SUPPLIER // Payment sent to supplier company
+  PROCESSING_BY_SUPPLIER // Supplier processing order
+  LOADED // Products loaded at supplier ⭐ READY FOR TRANSPORT
   IN_TRANSIT // Transport assigned, en route to customer
   DELIVERED // Successfully delivered
   PARTIALLY_DELIVERED // Partial delivery

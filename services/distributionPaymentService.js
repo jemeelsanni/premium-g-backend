@@ -216,9 +216,10 @@ class DistributionPaymentService {
     }
 
     // ✅ Generate numbers automatically if not provided
+    const supplierCode = order.supplierCompany.code;
     const finalReference = reference || await generatePaymentReference();
-    const finalSupplierOrderNumber = supplierOrderNumber || await generateSupplierOrderNumber();
-    const finalSupplierInvoiceNumber = supplierInvoiceNumber || await generateSupplierInvoiceNumber();
+    const finalSupplierOrderNumber = supplierOrderNumber || await generateSupplierOrderNumber(supplierCode);
+    const finalSupplierInvoiceNumber = supplierInvoiceNumber || await generateSupplierInvoiceNumber(supplierCode);
 
     // Record payment in transaction
     const result = await prisma.$transaction(async (tx) => {
@@ -244,7 +245,7 @@ class DistributionPaymentService {
           supplierStatus: 'PAYMENT_SENT',
           supplierOrderNumber: finalSupplierOrderNumber,
           supplierInvoiceNumber: finalSupplierInvoiceNumber,
-          status: 'SENT_TO_RITE_FOODS'
+          status: 'SENT_TO_SUPPLIER'
         },
         include: {
           customer: true,
@@ -316,7 +317,7 @@ class DistributionPaymentService {
     if (supplierStatus === 'ORDER_RAISED') {
       updateData.orderRaisedBySupplier = true;
       updateData.orderRaisedAt = orderRaisedAt || new Date();
-      updateData.status = 'PROCESSING_BY_RFL';
+      updateData.status = 'PROCESSING_BY_SUPPLIER';
     }
 
     if (supplierStatus === 'LOADED') {
@@ -346,8 +347,8 @@ class DistributionPaymentService {
           action: 'UPDATE',
           entity: 'DistributionOrder',
           entityId: orderId,
-          oldValues: { riteFoodsStatus: order.riteFoodsStatus },
-          newValues: { riteFoodsStatus }
+          oldValues: { supplierStatus: order.supplierStatus },
+          newValues: { supplierStatus }
         }
       });
 
@@ -378,7 +379,7 @@ class DistributionPaymentService {
     }
 
     const customerPayments = payments.filter(p => p.paymentType === 'TO_COMPANY');
-    const riteFoodsPayments = payments.filter(p => p.paymentType === 'TO_RITE_FOODS');
+    const supplierPayments = payments.filter(p => p.paymentType === 'TO_SUPPLIER');
 
     return {
       order: {
@@ -399,14 +400,14 @@ class DistributionPaymentService {
         receivedBy: p.receivedBy,
         date: p.createdAt
       })),
-      riteFoodsPayment: riteFoodsPayments[0] ? {
-        amount: parseFloat(riteFoodsPayments[0].amount),
-        method: riteFoodsPayments[0].paymentMethod,
-        reference: riteFoodsPayments[0].reference,
-        paidAt: riteFoodsPayments[0].createdAt,
-        orderNumber: order.riteFoodsOrderNumber,
-        invoiceNumber: order.riteFoodsInvoiceNumber,
-        status: order.riteFoodsStatus
+      supplierPayment: supplierPayments[0] ? {
+        amount: parseFloat(supplierPayments[0].amount),
+        method: supplierPayments[0].paymentMethod,
+        reference: supplierPayments[0].reference,
+        paidAt: supplierPayments[0].createdAt,
+        orderNumber: order.supplierOrderNumber,
+        invoiceNumber: order.supplierInvoiceNumber,
+        status: order.supplierStatus
       } : null
     };
   }
