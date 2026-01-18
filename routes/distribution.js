@@ -308,12 +308,12 @@ router.post('/orders',
       });
     }
 
-    const { customerId, locationId, deliveryLocation, orderItems, remark } = req.body;
+    const { customerId, supplierCompanyId, locationId, deliveryLocation, orderItems, remark } = req.body;
 
     const orderNumber = await generateDistributionOrderNumber();
 
 
-    console.log('📦 Received order data:', { customerId, locationId, deliveryLocation, orderItems });
+    console.log('📦 Received order data:', { customerId, supplierCompanyId, locationId, deliveryLocation, orderItems });
 
     // Validate that at least deliveryLocation is provided
     if (!deliveryLocation) {
@@ -360,6 +360,21 @@ router.post('/orders',
       throw new NotFoundError('Customer not found');
     }
 
+    // Verify supplier company exists if provided
+    if (supplierCompanyId) {
+      const supplier = await prisma.supplierCompany.findUnique({
+        where: { id: supplierCompanyId }
+      });
+
+      if (!supplier) {
+        throw new NotFoundError('Supplier company not found');
+      }
+
+      if (!supplier.isActive) {
+        throw new BusinessError('Supplier company is not active');
+      }
+    }
+
     // Calculate totals and validate products
     let totalPallets = 0;
     let totalPacks = 0;
@@ -403,6 +418,7 @@ router.post('/orders',
         data: {
           orderNumber,
           customerId,
+          supplierCompanyId: supplierCompanyId || null,
           locationId: finalLocationId,
           deliveryLocation: deliveryLocation.trim(),  // ✅ Store the text field
           totalPallets,
