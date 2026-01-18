@@ -62,7 +62,7 @@ class SupplierCompanyService {
    * Create new supplier company
    */
   async createSupplierCompany(data) {
-    const { name, code, email, phone, address, contactPerson, paymentTerms, notes } = data;
+    const { name, code, email, phone, address, contactPerson, notes } = data;
 
     // Check if name already exists
     const existingByName = await prisma.supplierCompany.findUnique({
@@ -90,7 +90,6 @@ class SupplierCompanyService {
         phone,
         address,
         contactPerson,
-        paymentTerms,
         notes
       }
     });
@@ -102,7 +101,7 @@ class SupplierCompanyService {
    * Update supplier company
    */
   async updateSupplierCompany(id, data) {
-    const { name, code, email, phone, address, contactPerson, paymentTerms, notes, isActive } = data;
+    const { name, code, email, phone, address, contactPerson, notes, isActive } = data;
 
     // Check if company exists
     const existing = await prisma.supplierCompany.findUnique({
@@ -148,7 +147,6 @@ class SupplierCompanyService {
     if (phone !== undefined) updateData.phone = phone;
     if (address !== undefined) updateData.address = address;
     if (contactPerson !== undefined) updateData.contactPerson = contactPerson;
-    if (paymentTerms !== undefined) updateData.paymentTerms = paymentTerms;
     if (notes !== undefined) updateData.notes = notes;
     if (isActive !== undefined) updateData.isActive = isActive;
 

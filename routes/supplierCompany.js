@@ -86,7 +86,7 @@ router.post(
   authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN']),
   async (req, res) => {
     try {
-      const { name, code, email, phone, address, contactPerson, paymentTerms, notes } = req.body;
+      const { name, code, email, phone, address, contactPerson, notes } = req.body;
 
       // Validation
       if (!name || !code) {
@@ -103,7 +103,6 @@ router.post(
         phone,
         address,
         contactPerson,
-        paymentTerms,
         notes
       });
 
@@ -135,7 +134,7 @@ router.put(
   async (req, res) => {
     try {
       const { id } = req.params;
-      const { name, code, email, phone, address, contactPerson, paymentTerms, notes, isActive } = req.body;
+      const { name, code, email, phone, address, contactPerson, notes, isActive } = req.body;
 
       const company = await supplierCompanyService.updateSupplierCompany(id, {
         name,
@@ -144,7 +143,6 @@ router.put(
         phone,
         address,
         contactPerson,
-        paymentTerms,
         notes,
         isActive
       });
