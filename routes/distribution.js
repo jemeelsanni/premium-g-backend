@@ -528,9 +528,9 @@ router.get('/orders', asyncHandler(async (req, res) => {
     page = 1,
     limit = 20,
     status,
-    paymentStatus,        // ✅ ADD THIS
-    riteFoodsStatus,      // ✅ ADD THIS
-    deliveryStatus,       // ✅ ADD THIS
+    paymentStatus,
+    supplierStatus,
+    deliveryStatus,
     customerId,
     locationId,
     startDate,
@@ -550,9 +550,9 @@ router.get('/orders', asyncHandler(async (req, res) => {
   }
 
   if (status) where.status = status;
-  if (paymentStatus) where.paymentStatus = paymentStatus;           // ✅ ADD THIS
-  if (riteFoodsStatus) where.riteFoodsStatus = riteFoodsStatus;     // ✅ ADD THIS
-  if (deliveryStatus) where.deliveryStatus = deliveryStatus;        // ✅ ADD THIS
+  if (paymentStatus) where.paymentStatus = paymentStatus;
+  if (supplierStatus) where.supplierStatus = supplierStatus;
+  if (deliveryStatus) where.deliveryStatus = deliveryStatus;
   if (customerId) where.customerId = customerId;
   if (locationId) where.locationId = locationId;
 
@@ -589,6 +589,7 @@ router.get('/orders', asyncHandler(async (req, res) => {
       include: {
         customer: true,
         location: true,
+        supplierCompany: true,
         orderItems: {
           include: {
             product: true
@@ -643,6 +644,7 @@ router.get('/orders/:id',
       include: {
         customer: true,
         location: true,
+        supplierCompany: true,
         orderItems: {
           include: {
             product: true
