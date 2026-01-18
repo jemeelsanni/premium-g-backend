@@ -1,14 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const supplierCompanyService = require('../services/supplierCompanyService');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticateToken, authorizeRole } = require('../middleware/auth');
 
 /**
  * @route   GET /api/v1/supplier-companies
  * @desc    Get all supplier companies
  * @access  Private (All authenticated users)
  */
-router.get('/', authenticate, async (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
     const { isActive } = req.query;
     const companies = await supplierCompanyService.getAllSupplierCompanies({ isActive });
@@ -32,7 +32,7 @@ router.get('/', authenticate, async (req, res) => {
  * @desc    Get supplier company by ID
  * @access  Private (All authenticated users)
  */
-router.get('/:id', authenticate, async (req, res) => {
+router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const company = await supplierCompanyService.getSupplierCompanyById(id);
@@ -56,7 +56,7 @@ router.get('/:id', authenticate, async (req, res) => {
  * @desc    Get supplier company statistics
  * @access  Private (All authenticated users)
  */
-router.get('/:id/stats', authenticate, async (req, res) => {
+router.get('/:id/stats', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const stats = await supplierCompanyService.getSupplierCompanyStats(id);
@@ -82,8 +82,8 @@ router.get('/:id/stats', authenticate, async (req, res) => {
  */
 router.post(
   '/',
-  authenticate,
-  authorize(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN']),
+  authenticateToken,
+  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN']),
   async (req, res) => {
     try {
       const { name, code, email, phone, address, contactPerson, paymentTerms, notes } = req.body;
@@ -130,8 +130,8 @@ router.post(
  */
 router.put(
   '/:id',
-  authenticate,
-  authorize(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN']),
+  authenticateToken,
+  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN']),
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -174,8 +174,8 @@ router.put(
  */
 router.delete(
   '/:id',
-  authenticate,
-  authorize(['SUPER_ADMIN']),
+  authenticateToken,
+  authorizeRole(['SUPER_ADMIN']),
   async (req, res) => {
     try {
       const { id } = req.params;

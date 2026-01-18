@@ -1,4 +1,6 @@
-const prisma = require('../config/database');
+const { PrismaClient } = require('@prisma/client');
+const { NotFoundError, ValidationError, BusinessError } = require('../middleware/errorHandler');
+const prisma = new PrismaClient();
 
 class SupplierCompanyService {
   /**
@@ -39,7 +41,7 @@ class SupplierCompanyService {
     });
 
     if (!company) {
-      throw new Error('Supplier company not found');
+      throw new NotFoundError('Supplier company not found');
     }
 
     return company;
@@ -68,7 +70,7 @@ class SupplierCompanyService {
     });
 
     if (existingByName) {
-      throw new Error('A supplier company with this name already exists');
+      throw new ValidationError('A supplier company with this name already exists');
     }
 
     // Check if code already exists
@@ -77,7 +79,7 @@ class SupplierCompanyService {
     });
 
     if (existingByCode) {
-      throw new Error('A supplier company with this code already exists');
+      throw new ValidationError('A supplier company with this code already exists');
     }
 
     const company = await prisma.supplierCompany.create({
@@ -108,7 +110,7 @@ class SupplierCompanyService {
     });
 
     if (!existing) {
-      throw new Error('Supplier company not found');
+      throw new NotFoundError('Supplier company not found');
     }
 
     // Check if new name conflicts with another company
@@ -121,7 +123,7 @@ class SupplierCompanyService {
       });
 
       if (nameConflict) {
-        throw new Error('A supplier company with this name already exists');
+        throw new ValidationError('A supplier company with this name already exists');
       }
     }
 
@@ -135,7 +137,7 @@ class SupplierCompanyService {
       });
 
       if (codeConflict) {
-        throw new Error('A supplier company with this code already exists');
+        throw new ValidationError('A supplier company with this code already exists');
       }
     }
 
@@ -175,7 +177,7 @@ class SupplierCompanyService {
     });
 
     if (!existing) {
-      throw new Error('Supplier company not found');
+      throw new NotFoundError('Supplier company not found');
     }
 
     // Check if company has orders
@@ -223,7 +225,7 @@ class SupplierCompanyService {
     });
 
     if (!company) {
-      throw new Error('Supplier company not found');
+      throw new NotFoundError('Supplier company not found');
     }
 
     const stats = {
