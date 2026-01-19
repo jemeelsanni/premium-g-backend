@@ -128,6 +128,95 @@ router.get('/customers',
   })
 );
 
+// Get single customer by ID
+router.get('/customers/:id',
+  authorizeModule('distribution'),
+  param('id').custom(validateCuid('customer ID')),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+
+    const customer = await prisma.customer.findUnique({
+      where: { id },
+      include: {
+        distributionOrders: {
+          select: {
+            id: true,
+            orderNumber: true,
+            finalAmount: true,
+            amountPaid: true,
+            balance: true,
+            paymentStatus: true,
+            status: true,
+            createdAt: true
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 10 // Get last 10 orders for summary
+        }
+      }
+    });
+
+    if (!customer) {
+      throw new NotFoundError('Customer not found');
+    }
+
+    res.json({
+      success: true,
+      data: customer
+    });
+  })
+);
+
+// Update customer
+router.put('/customers/:id',
+  authorizeModule('distribution', 'write'),
+  param('id').custom(validateCuid('customer ID')),
+  [
+    body('name').optional().trim().notEmpty().withMessage('Customer name cannot be empty'),
+    body('email').optional().isEmail().withMessage('Valid email is required'),
+    body('phone').optional().trim(),
+    body('address').optional().trim(),
+    body('customerType').optional().isIn(['BUSINESS', 'ENTERPRISE', 'GOVERNMENT']),
+    body('territory').optional().trim(),
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
+    const { id } = req.params;
+
+    // Check if customer exists
+    const existingCustomer = await prisma.customer.findUnique({
+      where: { id }
+    });
+
+    if (!existingCustomer) {
+      throw new NotFoundError('Customer not found');
+    }
+
+    // Build update data object with only provided fields
+    const updateData = {};
+    if (req.body.name !== undefined) updateData.name = req.body.name.trim();
+    if (req.body.email !== undefined) updateData.email = req.body.email?.trim() || null;
+    if (req.body.phone !== undefined) updateData.phone = req.body.phone?.trim() || null;
+    if (req.body.address !== undefined) updateData.address = req.body.address?.trim() || null;
+    if (req.body.customerType !== undefined) updateData.customerType = req.body.customerType;
+    if (req.body.territory !== undefined) updateData.territory = req.body.territory?.trim() || null;
+
+    const customer = await prisma.customer.update({
+      where: { id },
+      data: updateData
+    });
+
+    res.json({
+      success: true,
+      message: 'Customer updated successfully',
+      data: { customer }
+    });
+  })
+);
+
 // Get customer order history
 router.get('/customers/:id/orders',
   authorizeModule('distribution'),
@@ -158,13 +247,13 @@ router.get('/customers/:id/orders',
         take
       }),
       prisma.distributionOrder.count({ where }),
-      prisma.distributionCustomer.findUnique({
+      prisma.customer.findUnique({
         where: { id },
-        select: { 
-          name: true, 
-          totalOrders: true, 
-          totalSpent: true, 
-          averageOrderValue: true 
+        select: {
+          name: true,
+          totalOrders: true,
+          totalSpent: true,
+          customerBalance: true
         }
       })
     ]);

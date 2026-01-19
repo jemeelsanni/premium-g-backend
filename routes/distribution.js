@@ -989,7 +989,13 @@ router.post('/orders/:id/price-adjustments',
       // Calculate new balance correctly
       const amountPaid = parseFloat(order.amountPaid);
       const newFinalAmount = parseFloat(adjustedAmount);
+      const oldBalance = parseFloat(order.balance);
       const newBalance = newFinalAmount - amountPaid;
+
+      // ✅ Calculate customer balance change
+      // If order balance increases, customer owes more
+      // If order balance decreases, customer owes less
+      const balanceChange = newBalance - oldBalance;
 
       const updatedOrder = await tx.distributionOrder.update({
         where: { id: orderId },
@@ -1003,9 +1009,19 @@ router.post('/orders/:id/price-adjustments',
           customer: true,
           location: true,
           orderItems: { include: { product: true } },
-          priceAdjustments: { 
+          priceAdjustments: {
             orderBy: { createdAt: 'desc' },
             include: { adjuster: true }
+          }
+        }
+      });
+
+      // ✅ Update customer balance
+      await tx.customer.update({
+        where: { id: order.customerId },
+        data: {
+          customerBalance: {
+            increment: balanceChange
           }
         }
       });
