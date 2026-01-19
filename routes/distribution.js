@@ -93,18 +93,23 @@ const priceAdjustmentValidation = [
     .isDecimal({ decimal_digits: '0,2' })
     .withMessage('Adjusted amount must be a valid decimal'),
   body('adjustmentType')
-    .isIn(['RITE_FOODS_PRICE_CHANGE'])
-    .withMessage('Invalid adjustment type. Only Rite Foods price changes allowed'),
+    .isIn(['SUPPLIER_PRICE_CHANGE', 'CUSTOMER_NEGOTIATION', 'ERROR_CORRECTION', 'OTHER', 'RITE_FOODS_PRICE_CHANGE'])
+    .withMessage('Invalid adjustment type. Must be SUPPLIER_PRICE_CHANGE, CUSTOMER_NEGOTIATION, ERROR_CORRECTION, or OTHER'),
   body('reason')
     .notEmpty()
-    .withMessage('Reason for Rite Foods price change is required')
+    .withMessage('Reason for price adjustment is required')
     .isLength({ max: 500 })
     .withMessage('Reason must not exceed 500 characters'),
   body('riteFoodsInvoiceReference')
     .optional()
     .trim()
-    .isString()  // ✅ Add validator before withMessage
-    .withMessage('Rite Foods invoice reference must be a string')
+    .isString()
+    .withMessage('Supplier invoice reference must be a string'),
+  body('supplierInvoiceReference')
+    .optional()
+    .trim()
+    .isString()
+    .withMessage('Supplier invoice reference must be a string')
 ];
 
 // ================================
