@@ -929,25 +929,13 @@ router.post('/orders/:id/price-adjustments',
       );
     }
 
-    // ✨ VALIDATION 2: Check if order has been raised by supplier
-    if (order.orderRaisedBySupplier === true) {
+    // ✨ VALIDATION 2: Check if order has been loaded
+    // Price adjustments are locked once the order is loaded
+    if (order.status === 'LOADED') {
       throw new BusinessError(
-        `Price adjustment not permitted. This order was raised by supplier on ${
-          order.orderRaisedAt
-            ? new Date(order.orderRaisedAt).toLocaleDateString()
-            : 'a previous date'
-        }. Once an order is raised, the pricing is locked and cannot be modified.`,
-        'ORDER_ALREADY_RAISED'
-      );
-    }
-
-    // ✨ VALIDATION 3: Check if order has been loaded or dispatched
-    const lockedStatuses = ['LOADED', 'DISPATCHED'];
-    if (lockedStatuses.includes(order.supplierStatus)) {
-      throw new BusinessError(
-        `Price adjustment not permitted. Order has been ${order.supplierStatus.toLowerCase()}. ` +
+        `Price adjustment not permitted. Order has been loaded. ` +
         `Price adjustments are only allowed before the order is loaded.`,
-        'ORDER_STATUS_LOCKED'
+        'ORDER_ALREADY_LOADED'
       );
     }
 
