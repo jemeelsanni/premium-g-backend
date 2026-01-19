@@ -143,12 +143,14 @@ class DistributionPaymentService {
       throw new ValidationError('Payment already confirmed');
     }
 
-    const orderAmount = parseFloat(order.finalAmount);
     const amountPaid = parseFloat(order.amountPaid);
 
-    if (amountPaid < orderAmount) {
+    // ✅ Allow confirming payment regardless of outstanding balance
+    // Customer can pay remaining balance later via customer detail page
+    // Outstanding balance tracked in customer.customerBalance
+    if (amountPaid <= 0) {
       throw new ValidationError(
-        `Cannot confirm payment. Outstanding balance: ₦${(orderAmount - amountPaid).toFixed(2)}`
+        'Cannot confirm payment. Customer has not made any payment yet.'
       );
     }
 
