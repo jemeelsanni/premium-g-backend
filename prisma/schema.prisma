@@ -166,8 +166,9 @@ model Customer {
   territory     String?
   totalOrders   Int       @default(0) @map("total_orders")
   totalSpent    Decimal   @default(0) @map("total_spent") @db.Decimal(15, 2)
-  lastOrderDate DateTime? @map("last_order_date") // ✅ ADD THIS
+  lastOrderDate DateTime? @map("last_order_date")
   creditLimit   Decimal?  @map("credit_limit") @db.Decimal(15, 2)
+  customerBalance Decimal @default(0) @map("customer_balance") @db.Decimal(15, 2) // Positive = overpaid/credit, Negative = debt
 
   isActive Boolean @default(true) @map("is_active")
 

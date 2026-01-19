@@ -71,6 +71,11 @@ class DistributionPaymentService {
         paymentStatus = 'PENDING';
       }
 
+      // Calculate the change in balance
+      const oldBalance = parseFloat(order.balance);
+      const newBalance = orderAmount - totalAmountPaid;
+      const balanceChange = newBalance - oldBalance;
+
       // Update order
       const updatedOrder = await tx.distributionOrder.update({
         where: { id: orderId },
@@ -80,7 +85,7 @@ class DistributionPaymentService {
           paymentReference: reference,
           paymentStatus,
           paymentNotes: notes,
-          balance: orderAmount - totalAmountPaid,
+          balance: newBalance,
           status: paymentStatus === 'CONFIRMED' ? 'PAYMENT_CONFIRMED' : order.status
         },
         include: {
@@ -88,6 +93,18 @@ class DistributionPaymentService {
           location: true,
           paymentHistory: {
             orderBy: { createdAt: 'desc' }
+          }
+        }
+      });
+
+      // Update customer balance
+      // When customer pays more, their balance decreases (they owe less)
+      // balanceChange is negative when payment reduces the balance
+      await tx.customer.update({
+        where: { id: order.customerId },
+        data: {
+          customerBalance: {
+            increment: balanceChange
           }
         }
       });

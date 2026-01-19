@@ -308,7 +308,7 @@ router.post('/orders',
       });
     }
 
-    const { customerId, supplierCompanyId, locationId, deliveryLocation, orderItems, remark } = req.body;
+    const { customerId, supplierCompanyId, locationId, deliveryLocation, orderItems, amountPaid, remark } = req.body;
 
     const orderNumber = await generateDistributionOrderNumber();
 
@@ -411,6 +411,18 @@ router.post('/orders',
       });
     }
 
+    // Calculate payment details
+    const initialPayment = parseFloat(amountPaid) || 0;
+    const orderBalance = totalAmount - initialPayment;
+
+    // Determine payment status based on amount paid
+    let paymentStatus = 'PENDING';
+    if (initialPayment >= totalAmount) {
+      paymentStatus = initialPayment > totalAmount ? 'OVERPAID' : 'CONFIRMED';
+    } else if (initialPayment > 0) {
+      paymentStatus = 'PARTIAL';
+    }
+
     // Create order in transaction
     const order = await prisma.$transaction(async (tx) => {
       // Create the order with deliveryLocation field
@@ -425,10 +437,10 @@ router.post('/orders',
           totalPacks,
           originalAmount: totalAmount,
           finalAmount: totalAmount,
-          balance: totalAmount,
-          amountPaid: 0,
+          balance: orderBalance,
+          amountPaid: initialPayment,
           status: 'PENDING',
-          paymentStatus: 'PENDING',
+          paymentStatus: paymentStatus,
           createdBy: req.user.id,
           remark: remark?.trim() || null,
           orderItems: {
@@ -507,6 +519,45 @@ router.post('/orders',
         console.log('⚠️ Weekly performance update skipped:', error.message);
       }
 
+      // Create initial payment history record if customer paid something
+      if (initialPayment > 0) {
+        const customerData = await tx.customer.findUnique({
+          where: { id: customerId },
+          select: { name: true }
+        });
+
+        await tx.paymentHistory.create({
+          data: {
+            orderId: createdOrder.id,
+            amount: initialPayment,
+            paymentType: 'TO_COMPANY',
+            paymentMethod: 'CASH', // Default, can be updated later if needed
+            paidBy: customerData?.name || 'Customer',
+            receivedBy: req.user.username || 'System',
+            notes: 'Initial payment during order creation'
+          }
+        });
+      }
+
+      // Update customer balance
+      // Customer balance logic: Positive = customer owes us, Negative = we owe customer (credit)
+      // When order is created: add the balance to customer's total balance
+      await tx.customer.update({
+        where: { id: customerId },
+        data: {
+          customerBalance: {
+            increment: orderBalance
+          },
+          totalOrders: {
+            increment: 1
+          },
+          totalSpent: {
+            increment: totalAmount
+          },
+          lastOrderDate: new Date()
+        }
+      });
+
       // Audit log
       await tx.auditLog.create({
         data: {
@@ -518,7 +569,10 @@ router.post('/orders',
             customerId,
             locationId: finalLocationId,
             deliveryLocation: deliveryLocation.trim(),
-            totalAmount
+            totalAmount,
+            amountPaid: initialPayment,
+            balance: orderBalance,
+            paymentStatus
           }
         }
       });
@@ -842,7 +896,7 @@ router.post('/orders/:id/price-adjustments',
     }
 
     const { id: orderId } = req.params;
-    const { adjustedAmount, adjustmentType, reason, riteFoodsInvoiceReference } = req.body;
+    const { adjustedAmount, adjustmentType, reason, riteFoodsInvoiceReference, itemChanges } = req.body;
 
     // Get existing order
     const order = await prisma.distributionOrder.findUnique({
@@ -870,41 +924,62 @@ router.post('/orders/:id/price-adjustments',
       );
     }
 
-    // ✨ NEW VALIDATION 2: Check if order has been raised by Rite Foods
-    if (order.orderRaisedByRFL === true) {
+    // ✨ VALIDATION 2: Check if order has been raised by supplier
+    if (order.orderRaisedBySupplier === true) {
       throw new BusinessError(
-        `Price adjustment not permitted. This order was raised by Rite Foods on ${
-          order.orderRaisedAt 
-            ? new Date(order.orderRaisedAt).toLocaleDateString() 
+        `Price adjustment not permitted. This order was raised by supplier on ${
+          order.orderRaisedAt
+            ? new Date(order.orderRaisedAt).toLocaleDateString()
             : 'a previous date'
         }. Once an order is raised, the pricing is locked and cannot be modified.`,
         'ORDER_ALREADY_RAISED'
       );
     }
 
-    // ✨ ADDITIONAL CHECK: Prevent adjustment if Rite Foods status indicates processing
-    const lockedStatuses = ['ORDER_RAISED', 'PROCESSING', 'LOADED', 'DISPATCHED'];
-    if (lockedStatuses.includes(order.riteFoodsStatus)) {
+    // ✨ VALIDATION 3: Check if order has been loaded or dispatched
+    const lockedStatuses = ['LOADED', 'DISPATCHED'];
+    if (lockedStatuses.includes(order.supplierStatus)) {
       throw new BusinessError(
-        `Price adjustment not permitted. Order status is "${order.riteFoodsStatus}". ` +
-        `Price adjustments are only allowed before the order is raised to Rite Foods.`,
+        `Price adjustment not permitted. Order has been ${order.supplierStatus.toLowerCase()}. ` +
+        `Price adjustments are only allowed before the order is loaded.`,
         'ORDER_STATUS_LOCKED'
       );
     }
 
     // Create price adjustment and update order
     const result = await prisma.$transaction(async (tx) => {
+      // Store item changes details in reason field (JSON format) if provided
+      let detailedReason = reason;
+      if (itemChanges && Array.isArray(itemChanges) && itemChanges.length > 0) {
+        const itemChangeSummary = itemChanges.map(change =>
+          `${change.productName}: ₦${change.oldPricePerPack} → ₦${change.newPricePerPack} per pack (${change.packs} packs)`
+        ).join('; ');
+        detailedReason = `${reason}\n\nItem Changes:\n${itemChangeSummary}`;
+      }
+
       const adjustment = await tx.priceAdjustment.create({
         data: {
           orderId,
           originalAmount: order.finalAmount,
           adjustedAmount: parseFloat(adjustedAmount),
           adjustmentType,
-          reason,
+          reason: detailedReason,
           riteFoodsInvoiceReference: riteFoodsInvoiceReference || null,
           adjustedBy: req.user.id
         }
       });
+
+      // Update individual order item amounts if itemChanges provided
+      if (itemChanges && Array.isArray(itemChanges) && itemChanges.length > 0) {
+        for (const change of itemChanges) {
+          await tx.distributionOrderItem.update({
+            where: { id: change.itemId },
+            data: {
+              amount: parseFloat(change.newAmount)
+            }
+          });
+        }
+      }
 
       // Calculate new balance correctly
       const amountPaid = parseFloat(order.amountPaid);
@@ -916,7 +991,7 @@ router.post('/orders/:id/price-adjustments',
         data: {
           finalAmount: newFinalAmount,
           balance: newBalance,
-          paymentStatus: newBalance === 0 ? 'CONFIRMED' : 
+          paymentStatus: newBalance === 0 ? 'CONFIRMED' :
                         newBalance > 0 ? 'PARTIAL' : 'OVERPAID'
         },
         include: {
