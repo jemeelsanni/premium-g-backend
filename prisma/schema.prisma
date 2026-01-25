@@ -152,6 +152,7 @@ model Product {
   DiscountApprovalRequest   DiscountApprovalRequest[]
   warehouseExpenses         WarehouseExpense[]
   productPurchases          WarehouseProductPurchase[]
+  supplierProducts          SupplierProduct[]
 
   @@map("products")
 }
@@ -217,8 +218,32 @@ model SupplierCompany {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   distributionOrders DistributionOrder[]
+  supplierProducts   SupplierProduct[]
 
   @@map("supplier_companies")
+}
+
+// Junction table linking suppliers to their available products
+model SupplierProduct {
+  id                String  @id @default(cuid())
+  supplierCompanyId String  @map("supplier_company_id")
+  productId         String  @map("product_id")
+
+  // Supplier-specific pricing
+  supplierCostPerPack Decimal @map("supplier_cost_per_pack") @db.Decimal(10, 2) // What we pay supplier
+  isAvailable         Boolean @default(true) @map("is_available") // Can we currently order this?
+  minimumOrderPacks   Int?    @map("minimum_order_packs") // Minimum packs supplier requires
+  leadTimeDays        Int?    @map("lead_time_days") // How long supplier takes to deliver
+  notes               String? // Special notes about this product from this supplier
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  supplierCompany SupplierCompany @relation(fields: [supplierCompanyId], references: [id], onDelete: Cascade)
+  product         Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([supplierCompanyId, productId]) // Each supplier can only have one entry per product
+  @@map("supplier_products")
 }
 
 model DistributionOrder {
