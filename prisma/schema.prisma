@@ -27,25 +27,26 @@ model User {
   // Relations with explicit names
   sessions                   UserSession[]
   auditLogs                  AuditLog[]
-  createdDistributionOrders  DistributionOrder[]         @relation("DistributionOrderCreator")
-  confirmedPayments          DistributionOrder[]         @relation("PaymentConfirmer")
-  reviewedDeliveries         DistributionOrder[]         @relation("DeliveryReviewer")
+  createdDistributionOrders  DistributionOrder[]              @relation("DistributionOrderCreator")
+  confirmedPayments          DistributionOrder[]              @relation("PaymentConfirmer")
+  reviewedDeliveries         DistributionOrder[]              @relation("DeliveryReviewer")
   transportOrders            TransportOrder[]
   warehouseSales             WarehouseSale[]
   cashFlowEntries            CashFlow[]
   expenses                   Expense[]
-  approvedExpenses           Expense[]                   @relation("ExpenseApprover")
+  approvedExpenses           Expense[]                        @relation("ExpenseApprover")
   PriceAdjustment            PriceAdjustment[]
-  warehouseCustomersCreated  WarehouseCustomer[]         @relation("WarehouseCustomersCreatedBy")
-  warehouseDiscountRequests  WarehouseCustomerDiscount[] @relation("WarehouseDiscountRequestedBy")
-  warehouseDiscountApprovals WarehouseCustomerDiscount[] @relation("WarehouseDiscountApprovedBy")
-  discountApprovalRequests   DiscountApprovalRequest[]   @relation("DiscountRequestRequestedBy")
-  discountApprovals          DiscountApprovalRequest[]   @relation("DiscountRequestApprovedBy")
-  warehouseSalesApproved     WarehouseSale[]             @relation("WarehouseSaleApprovedBy")
-  warehouseExpensesCreated   WarehouseExpense[]          @relation("WarehouseExpensesCreatedBy")
-  warehouseExpensesApproved  WarehouseExpense[]          @relation("WarehouseExpensesApprovedBy")
-  warehouseProductPurchases  WarehouseProductPurchase[]  @relation("WarehousePurchasesCreatedBy")
-  debtorPayments             DebtorPayment[]             @relation("DebtorPaymentsReceivedBy")
+  warehouseCustomersCreated  WarehouseCustomer[]              @relation("WarehouseCustomersCreatedBy")
+  warehouseDiscountRequests  WarehouseCustomerDiscount[]      @relation("WarehouseDiscountRequestedBy")
+  warehouseDiscountApprovals WarehouseCustomerDiscount[]      @relation("WarehouseDiscountApprovedBy")
+  discountApprovalRequests   DiscountApprovalRequest[]        @relation("DiscountRequestRequestedBy")
+  discountApprovals          DiscountApprovalRequest[]        @relation("DiscountRequestApprovedBy")
+  warehouseSalesApproved     WarehouseSale[]                  @relation("WarehouseSaleApprovedBy")
+  warehouseExpensesCreated   WarehouseExpense[]               @relation("WarehouseExpensesCreatedBy")
+  warehouseExpensesApproved  WarehouseExpense[]               @relation("WarehouseExpensesApprovedBy")
+  warehouseProductPurchases  WarehouseProductPurchase[]       @relation("WarehousePurchasesCreatedBy")
+  debtorPayments             DebtorPayment[]                  @relation("DebtorPaymentsReceivedBy")
+  supplierProductPriceChanges SupplierProductPriceHistory[]
 
   @@map("users")
 }
@@ -239,11 +240,31 @@ model SupplierProduct {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  supplierCompany SupplierCompany @relation(fields: [supplierCompanyId], references: [id], onDelete: Cascade)
-  product         Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  supplierCompany SupplierCompany              @relation(fields: [supplierCompanyId], references: [id], onDelete: Cascade)
+  product         Product                      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  priceHistory    SupplierProductPriceHistory[]
 
   @@unique([supplierCompanyId, productId]) // Each supplier can only have one entry per product
   @@map("supplier_products")
+}
+
+// Price change history for supplier products
+model SupplierProductPriceHistory {
+  id                String @id @default(cuid())
+  supplierProductId String @map("supplier_product_id")
+
+  oldPrice Decimal @map("old_price") @db.Decimal(10, 2)
+  newPrice Decimal @map("new_price") @db.Decimal(10, 2)
+  changedBy String  @map("changed_by")
+  reason    String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  supplierProduct SupplierProduct @relation(fields: [supplierProductId], references: [id], onDelete: Cascade)
+  changedByUser   User            @relation(fields: [changedBy], references: [id])
+
+  @@index([supplierProductId])
+  @@map("supplier_product_price_history")
 }
 
 model DistributionOrder {

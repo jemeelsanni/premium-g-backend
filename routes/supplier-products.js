@@ -159,6 +159,52 @@ router.get(
 );
 
 /**
+ * GET /api/v1/supplier-products/:id/price-history
+ * Get price change history for a supplier product
+ */
+router.get(
+  '/:id/price-history',
+  authenticateToken,
+  authorizeModule('distribution'),
+  param('id').custom(validateCuid('supplier product ID')),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+
+    // Check if supplier product exists
+    const supplierProduct = await prisma.supplierProduct.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!supplierProduct) {
+      throw new NotFoundError('Supplier product not found');
+    }
+
+    // Get price history
+    const priceHistory = await prisma.supplierProductPriceHistory.findMany({
+      where: { supplierProductId: id },
+      include: {
+        changedByUser: {
+          select: {
+            id: true,
+            username: true,
+            email: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    res.json({
+      success: true,
+      data: priceHistory,
+    });
+  })
+);
+
+/**
  * POST /api/v1/supplier-products
  * Add a product to a supplier's catalog
  */
@@ -290,6 +336,7 @@ router.put(
       .isInt({ min: 0 })
       .withMessage('Lead time days must be a non-negative integer'),
     body('notes').optional().trim(),
+    body('priceChangeReason').optional().trim(),
   ],
   asyncHandler(async (req, res) => {
     const errors = require('express-validator').validationResult(req);
@@ -298,7 +345,7 @@ router.put(
     }
 
     const { id } = req.params;
-    const { supplierCostPerPack, isAvailable, minimumOrderPacks, leadTimeDays, notes } = req.body;
+    const { supplierCostPerPack, isAvailable, minimumOrderPacks, leadTimeDays, notes, priceChangeReason } = req.body;
 
     // Check if exists
     const existing = await prisma.supplierProduct.findUnique({
@@ -315,27 +362,59 @@ router.put(
 
     // Build update data
     const updateData = {};
+    let priceChanged = false;
+    let oldPrice = null;
+    let newPrice = null;
+
     if (supplierCostPerPack !== undefined) {
-      updateData.supplierCostPerPack = parseFloat(supplierCostPerPack);
+      newPrice = parseFloat(supplierCostPerPack);
+      oldPrice = parseFloat(existing.supplierCostPerPack);
+
+      // Check if price actually changed
+      if (Math.abs(newPrice - oldPrice) > 0.01) {
+        priceChanged = true;
+        updateData.supplierCostPerPack = newPrice;
+      }
     }
     if (isAvailable !== undefined) updateData.isAvailable = isAvailable;
     if (minimumOrderPacks !== undefined) updateData.minimumOrderPacks = minimumOrderPacks;
     if (leadTimeDays !== undefined) updateData.leadTimeDays = leadTimeDays;
     if (notes !== undefined) updateData.notes = notes;
 
-    const supplierProduct = await prisma.supplierProduct.update({
-      where: { id },
-      data: updateData,
-      include: {
-        supplierCompany: true,
-        product: true,
-      },
+    // Use transaction to update product and create price history
+    const result = await prisma.$transaction(async (tx) => {
+      // Update supplier product
+      const supplierProduct = await tx.supplierProduct.update({
+        where: { id },
+        data: updateData,
+        include: {
+          supplierCompany: true,
+          product: true,
+        },
+      });
+
+      // If price changed, create history record
+      if (priceChanged) {
+        await tx.supplierProductPriceHistory.create({
+          data: {
+            supplierProductId: id,
+            oldPrice: oldPrice,
+            newPrice: newPrice,
+            changedBy: req.user.id,
+            reason: priceChangeReason || null,
+          },
+        });
+      }
+
+      return supplierProduct;
     });
 
     res.json({
       success: true,
-      message: 'Supplier product updated successfully',
-      data: supplierProduct,
+      message: priceChanged
+        ? 'Supplier product updated successfully. Price change recorded.'
+        : 'Supplier product updated successfully',
+      data: result,
     });
   })
 );
