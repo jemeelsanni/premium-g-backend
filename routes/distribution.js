@@ -815,79 +815,10 @@ router.get('/orders/:id',
   })
 );
 
-// @route   PUT /api/v1/distribution/orders/:id
-// @desc    Update distribution order
-// @access  Private (Own entries or Admin)
-router.put('/orders/:id',
-  param('id').custom(validateCuid('order ID')), // ✅ UPDATED
-  updateOrderValidation,
-  asyncHandler(async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      throw new ValidationError('Invalid input data', errors.array());
-    }
-
-    const { id } = req.params;
-    const updateData = req.body;
-    const userId = req.user.id;
-
-    // Get existing order
-    const existingOrder = await prisma.distributionOrder.findUnique({
-      where: { id },
-      include: { orderItems: true }
-    });
-
-    if (!existingOrder) {
-      throw new NotFoundError('Order not found');
-    }
-
-    // Check permissions - users can only modify their own entries
-    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
-      if (existingOrder.createdBy !== userId) {
-        throw new BusinessError('You can only modify your own orders', 'ACCESS_DENIED');
-      }
-    } else if (req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
-      // Admins can only view, not modify
-      throw new BusinessError('Admins have view-only access to user entries', 'ADMIN_VIEW_ONLY');
-    }
-
-    // Update order
-    const updatedOrder = await prisma.distributionOrder.update({
-      where: { id },
-      data: updateData,
-      include: {
-        customer: true,
-        location: true,
-        orderItems: {
-          include: {
-            product: true
-          }
-        }
-      }
-    });
-
-    // Log the change
-    await logDataChange(
-      userId,
-      'distribution_order',
-      id,
-      'UPDATE',
-      existingOrder,
-      updatedOrder,
-      getClientIP(req)
-    );
-
-    res.json({
-      success: true,
-      message: 'Order updated successfully',
-      data: { order: updatedOrder }
-    });
-  })
-);
-
 // @route   PUT /api/v1/distribution/orders/:id/items
 // @desc    Update order items (pallets, packs, add/remove products)
 // @access  Private (Distribution module)
+// NOTE: This must come BEFORE /orders/:id route for proper Express routing
 router.put('/orders/:id/items',
   param('id').custom(validateCuid('order ID')),
   [
@@ -1022,6 +953,76 @@ router.put('/orders/:id/items',
     res.json({
       success: true,
       message: 'Order items updated successfully',
+      data: { order: updatedOrder }
+    });
+  })
+);
+
+// @route   PUT /api/v1/distribution/orders/:id
+// @desc    Update distribution order
+// @access  Private (Own entries or Admin)
+router.put('/orders/:id',
+  param('id').custom(validateCuid('order ID')), // ✅ UPDATED
+  updateOrderValidation,
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
+    const { id } = req.params;
+    const updateData = req.body;
+    const userId = req.user.id;
+
+    // Get existing order
+    const existingOrder = await prisma.distributionOrder.findUnique({
+      where: { id },
+      include: { orderItems: true }
+    });
+
+    if (!existingOrder) {
+      throw new NotFoundError('Order not found');
+    }
+
+    // Check permissions - users can only modify their own entries
+    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+      if (existingOrder.createdBy !== userId) {
+        throw new BusinessError('You can only modify your own orders', 'ACCESS_DENIED');
+      }
+    } else if (req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+      // Admins can only view, not modify
+      throw new BusinessError('Admins have view-only access to user entries', 'ADMIN_VIEW_ONLY');
+    }
+
+    // Update order
+    const updatedOrder = await prisma.distributionOrder.update({
+      where: { id },
+      data: updateData,
+      include: {
+        customer: true,
+        location: true,
+        orderItems: {
+          include: {
+            product: true
+          }
+        }
+      }
+    });
+
+    // Log the change
+    await logDataChange(
+      userId,
+      'distribution_order',
+      id,
+      'UPDATE',
+      existingOrder,
+      updatedOrder,
+      getClientIP(req)
+    );
+
+    res.json({
+      success: true,
+      message: 'Order updated successfully',
       data: { order: updatedOrder }
     });
   })
