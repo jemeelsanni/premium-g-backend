@@ -363,9 +363,10 @@ model DistributionOrderItem {
   orderId   String @map("order_id")
   productId String @map("product_id")
 
-  pallets Int
-  packs   Int
-  amount  Decimal @db.Decimal(10, 2)
+  pallets    Int
+  addonPacks Int     @default(0) @map("addon_packs")
+  packs      Int
+  amount     Decimal @db.Decimal(10, 2)
 
   order   DistributionOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product           @relation(fields: [productId], references: [id])

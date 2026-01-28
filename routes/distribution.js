@@ -401,6 +401,7 @@ router.post('/orders',
       }
 
       const pallets = parseInt(item.pallets) || 0;
+      const addonPacks = parseInt(item.addonPacks) || 0;
       const packs = parseInt(item.packs) || 0;
       const amount = parseFloat(item.amount) || 0;
 
@@ -411,6 +412,7 @@ router.post('/orders',
       validatedItems.push({
         productId: item.productId,
         pallets,
+        addonPacks,
         packs,
         amount
       });
