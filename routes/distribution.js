@@ -820,6 +820,10 @@ router.get('/orders/:id',
 // @access  Private (Distribution module)
 // NOTE: This must come BEFORE /orders/:id route for proper Express routing
 router.put('/orders/:id/items',
+  (req, _res, next) => {
+    console.log('🔵 PUT /orders/:id/items route HIT - Order ID:', req.params.id);
+    next();
+  },
   param('id').custom(validateCuid('order ID')),
   [
     body('orderItems')
