@@ -815,21 +815,11 @@ router.get('/orders/:id',
   })
 );
 
-// TEST ENDPOINT - Verify route is accessible
-router.get('/orders/:id/items', asyncHandler(async (req, res) => {
-  res.json({
-    success: true,
-    message: 'GET /orders/:id/items endpoint is working!',
-    orderId: req.params.id,
-    note: 'This confirms the route path is correctly configured.'
-  });
-}));
-
-// @route   PUT /api/v1/distribution/orders/:id/items
+// @route   PATCH /api/v1/distribution/orders/:id/items (alternative to PUT)
 // @desc    Update order items (pallets, packs, add/remove products)
 // @access  Private (Distribution module)
 // NOTE: This must come BEFORE /orders/:id route for proper Express routing
-router.put('/orders/:id/items',
+router.patch('/orders/:id/items',
   (req, _res, next) => {
     console.log('🔵 PUT /orders/:id/items route HIT - Order ID:', req.params.id);
     next();
