@@ -885,6 +885,148 @@ router.put('/orders/:id',
   })
 );
 
+// @route   PUT /api/v1/distribution/orders/:id/items
+// @desc    Update order items (pallets, packs, add/remove products)
+// @access  Private (Distribution module)
+router.put('/orders/:id/items',
+  param('id').custom(validateCuid('order ID')),
+  [
+    body('orderItems')
+      .isArray({ min: 1 })
+      .withMessage('At least one order item is required'),
+    body('orderItems.*.productId')
+      .notEmpty()
+      .withMessage('Product ID is required')
+      .custom(validateCuid('product ID')),
+    body('orderItems.*.pallets')
+      .isInt({ min: 0 })
+      .withMessage('Pallets must be a non-negative integer'),
+    body('orderItems.*.addonPacks')
+      .optional()
+      .isInt({ min: 0 })
+      .withMessage('Addon packs must be a non-negative integer'),
+    body('orderItems.*.packs')
+      .isInt({ min: 0 })
+      .withMessage('Packs must be a non-negative integer'),
+    body('orderItems.*.amount')
+      .isFloat({ min: 0 })
+      .withMessage('Amount must be a positive number'),
+    body('totalPallets')
+      .isInt({ min: 0 })
+      .withMessage('Total pallets must be a non-negative integer'),
+    body('totalPacks')
+      .isInt({ min: 0 })
+      .withMessage('Total packs must be a non-negative integer'),
+    body('originalAmount')
+      .isFloat({ min: 0 })
+      .withMessage('Original amount must be a positive number'),
+    body('finalAmount')
+      .isFloat({ min: 0 })
+      .withMessage('Final amount must be a positive number'),
+    body('balance')
+      .isFloat()
+      .withMessage('Balance must be a number'),
+    body('paymentStatus')
+      .isIn(['PENDING', 'PARTIAL', 'CONFIRMED', 'OVERPAID'])
+      .withMessage('Invalid payment status'),
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
+    const { id } = req.params;
+    const { orderItems, totalPallets, totalPacks, originalAmount, finalAmount, balance, paymentStatus } = req.body;
+    const userId = req.user.id;
+
+    // Get existing order
+    const existingOrder = await prisma.distributionOrder.findUnique({
+      where: { id },
+      include: { orderItems: true }
+    });
+
+    if (!existingOrder) {
+      throw new NotFoundError('Order not found');
+    }
+
+    // Check if order can be edited (not loaded yet)
+    if (existingOrder.supplierStatus === 'LOADED') {
+      throw new BusinessError('Cannot edit order - already loaded by supplier', 'ORDER_LOCKED');
+    }
+
+    // Check permissions
+    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+      if (existingOrder.createdBy !== userId) {
+        throw new BusinessError('You can only modify your own orders', 'ACCESS_DENIED');
+      }
+    }
+
+    // Use transaction to update order and items
+    const updatedOrder = await prisma.$transaction(async (tx) => {
+      // Delete existing order items
+      await tx.distributionOrderItem.deleteMany({
+        where: { orderId: id }
+      });
+
+      // Create new order items
+      const newOrderItems = orderItems.map(item => ({
+        orderId: id,
+        productId: item.productId,
+        pallets: parseInt(item.pallets) || 0,
+        addonPacks: parseInt(item.addonPacks) || 0,
+        packs: parseInt(item.packs) || 0,
+        amount: parseFloat(item.amount) || 0,
+      }));
+
+      await tx.distributionOrderItem.createMany({
+        data: newOrderItems
+      });
+
+      // Update order totals
+      const order = await tx.distributionOrder.update({
+        where: { id },
+        data: {
+          totalPallets: parseInt(totalPallets),
+          totalPacks: parseInt(totalPacks),
+          originalAmount: parseFloat(originalAmount),
+          finalAmount: parseFloat(finalAmount),
+          balance: parseFloat(balance),
+          paymentStatus: paymentStatus,
+        },
+        include: {
+          customer: true,
+          location: true,
+          orderItems: {
+            include: {
+              product: true
+            }
+          }
+        }
+      });
+
+      return order;
+    });
+
+    // Log the change
+    await logDataChange(
+      userId,
+      'distribution_order',
+      id,
+      'UPDATE_ITEMS',
+      existingOrder,
+      updatedOrder,
+      getClientIP(req)
+    );
+
+    res.json({
+      success: true,
+      message: 'Order items updated successfully',
+      data: { order: updatedOrder }
+    });
+  })
+);
+
 // ================================
 // ROUTES - PRICE ADJUSTMENTS
 // ================================
