@@ -815,6 +815,16 @@ router.get('/orders/:id',
   })
 );
 
+// TEST ENDPOINT - Verify route is accessible
+router.get('/orders/:id/items', asyncHandler(async (req, res) => {
+  res.json({
+    success: true,
+    message: 'GET /orders/:id/items endpoint is working!',
+    orderId: req.params.id,
+    note: 'This confirms the route path is correctly configured.'
+  });
+}));
+
 // @route   PUT /api/v1/distribution/orders/:id/items
 // @desc    Update order items (pallets, packs, add/remove products)
 // @access  Private (Distribution module)
