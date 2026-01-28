@@ -48,6 +48,9 @@ const prisma = new PrismaClient();
 // MIDDLEWARE CONFIGURATION
 // ================================
 
+// Trust proxy - REQUIRED for Railway/Heroku/AWS deployments
+app.set('trust proxy', 1);
+
 // Security
 app.use(helmet());
 app.use(cors({
