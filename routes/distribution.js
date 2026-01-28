@@ -815,11 +815,11 @@ router.get('/orders/:id',
   })
 );
 
-// @route   PATCH /api/v1/distribution/orders/:id/items (alternative to PUT)
+// @route   POST /api/v1/distribution/orders/:id/items (workaround for proxy blocking PUT/PATCH)
 // @desc    Update order items (pallets, packs, add/remove products)
 // @access  Private (Distribution module)
 // NOTE: This must come BEFORE /orders/:id route for proper Express routing
-router.patch('/orders/:id/items',
+router.post('/orders/:id/items',
   (req, _res, next) => {
     console.log('🔵 PUT /orders/:id/items route HIT - Order ID:', req.params.id);
     next();
