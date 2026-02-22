@@ -768,16 +768,16 @@ router.get('/orders/:id',
           confirmedAt: order.paymentConfirmedAt,
           payments: order.paymentHistory.filter(p => p.paymentType === 'TO_COMPANY')
         },
-        stage3_riteFoods: {
-          status: order.riteFoodsStatus,
-          paidToRiteFoods: order.paidToRiteFoods,
-          amountPaid: order.amountPaidToRiteFoods ? parseFloat(order.amountPaidToRiteFoods) : null,
-          paymentDate: order.paymentDateToRiteFoods,
-          orderNumber: order.riteFoodsOrderNumber,
-          invoiceNumber: order.riteFoodsInvoiceNumber,
-          orderRaised: order.orderRaisedByRFL,
+        stage3_supplier: {
+          status: order.supplierStatus,
+          paidToSupplier: order.paidToSupplier,
+          amountPaid: order.amountPaidToSupplier ? parseFloat(order.amountPaidToSupplier) : null,
+          paymentDate: order.paymentDateToSupplier,
+          orderNumber: order.supplierOrderNumber,
+          invoiceNumber: order.supplierInvoiceNumber,
+          orderRaised: order.orderRaisedBySupplier,
           raisedAt: order.orderRaisedAt,
-          loadedDate: order.riteFoodsLoadedDate
+          loadedDate: order.supplierLoadedDate
         },
         stage4_transport: {
           transporter: order.transporterCompany,
@@ -1420,14 +1420,14 @@ router.post('/orders/bulk/confirm-payments',
 );
 
 // @route   GET /api/v1/distribution/dashboard/ready-for-transport
-// @desc    Get orders that are loaded at Rite Foods and ready for transport assignment
+// @desc    Get orders that are loaded at supplier and ready for transport assignment
 // @access  Private (Distribution admin)
 router.get('/dashboard/ready-for-transport',
   authorizeModule('distribution', 'admin'),
   asyncHandler(async (req, res) => {
     const readyOrders = await prisma.distributionOrder.findMany({
       where: {
-        riteFoodsStatus: 'LOADED',
+        supplierStatus: 'LOADED',
         transporterCompany: null,
         paymentStatus: 'CONFIRMED',
         balance: 0
@@ -1436,7 +1436,7 @@ router.get('/dashboard/ready-for-transport',
         customer: { select: { name: true, phone: true } },
         location: { select: { name: true, address: true } }
       },
-      orderBy: { riteFoodsLoadedDate: 'asc' }
+      orderBy: { supplierLoadedDate: 'asc' }
     });
 
     const formatted = readyOrders.map(order => ({
@@ -1448,9 +1448,9 @@ router.get('/dashboard/ready-for-transport',
       totalPallets: order.totalPallets,
       totalPacks: order.totalPacks,
       amount: parseFloat(order.finalAmount),
-      loadedDate: order.riteFoodsLoadedDate,
-      daysWaiting: order.riteFoodsLoadedDate 
-        ? Math.floor((new Date() - new Date(order.riteFoodsLoadedDate)) / (1000 * 60 * 60 * 24))
+      loadedDate: order.supplierLoadedDate,
+      daysWaiting: order.supplierLoadedDate
+        ? Math.floor((new Date() - new Date(order.supplierLoadedDate)) / (1000 * 60 * 60 * 24))
         : 0
     }));
 
@@ -1465,10 +1465,10 @@ router.get('/dashboard/ready-for-transport',
   })
 );
 
-// @route   POST /api/v1/distribution/orders/bulk/send-to-ritefoods
-// @desc    Bulk send orders to Rite Foods
+// @route   POST /api/v1/distribution/orders/bulk/send-to-supplier
+// @desc    Bulk send orders to supplier
 // @access  Private (Admin only)
-router.post('/orders/bulk/send-to-ritefoods',
+router.post('/orders/bulk/send-to-supplier',
   authorizeModule('distribution', 'admin'),
   [
     body('orders').isArray({ min: 1 }).withMessage('Must provide at least one order'),
@@ -1492,16 +1492,16 @@ router.post('/orders/bulk/send-to-ritefoods',
 
     for (const orderInfo of orders) {
       try {
-        const result = await distributionPaymentService.recordPaymentToRiteFoods({
+        const result = await distributionPaymentService.recordPaymentToSupplier({
           orderId: orderInfo.orderId,
           amount: orderInfo.amount,
           paymentMethod,
           reference: `${batchReference}-${orderInfo.orderId.slice(-6)}`,
-          riteFoodsOrderNumber: orderInfo.riteFoodsOrderNumber,
-          riteFoodsInvoiceNumber: orderInfo.riteFoodsInvoiceNumber,
+          supplierOrderNumber: orderInfo.supplierOrderNumber,
+          supplierInvoiceNumber: orderInfo.supplierInvoiceNumber,
           userId: req.user.id
         });
-        
+
         results.successful.push({
           orderId: orderInfo.orderId,
           amount: orderInfo.amount
@@ -1518,7 +1518,7 @@ router.post('/orders/bulk/send-to-ritefoods',
 
     res.json({
       success: true,
-      message: `Sent ${results.successful.length} orders to Rite Foods. Total: ₦${totalAmount.toFixed(2)}`,
+      message: `Sent ${results.successful.length} orders to supplier. Total: ₦${totalAmount.toFixed(2)}`,
       data: {
         ...results,
         summary: {
@@ -1732,7 +1732,7 @@ router.get('/dashboard/workflow-summary',
     const [
       pendingPayment,
       paymentConfirmed,
-      sentToRiteFoods,
+      sentToSupplier,
       inTransit,
       delivered,
       issues
@@ -1742,19 +1742,19 @@ router.get('/dashboard/workflow-summary',
         where: { paymentStatus: { in: ['PENDING', 'PARTIAL'] } }
       }),
       
-      // Stage 2: Payment Confirmed, ready for Rite Foods
+      // Stage 2: Payment Confirmed, ready for supplier
       prisma.distributionOrder.count({
         where: {
           paymentStatus: 'CONFIRMED',
-          paidToRiteFoods: false
+          paidToSupplier: false
         }
       }),
-      
-      // Stage 3: Sent to Rite Foods
+
+      // Stage 3: Sent to supplier
       prisma.distributionOrder.count({
         where: {
-          paidToRiteFoods: true,
-          riteFoodsStatus: { in: ['PAYMENT_SENT', 'ORDER_RAISED', 'PROCESSING', 'LOADED'] }
+          paidToSupplier: true,
+          supplierStatus: { in: ['PAYMENT_SENT', 'ORDER_RAISED', 'PROCESSING', 'LOADED'] }
         }
       }),
       
@@ -1790,7 +1790,7 @@ router.get('/dashboard/workflow-summary',
         workflowStages: {
           stage1_pendingPayment: pendingPayment,
           stage2_paymentConfirmed: paymentConfirmed,
-          stage3_sentToRiteFoods: sentToRiteFoods,
+          stage3_sentToSupplier: sentToSupplier,
           stage4_inTransit: inTransit,
           stage5_delivered: delivered,
           issues: issues
@@ -1836,7 +1836,7 @@ router.get('/reports/payment-reconciliation',
       totalOrders: orders.length,
       totalOrderValue: 0,
       totalReceived: 0,
-      totalSentToRiteFoods: 0,
+      totalSentToSupplier: 0,
       outstandingBalance: 0,
       byPaymentStatus: {
         PENDING: { count: 0, amount: 0 },
@@ -1849,12 +1849,12 @@ router.get('/reports/payment-reconciliation',
     const detailedOrders = orders.map(order => {
       const orderValue = parseFloat(order.finalAmount);
       const received = parseFloat(order.amountPaid);
-      const sentToRiteFoods = parseFloat(order.amountPaidToRiteFoods || 0);
+      const sentToSupplier = parseFloat(order.amountPaidToSupplier || 0);
       const balance = parseFloat(order.balance);
 
       summary.totalOrderValue += orderValue;
       summary.totalReceived += received;
-      summary.totalSentToRiteFoods += sentToRiteFoods;
+      summary.totalSentToSupplier += sentToSupplier;
       summary.outstandingBalance += balance;
 
       summary.byPaymentStatus[order.paymentStatus].count += 1;
@@ -1866,9 +1866,9 @@ router.get('/reports/payment-reconciliation',
         orderValue,
         received,
         balance,
-        sentToRiteFoods,
+        sentToSupplier,
         paymentStatus: order.paymentStatus,
-        riteFoodsStatus: order.riteFoodsStatus,
+        supplierStatus: order.supplierStatus,
         createdAt: order.createdAt,
         payments: order.paymentHistory.map(p => ({
           amount: parseFloat(p.amount),
@@ -1886,7 +1886,7 @@ router.get('/reports/payment-reconciliation',
           ...summary,
           totalOrderValue: parseFloat(summary.totalOrderValue.toFixed(2)),
           totalReceived: parseFloat(summary.totalReceived.toFixed(2)),
-          totalSentToRiteFoods: parseFloat(summary.totalSentToRiteFoods.toFixed(2)),
+          totalSentToSupplier: parseFloat(summary.totalSentToSupplier.toFixed(2)),
           outstandingBalance: parseFloat(summary.outstandingBalance.toFixed(2)),
           collectionRate: summary.totalOrderValue > 0 
             ? `${((summary.totalReceived / summary.totalOrderValue) * 100).toFixed(2)}%`
@@ -1986,35 +1986,36 @@ router.get('/reports/delivery-performance',
   })
 );
 
-// @route   GET /api/v1/distribution/reports/rite-foods-orders
-// @desc    Rite Foods orders tracking report
+// @route   GET /api/v1/distribution/reports/supplier-orders
+// @desc    Supplier orders tracking report
 // @access  Private (Admin)
-router.get('/reports/rite-foods-orders',
+router.get('/reports/supplier-orders',
   authorizeModule('distribution', 'admin'),
   asyncHandler(async (req, res) => {
     const { status, startDate, endDate } = req.query;
 
     const where = {
-      paidToRiteFoods: true
+      paidToSupplier: true
     };
 
     if (status) {
-      where.riteFoodsStatus = status;
+      where.supplierStatus = status;
     }
 
     if (startDate || endDate) {
-      where.paymentDateToRiteFoods = {};
-      if (startDate) where.paymentDateToRiteFoods.gte = new Date(startDate);
-      if (endDate) where.paymentDateToRiteFoods.lte = new Date(endDate);
+      where.paymentDateToSupplier = {};
+      if (startDate) where.paymentDateToSupplier.gte = new Date(startDate);
+      if (endDate) where.paymentDateToSupplier.lte = new Date(endDate);
     }
 
     const orders = await prisma.distributionOrder.findMany({
       where,
       include: {
         customer: { select: { name: true } },
-        location: { select: { name: true } }
+        location: { select: { name: true } },
+        supplierCompany: { select: { name: true } }
       },
-      orderBy: { paymentDateToRiteFoods: 'desc' }
+      orderBy: { paymentDateToSupplier: 'desc' }
     });
 
     const summary = {
@@ -2030,21 +2031,22 @@ router.get('/reports/rite-foods-orders',
     };
 
     const detailedOrders = orders.map(order => {
-      const amount = parseFloat(order.amountPaidToRiteFoods || 0);
+      const amount = parseFloat(order.amountPaidToSupplier || 0);
       summary.totalAmount += amount;
-      summary.byStatus[order.riteFoodsStatus] += 1;
+      summary.byStatus[order.supplierStatus] += 1;
 
       return {
         orderId: order.id,
         customer: order.customer.name,
         location: order.location.name,
+        supplier: order.supplierCompany?.name,
         amountPaid: amount,
-        paymentDate: order.paymentDateToRiteFoods,
-        riteFoodsOrderNumber: order.riteFoodsOrderNumber,
-        riteFoodsInvoiceNumber: order.riteFoodsInvoiceNumber,
-        status: order.riteFoodsStatus,
+        paymentDate: order.paymentDateToSupplier,
+        supplierOrderNumber: order.supplierOrderNumber,
+        supplierInvoiceNumber: order.supplierInvoiceNumber,
+        status: order.supplierStatus,
         orderRaisedAt: order.orderRaisedAt,
-        loadedDate: order.riteFoodsLoadedDate
+        loadedDate: order.supplierLoadedDate
       };
     });
 
@@ -2210,19 +2212,19 @@ router.get('/locations/:id/pricing',
 router.get('/orders/export/csv',
   authorizeModule('distribution'),
   asyncHandler(async (req, res) => {
-    const { 
-      status, 
-      paymentStatus, 
-      riteFoodsStatus, 
+    const {
+      status,
+      paymentStatus,
+      supplierStatus,
       deliveryStatus,
-      startDate, 
-      endDate 
+      startDate,
+      endDate
     } = req.query;
 
     const where = {};
     if (status) where.status = status;
     if (paymentStatus) where.paymentStatus = paymentStatus;
-    if (riteFoodsStatus) where.riteFoodsStatus = riteFoodsStatus;
+    if (supplierStatus) where.supplierStatus = supplierStatus;
     if (deliveryStatus) where.deliveryStatus = deliveryStatus;
 
     if (startDate || endDate) {
@@ -2265,10 +2267,10 @@ router.get('/orders/export/csv',
       { label: 'Payment Status', value: 'paymentStatus' },
       { label: 'Payment Method', value: 'paymentMethod' },
       { label: 'Payment Reference', value: 'paymentReference' },
-      { label: 'Paid to Rite Foods', value: 'paidToRiteFoods' },
-      { label: 'Rite Foods Order Number', value: 'riteFoodsOrderNumber' },
-      { label: 'Rite Foods Invoice Number', value: 'riteFoodsInvoiceNumber' },
-      { label: 'Rite Foods Status', value: 'riteFoodsStatus' },
+      { label: 'Paid to Supplier', value: 'paidToSupplier' },
+      { label: 'Supplier Order Number', value: 'supplierOrderNumber' },
+      { label: 'Supplier Invoice Number', value: 'supplierInvoiceNumber' },
+      { label: 'Supplier Status', value: 'supplierStatus' },
       { label: 'Delivery Status', value: 'deliveryStatus' },
       { label: 'Transporter Company', value: 'transporterCompany' },
       { label: 'Driver Number', value: 'driverNumber' },
@@ -2300,10 +2302,10 @@ router.get('/orders/export/csv',
       paymentStatus: order.paymentStatus,
       paymentMethod: order.paymentMethod || 'N/A',
       paymentReference: order.paymentReference || 'N/A',
-      paidToRiteFoods: order.paidToRiteFoods ? 'Yes' : 'No',
-      riteFoodsOrderNumber: order.riteFoodsOrderNumber || 'N/A',
-      riteFoodsInvoiceNumber: order.riteFoodsInvoiceNumber || 'N/A',
-      riteFoodsStatus: order.riteFoodsStatus,
+      paidToSupplier: order.paidToSupplier ? 'Yes' : 'No',
+      supplierOrderNumber: order.supplierOrderNumber || 'N/A',
+      supplierInvoiceNumber: order.supplierInvoiceNumber || 'N/A',
+      supplierStatus: order.supplierStatus,
       deliveryStatus: order.deliveryStatus,
       transporterCompany: order.transporterCompany || 'N/A',
       driverNumber: order.driverNumber || 'N/A',
@@ -2339,7 +2341,7 @@ router.get('/orders/export/pdf',
     // Existing filters
     query('status').optional(),
     query('paymentStatus').optional(),
-    query('riteFoodsStatus').optional(),
+    query('supplierStatus').optional(),
     query('deliveryStatus').optional()
   ],
   asyncHandler(async (req, res) => {
@@ -2348,12 +2350,12 @@ router.get('/orders/export/pdf',
       throw new ValidationError('Invalid query parameters', errors.array());
     }
 
-    const { 
-      status, 
-      paymentStatus, 
-      riteFoodsStatus, 
+    const {
+      status,
+      paymentStatus,
+      supplierStatus,
       deliveryStatus,
-      startDate, 
+      startDate,
       endDate,
       limit,
       all
@@ -2363,7 +2365,7 @@ router.get('/orders/export/pdf',
     const where = {};
     if (status) where.status = status;
     if (paymentStatus) where.paymentStatus = paymentStatus;
-    if (riteFoodsStatus) where.riteFoodsStatus = riteFoodsStatus;
+    if (supplierStatus) where.supplierStatus = supplierStatus;
     if (deliveryStatus) where.deliveryStatus = deliveryStatus;
 
     // Date range handling
@@ -2526,7 +2528,7 @@ router.get('/orders/export/pdf',
         parseFloat(order.amountPaid).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
         parseFloat(order.balance).toLocaleString('en-NG', { minimumFractionDigits: 2 }),
         order.paymentStatus || 'N/A',
-        order.riteFoodsStatus || 'N/A',
+        order.supplierStatus || 'N/A',
         order.deliveryStatus || 'N/A',
         order.status
       ])
@@ -2910,15 +2912,15 @@ router.get('/orders/:id/export/pdf',
        .fillColor('#000')
        .text(order.paymentStatus, 150, yPos);
 
-    if (order.riteFoodsStatus) {
+    if (order.supplierStatus) {
       yPos += 20;
       doc.font('Helvetica')
          .fillColor('#4b5563')
-         .text(`Rite Foods Status: `, 50, yPos);
-      
+         .text(`Supplier Status: `, 50, yPos);
+
       doc.font('Helvetica-Bold')
          .fillColor('#000')
-         .text(order.riteFoodsStatus, 150, yPos);
+         .text(order.supplierStatus, 150, yPos);
     }
 
     if (order.deliveryStatus) {

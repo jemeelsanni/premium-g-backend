@@ -10,8 +10,8 @@ class DistributionDeliveryService {
   canAssignTransport(order) {
     const checks = {
       paymentConfirmed: order.paymentStatus === 'CONFIRMED',
-      paidToRiteFoods: order.paidToRiteFoods === true,
-      orderLoaded: ['LOADED', 'DISPATCHED'].includes(order.riteFoodsStatus),
+      paidToSupplier: order.paidToSupplier === true,
+      orderLoaded: ['LOADED', 'DISPATCHED'].includes(order.supplierStatus),
       balanceSettled: parseFloat(order.balance) === 0,
       transportNotAssigned: !order.transporterCompany
     };
@@ -49,8 +49,8 @@ class DistributionDeliveryService {
     if (!readiness.canAssign) {
       const blockerMessages = {
         paymentConfirmed: 'Customer payment must be confirmed by accountant',
-        paidToRiteFoods: 'Payment to Rite Foods must be completed',
-        orderLoaded: 'Order must be loaded at Rite Foods',
+        paidToSupplier: 'Payment to supplier must be completed',
+        orderLoaded: 'Order must be loaded at supplier',
         balanceSettled: 'Outstanding balance must be settled',
         transportNotAssigned: 'Transport already assigned'
       };
@@ -73,7 +73,7 @@ class DistributionDeliveryService {
           truckNumber,
           status: 'IN_TRANSIT',
           deliveryStatus: 'IN_TRANSIT',
-          riteFoodsStatus: 'DISPATCHED'
+          supplierStatus: 'DISPATCHED'
         },
         include: {
           customer: true,

@@ -336,18 +336,18 @@ router.post('/delivery/assign-transport',
       );
     }
 
-    // ✅ Check 2: Must have paid Rite Foods
-    if (!order.paidToRiteFoods) {
+    // ✅ Check 2: Must have paid supplier
+    if (!order.paidToSupplier) {
       throw new BusinessError(
-        'Cannot assign transport: Payment to Rite Foods must be completed first',
-        'RITE_FOODS_NOT_PAID'
+        'Cannot assign transport: Payment to supplier must be completed first',
+        'SUPPLIER_NOT_PAID'
       );
     }
 
-    // ✅ Check 3: Order must be loaded at Rite Foods
-    if (order.riteFoodsStatus !== 'LOADED' && order.riteFoodsStatus !== 'DISPATCHED') {
+    // ✅ Check 3: Order must be loaded at supplier
+    if (order.supplierStatus !== 'LOADED' && order.supplierStatus !== 'DISPATCHED') {
       throw new BusinessError(
-        `Cannot assign transport: Order must be loaded at Rite Foods first. Current status: ${order.riteFoodsStatus}`,
+        `Cannot assign transport: Order must be loaded at supplier first. Current status: ${order.supplierStatus}`,
         'ORDER_NOT_LOADED'
       );
     }
