@@ -5,7 +5,7 @@ const distributionPaymentService = require('../services/distributionPaymentServi
 const distributionDeliveryService = require('../services/distributionDeliveryService');
 const { asyncHandler } = require('../middleware/errorHandler');
 const { authorizeModule } = require('../middleware/auth');
-const { ValidationError } = require('../middleware/errorHandler');
+const { ValidationError, BusinessError } = require('../middleware/errorHandler');
 const { PrismaClient } = require('@prisma/client');  // ✅ ADD THIS LINE
 const {
   generatePaymentReference,
