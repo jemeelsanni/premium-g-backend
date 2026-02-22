@@ -58,10 +58,16 @@ app.set('trust proxy', 1);
 // Security
 app.use(helmet());
 
-// CORS Configuration - supports multiple origins for local development
+// CORS Configuration - supports multiple origins
+const defaultOrigins = [
+  'https://premiumgbrands.com',
+  'https://premiumgg.netlify.app',
+  'http://localhost:5173',
+  'http://localhost:3000'
+];
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
-  : [process.env.FRONTEND_URL || 'https://premiumgbrands.com'];
+  : defaultOrigins;
 
 console.log('🌐 CORS allowed origins:', allowedOrigins);
 
