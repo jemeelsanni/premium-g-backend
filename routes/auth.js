@@ -167,9 +167,10 @@ router.post('/login', loginValidation, asyncHandler(async (req, res) => {
     if (error instanceof BusinessError) {
       throw error;
     }
-    
+
+    console.error('Login error details:', error);
     await logAuthEvent(null, 'LOGIN_ERROR', ipAddress, userAgent, false);
-    throw new BusinessError('Login failed', 'LOGIN_ERROR');
+    throw new BusinessError('Login failed: ' + error.message, 'LOGIN_ERROR');
   }
 }));
 
