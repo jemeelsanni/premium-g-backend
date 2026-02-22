@@ -52,6 +52,30 @@ router.get('/:id', authenticateToken, async (req, res) => {
 });
 
 /**
+ * @route   GET /api/v1/supplier-companies/:id/categories
+ * @desc    Get product categories and SKUs for a supplier
+ * @access  Private (All authenticated users)
+ */
+router.get('/:id/categories', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const categories = await supplierCompanyService.getSupplierCategories(id);
+
+    res.json({
+      success: true,
+      data: categories
+    });
+  } catch (error) {
+    console.error('Error fetching supplier categories:', error);
+    const statusCode = error.message === 'Supplier company not found' ? 404 : 500;
+    res.status(statusCode).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+/**
  * @route   GET /api/v1/supplier-companies/:id/stats
  * @desc    Get supplier company statistics
  * @access  Private (All authenticated users)
@@ -86,7 +110,7 @@ router.post(
   authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN']),
   async (req, res) => {
     try {
-      const { name, code, email, phone, address, contactPerson, notes } = req.body;
+      const { name, code, email, phone, address, contactPerson, notes, productCategories } = req.body;
 
       // Validation
       if (!name || !code) {
@@ -103,7 +127,8 @@ router.post(
         phone,
         address,
         contactPerson,
-        notes
+        notes,
+        productCategories: productCategories || []
       });
 
       res.status(201).json({
@@ -134,7 +159,7 @@ router.put(
   async (req, res) => {
     try {
       const { id } = req.params;
-      const { name, code, email, phone, address, contactPerson, notes, isActive } = req.body;
+      const { name, code, email, phone, address, contactPerson, notes, isActive, productCategories } = req.body;
 
       const company = await supplierCompanyService.updateSupplierCompany(id, {
         name,
@@ -144,7 +169,8 @@ router.put(
         address,
         contactPerson,
         notes,
-        isActive
+        isActive,
+        productCategories
       });
 
       res.json({

@@ -173,7 +173,7 @@ router.get('/summary',
       const revenue = parseFloat(order.totalOrderAmount);
       const tripExpenses = parseFloat(order.totalTripExpenses);
       const fuel = parseFloat(order.totalFuelCost);
-      const wages = parseFloat(order.driverWages || 0) + parseFloat(order.tripAllowance || 0) + parseFloat(order.motorBoyWages || 0);
+      const wages = parseFloat(order.driverWages || 0) + parseFloat(order.tripAllowance || 0);
       const service = parseFloat(order.serviceChargeExpenseExpense);
 
       totalRevenue += revenue;

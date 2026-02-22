@@ -25,28 +25,37 @@ model User {
   lastLoginAt DateTime? @map("last_login_at")
 
   // Relations with explicit names
-  sessions                   UserSession[]
-  auditLogs                  AuditLog[]
-  createdDistributionOrders  DistributionOrder[]              @relation("DistributionOrderCreator")
-  confirmedPayments          DistributionOrder[]              @relation("PaymentConfirmer")
-  reviewedDeliveries         DistributionOrder[]              @relation("DeliveryReviewer")
-  transportOrders            TransportOrder[]
-  warehouseSales             WarehouseSale[]
-  cashFlowEntries            CashFlow[]
-  expenses                   Expense[]
-  approvedExpenses           Expense[]                        @relation("ExpenseApprover")
-  PriceAdjustment            PriceAdjustment[]
-  warehouseCustomersCreated  WarehouseCustomer[]              @relation("WarehouseCustomersCreatedBy")
-  warehouseDiscountRequests  WarehouseCustomerDiscount[]      @relation("WarehouseDiscountRequestedBy")
-  warehouseDiscountApprovals WarehouseCustomerDiscount[]      @relation("WarehouseDiscountApprovedBy")
-  discountApprovalRequests   DiscountApprovalRequest[]        @relation("DiscountRequestRequestedBy")
-  discountApprovals          DiscountApprovalRequest[]        @relation("DiscountRequestApprovedBy")
-  warehouseSalesApproved     WarehouseSale[]                  @relation("WarehouseSaleApprovedBy")
-  warehouseExpensesCreated   WarehouseExpense[]               @relation("WarehouseExpensesCreatedBy")
-  warehouseExpensesApproved  WarehouseExpense[]               @relation("WarehouseExpensesApprovedBy")
-  warehouseProductPurchases  WarehouseProductPurchase[]       @relation("WarehousePurchasesCreatedBy")
-  debtorPayments             DebtorPayment[]                  @relation("DebtorPaymentsReceivedBy")
-  supplierProductPriceChanges SupplierProductPriceHistory[]
+  sessions                       UserSession[]
+  auditLogs                      AuditLog[]
+  createdDistributionOrders      DistributionOrder[]            @relation("DistributionOrderCreator")
+  confirmedPayments              DistributionOrder[]            @relation("PaymentConfirmer")
+  reviewedDeliveries             DistributionOrder[]            @relation("DeliveryReviewer")
+  transportOrders                TransportOrder[]
+  warehouseSales                 WarehouseSale[]
+  cashFlowEntries                CashFlow[]
+  expenses                       Expense[]
+  approvedExpenses               Expense[]                      @relation("ExpenseApprover")
+  PriceAdjustment                PriceAdjustment[]
+  warehouseCustomersCreated      WarehouseCustomer[]            @relation("WarehouseCustomersCreatedBy")
+  warehouseDiscountRequests      WarehouseCustomerDiscount[]    @relation("WarehouseDiscountRequestedBy")
+  warehouseDiscountApprovals     WarehouseCustomerDiscount[]    @relation("WarehouseDiscountApprovedBy")
+  discountApprovalRequests       DiscountApprovalRequest[]      @relation("DiscountRequestRequestedBy")
+  discountApprovals              DiscountApprovalRequest[]      @relation("DiscountRequestApprovedBy")
+  warehouseSalesApproved         WarehouseSale[]                @relation("WarehouseSaleApprovedBy")
+  warehouseExpensesCreated       WarehouseExpense[]             @relation("WarehouseExpensesCreatedBy")
+  warehouseExpensesApproved      WarehouseExpense[]             @relation("WarehouseExpensesApprovedBy")
+  warehouseProductPurchases      WarehouseProductPurchase[]     @relation("WarehousePurchasesCreatedBy")
+  debtorPayments                 DebtorPayment[]                @relation("DebtorPaymentsReceivedBy")
+  supplierProductPriceChanges    SupplierProductPriceHistory[]
+  createdSupplierTargets         SupplierTarget[]               @relation("SupplierTargetCreator")
+  createdSupplierIncentives      SupplierIncentive[]            @relation("SupplierIncentiveCreator")
+  stockCountsCreated             StockCount[]                   @relation("StockCountCountedBy")
+  stockCountsApproved            StockCount[]                   @relation("StockCountApprovedBy")
+  stockAdjustments               StockAdjustment[]              @relation("StockAdjustmentAdjustedBy")
+  dailyOpeningStocksSubmitted    DailyOpeningStock[]            @relation("DailyOpeningStockSubmittedBy")
+  dailyOpeningStocksApproved     DailyOpeningStock[]            @relation("DailyOpeningStockApprovedBy")
+  dailyOpeningStockEditRequests  DailyOpeningStockEditRequest[] @relation("EditRequestedBy")
+  dailyOpeningStockEditApprovals DailyOpeningStockEditRequest[] @relation("EditApprovedBy")
 
   @@map("users")
 }
@@ -95,6 +104,7 @@ model DistributionTarget {
   month            Int
   totalPacksTarget Int    @map("total_packs_target")
   weeklyTargets    Json
+  categoryTargets  Json?  @map("category_targets") // { CSD: n, ED: n, WATER: n, JUICE: n }
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -122,6 +132,49 @@ model WeeklyPerformance {
 
   @@unique([targetId, weekNumber])
   @@map("weekly_performance")
+}
+
+// Supplier-specific targets set by admins
+model SupplierTarget {
+  id                String  @id @default(cuid())
+  supplierCompanyId String  @map("supplier_company_id")
+  year              Int
+  month             Int
+  totalPacksTarget  Int     @map("total_packs_target")
+  weeklyTargets     Json // Weekly breakdown like DistributionTarget
+  categoryTargets   Json?   @map("category_targets") // { CSD: n, ED: n, WATER: n, JUICE: n }
+  notes             String?
+  createdBy         String  @map("created_by") // Admin who set the target
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  supplierCompany SupplierCompany @relation(fields: [supplierCompanyId], references: [id], onDelete: Cascade)
+  creator         User            @relation("SupplierTargetCreator", fields: [createdBy], references: [id])
+
+  @@unique([supplierCompanyId, year, month])
+  @@map("supplier_targets")
+}
+
+// Supplier incentive/profitability tracking
+model SupplierIncentive {
+  id                  String   @id @default(cuid())
+  supplierCompanyId   String   @map("supplier_company_id")
+  year                Int
+  month               Int
+  incentivePercentage Decimal  @map("incentive_percentage") @db.Decimal(5, 2) // e.g., 2.5 for 2.5%
+  actualIncentivePaid Decimal? @map("actual_incentive_paid") @db.Decimal(12, 2) // What was actually paid
+  notes               String?
+  createdBy           String   @map("created_by")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  supplierCompany SupplierCompany @relation(fields: [supplierCompanyId], references: [id], onDelete: Cascade)
+  creator         User            @relation("SupplierIncentiveCreator", fields: [createdBy], references: [id])
+
+  @@unique([supplierCompanyId, year, month])
+  @@map("supplier_incentives")
 }
 
 // ================================
@@ -154,23 +207,26 @@ model Product {
   warehouseExpenses         WarehouseExpense[]
   productPurchases          WarehouseProductPurchase[]
   supplierProducts          SupplierProduct[]
+  stockCounts               StockCount[]
+  stockAdjustments          StockAdjustment[]
+  dailyOpeningStocks        DailyOpeningStock[]
 
   @@map("products")
 }
 
 model Customer {
-  id            String    @id @default(cuid())
-  name          String
-  email         String?
-  phone         String?
-  address       String?
-  customerType  String?   @map("customer_type")
-  territory     String?
-  totalOrders   Int       @default(0) @map("total_orders")
-  totalSpent    Decimal   @default(0) @map("total_spent") @db.Decimal(15, 2)
-  lastOrderDate DateTime? @map("last_order_date")
-  creditLimit   Decimal?  @map("credit_limit") @db.Decimal(15, 2)
-  customerBalance Decimal @default(0) @map("customer_balance") @db.Decimal(15, 2) // Positive = overpaid/credit, Negative = debt
+  id              String    @id @default(cuid())
+  name            String
+  email           String?
+  phone           String?
+  address         String?
+  customerType    String?   @map("customer_type")
+  territory       String?
+  totalOrders     Int       @default(0) @map("total_orders")
+  totalSpent      Decimal   @default(0) @map("total_spent") @db.Decimal(15, 2)
+  lastOrderDate   DateTime? @map("last_order_date")
+  creditLimit     Decimal?  @map("credit_limit") @db.Decimal(15, 2)
+  customerBalance Decimal   @default(0) @map("customer_balance") @db.Decimal(15, 2) // Positive = overpaid/credit, Negative = debt
 
   isActive Boolean @default(true) @map("is_active")
 
@@ -183,12 +239,14 @@ model Customer {
 }
 
 model Location {
-  id                 String  @id @default(cuid())
-  name               String
-  address            String?
-  driverWagesPerTrip Decimal @default(0) @map("driver_wages_per_trip") @db.Decimal(8, 2)
-  deliveryNotes      String? @map("delivery_notes")
-  isActive           Boolean @default(true) @map("is_active")
+  id               String  @id @default(cuid())
+  name             String
+  address          String?
+  fuelRequired     Decimal @default(0) @map("fuel_required") @db.Decimal(8, 2)
+  fuelCostPerLitre Decimal @default(0) @map("fuel_cost_per_litre") @db.Decimal(8, 2)
+  driverWages      Decimal @default(0) @map("driver_wages") @db.Decimal(8, 2)
+  deliveryNotes    String? @map("delivery_notes")
+  isActive         Boolean @default(true) @map("is_active")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -220,15 +278,53 @@ model SupplierCompany {
 
   distributionOrders DistributionOrder[]
   supplierProducts   SupplierProduct[]
+  supplierTargets    SupplierTarget[]
+  supplierIncentives SupplierIncentive[]
+  productCategories  SupplierCategory[]
 
   @@map("supplier_companies")
 }
 
+// Supplier product categories (CSD, ED, Water, Juice) with SKUs
+model SupplierCategory {
+  id                String              @id @default(cuid())
+  supplierCompanyId String              @map("supplier_company_id")
+  categoryType      ProductCategoryType @map("category_type")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  supplierCompany SupplierCompany       @relation(fields: [supplierCompanyId], references: [id], onDelete: Cascade)
+  skus            SupplierCategorySKU[]
+
+  @@unique([supplierCompanyId, categoryType])
+  @@map("supplier_categories")
+}
+
+// SKUs under each supplier category (e.g., 50cl, 70cl, 1L, 1.5L)
+model SupplierCategorySKU {
+  id                 String  @id @default(cuid())
+  supplierCategoryId String  @map("supplier_category_id")
+  skuValue           Decimal @map("sku_value") @db.Decimal(8, 2)
+  skuUnit            SkuUnit @map("sku_unit")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  supplierCategory SupplierCategory  @relation(fields: [supplierCategoryId], references: [id], onDelete: Cascade)
+  supplierProducts SupplierProduct[]
+
+  @@unique([supplierCategoryId, skuValue, skuUnit])
+  @@map("supplier_category_skus")
+}
+
 // Junction table linking suppliers to their available products
 model SupplierProduct {
-  id                String  @id @default(cuid())
-  supplierCompanyId String  @map("supplier_company_id")
-  productId         String  @map("product_id")
+  id                String @id @default(cuid())
+  supplierCompanyId String @map("supplier_company_id")
+  productId         String @map("product_id")
+
+  // Category & SKU reference (links product to a supplier category+SKU)
+  supplierCategorySkuId String? @map("supplier_category_sku_id")
 
   // Supplier-specific pricing
   supplierCostPerPack Decimal @map("supplier_cost_per_pack") @db.Decimal(10, 2) // What we pay supplier
@@ -240,8 +336,9 @@ model SupplierProduct {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  supplierCompany SupplierCompany              @relation(fields: [supplierCompanyId], references: [id], onDelete: Cascade)
-  product         Product                      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  supplierCompany SupplierCompany               @relation(fields: [supplierCompanyId], references: [id], onDelete: Cascade)
+  product         Product                       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  categorySku     SupplierCategorySKU?          @relation(fields: [supplierCategorySkuId], references: [id], onDelete: SetNull)
   priceHistory    SupplierProductPriceHistory[]
 
   @@unique([supplierCompanyId, productId]) // Each supplier can only have one entry per product
@@ -253,8 +350,8 @@ model SupplierProductPriceHistory {
   id                String @id @default(cuid())
   supplierProductId String @map("supplier_product_id")
 
-  oldPrice Decimal @map("old_price") @db.Decimal(10, 2)
-  newPrice Decimal @map("new_price") @db.Decimal(10, 2)
+  oldPrice  Decimal @map("old_price") @db.Decimal(10, 2)
+  newPrice  Decimal @map("new_price") @db.Decimal(10, 2)
   changedBy String  @map("changed_by")
   reason    String?
 
@@ -495,8 +592,8 @@ model TransportOrder {
   // Customer Information
   name            String
   phone           String
-  pickupLocation  String
-  deliveryAddress String
+  pickupLocation  String?
+  deliveryAddress String?
 
   // Order Details
   totalOrderAmount Decimal  @map("total_order_amount") @db.Decimal(12, 2)
@@ -504,12 +601,11 @@ model TransportOrder {
 
   // Fuel Information
   fuelRequired      Decimal @map("fuel_required") @db.Decimal(8, 2)
-  fuelPricePerLiter Decimal @map("fuel_price_per_liter") @db.Decimal(6, 2)
+  fuelPricePerLiter Decimal @map("fuel_price_per_liter") @db.Decimal(10, 2)
   totalFuelCost     Decimal @map("total_fuel_cost") @db.Decimal(10, 2)
 
   // Wages and Allowances
   driverWages   Decimal @default(0) @map("driver_wages") @db.Decimal(8, 2)
-  motorBoyWages Decimal @default(0) @map("motor_boy_wages") @db.Decimal(8, 2)
   tripAllowance Decimal @default(0) @map("trip_allowance") @db.Decimal(8, 2)
 
   // Expenses and Charges
@@ -982,6 +1078,194 @@ model CashFlow {
 }
 
 // ================================
+// STOCK COUNTING & VERIFICATION
+// ================================
+
+model StockCount {
+  id          String  @id @default(cuid())
+  countNumber String  @unique @map("count_number")
+  productId   String  @map("product_id")
+  location    String?
+
+  // Physical count entered by staff
+  countedPallets Int @map("counted_pallets")
+  countedPacks   Int @map("counted_packs")
+  countedUnits   Int @map("counted_units")
+
+  // System stock at time of count
+  systemPallets Int @map("system_pallets")
+  systemPacks   Int @map("system_packs")
+  systemUnits   Int @map("system_units")
+
+  // Variance (difference between counted and system)
+  variancePallets Int @map("variance_pallets")
+  variancePacks   Int @map("variance_packs")
+  varianceUnits   Int @map("variance_units")
+
+  // Total variance value
+  varianceValue Decimal? @map("variance_value") @db.Decimal(12, 2)
+
+  // Approval workflow
+  status           StockCountStatus @default(PENDING)
+  approvalNotes    String?          @map("approval_notes")
+  rejectionReason  String?          @map("rejection_reason")
+  adjustmentReason String?          @map("adjustment_reason")
+
+  // Staff and admin tracking
+  countedBy  String    @map("counted_by")
+  approvedBy String?   @map("approved_by")
+  approvedAt DateTime? @map("approved_at")
+
+  countDate DateTime @map("count_date")
+  notes     String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  product       Product           @relation(fields: [productId], references: [id])
+  countedByUser User              @relation("StockCountCountedBy", fields: [countedBy], references: [id])
+  approver      User?             @relation("StockCountApprovedBy", fields: [approvedBy], references: [id])
+  adjustments   StockAdjustment[]
+
+  @@index([productId])
+  @@index([status])
+  @@index([countDate])
+  @@index([countedBy])
+  @@map("stock_counts")
+}
+
+model StockAdjustment {
+  id           String @id @default(cuid())
+  stockCountId String @map("stock_count_id")
+  productId    String @map("product_id")
+
+  // Adjustment quantities
+  adjustmentPallets Int @map("adjustment_pallets")
+  adjustmentPacks   Int @map("adjustment_packs")
+  adjustmentUnits   Int @map("adjustment_units")
+
+  // Before and after values
+  beforePallets Int @map("before_pallets")
+  beforePacks   Int @map("before_packs")
+  beforeUnits   Int @map("before_units")
+
+  afterPallets Int @map("after_pallets")
+  afterPacks   Int @map("after_packs")
+  afterUnits   Int @map("after_units")
+
+  adjustmentValue  Decimal @map("adjustment_value") @db.Decimal(12, 2)
+  adjustmentReason String  @map("adjustment_reason")
+
+  adjustedBy String   @map("adjusted_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  // Relations
+  stockCount     StockCount @relation(fields: [stockCountId], references: [id], onDelete: Cascade)
+  product        Product    @relation(fields: [productId], references: [id])
+  adjustedByUser User       @relation("StockAdjustmentAdjustedBy", fields: [adjustedBy], references: [id])
+
+  @@index([stockCountId])
+  @@index([productId])
+  @@map("stock_adjustments")
+}
+
+// ================================
+// DAILY OPENING STOCK VERIFICATION
+// ================================
+
+model DailyOpeningStock {
+  id        String   @id @default(cuid())
+  productId String   @map("product_id")
+  stockDate DateTime @map("stock_date") @db.Date
+
+  // Manual count entered by sales rep
+  manualPallets Int @default(0) @map("manual_pallets")
+  manualPacks   Int @default(0) @map("manual_packs")
+  manualUnits   Int @default(0) @map("manual_units")
+
+  // System calculated opening stock at submission time
+  systemPallets Int @default(0) @map("system_pallets")
+  systemPacks   Int @default(0) @map("system_packs")
+  systemUnits   Int @default(0) @map("system_units")
+
+  // Variance (manual - system)
+  variancePallets Int @default(0) @map("variance_pallets")
+  variancePacks   Int @default(0) @map("variance_packs")
+  varianceUnits   Int @default(0) @map("variance_units")
+
+  // Variance value in currency
+  varianceValue Decimal? @map("variance_value") @db.Decimal(12, 2)
+
+  // Status and workflow
+  status          DailyOpeningStockStatus @default(PENDING)
+  submittedBy     String                  @map("submitted_by")
+  submittedAt     DateTime                @default(now()) @map("submitted_at")
+  approvedBy      String?                 @map("approved_by")
+  approvedAt      DateTime?               @map("approved_at")
+  approvalNotes   String?                 @map("approval_notes")
+  rejectionReason String?                 @map("rejection_reason")
+
+  notes     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  product      Product                        @relation(fields: [productId], references: [id])
+  submitter    User                           @relation("DailyOpeningStockSubmittedBy", fields: [submittedBy], references: [id])
+  approver     User?                          @relation("DailyOpeningStockApprovedBy", fields: [approvedBy], references: [id])
+  editRequests DailyOpeningStockEditRequest[]
+
+  // Unique constraint: one entry per product per day
+  @@unique([productId, stockDate])
+  @@index([productId])
+  @@index([stockDate])
+  @@index([status])
+  @@index([submittedBy])
+  @@map("daily_opening_stocks")
+}
+
+model DailyOpeningStockEditRequest {
+  id                  String @id @default(cuid())
+  dailyOpeningStockId String @map("daily_opening_stock_id")
+
+  // New values requested
+  newManualPallets Int @map("new_manual_pallets")
+  newManualPacks   Int @map("new_manual_packs")
+  newManualUnits   Int @map("new_manual_units")
+
+  // Old values for reference
+  oldManualPallets Int @map("old_manual_pallets")
+  oldManualPacks   Int @map("old_manual_packs")
+  oldManualUnits   Int @map("old_manual_units")
+
+  // Request details
+  editReason  String   @map("edit_reason")
+  requestedBy String   @map("requested_by")
+  requestedAt DateTime @default(now()) @map("requested_at")
+
+  // Approval workflow
+  status          EditRequestStatus @default(PENDING)
+  approvedBy      String?           @map("approved_by")
+  approvedAt      DateTime?         @map("approved_at")
+  approvalNotes   String?           @map("approval_notes")
+  rejectionReason String?           @map("rejection_reason")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  dailyOpeningStock DailyOpeningStock @relation(fields: [dailyOpeningStockId], references: [id], onDelete: Cascade)
+  requester         User              @relation("EditRequestedBy", fields: [requestedBy], references: [id])
+  approver          User?             @relation("EditApprovedBy", fields: [approvedBy], references: [id])
+
+  @@index([dailyOpeningStockId])
+  @@index([status])
+  @@index([requestedBy])
+  @@map("daily_opening_stock_edit_requests")
+}
+
+// ================================
 // BUSINESS INTELLIGENCE & KPIs
 // ================================
 
@@ -1234,4 +1518,35 @@ enum PeriodType {
   MONTHLY
   QUARTERLY
   YEARLY
+}
+
+enum StockCountStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  ADJUSTED
+}
+
+enum DailyOpeningStockStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum EditRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ProductCategoryType {
+  CSD
+  ED
+  WATER
+  JUICE
+}
+
+enum SkuUnit {
+  CL
+  L
 }

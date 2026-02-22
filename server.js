@@ -14,6 +14,7 @@ const { auditLogger } = require('./middleware/auditLogger');
 
 const { manageBatchStatus } = require('./jobs/batch-status-manager');
 const { startInventorySyncCron } = require('./cron/inventorySyncCron');
+const { reconcileCustomerBalances } = require('./cron/customerBalanceReconciliation');
 
 
 // Import routes
@@ -24,8 +25,11 @@ const userRoutes = require('./routes/users');
 const distributionRoutes = require('./routes/distribution');
 const transportRoutes = require('./routes/transport');
 const warehouseRoutes = require('./routes/warehouse');
+const warehouseDailyOpeningStockRoutes = require('./routes/warehouse-daily-opening-stock');
 const supplierCompanyRoutes = require('./routes/supplierCompany');
 const supplierProductRoutes = require('./routes/supplier-products');
+const supplierTargetRoutes = require('./routes/supplier-targets');
+const supplierIncentiveRoutes = require('./routes/supplier-incentives');
 
 // SUPPORTING ROUTES
 const targetRoutes = require('./routes/targets'); // Distribution targets only
@@ -53,8 +57,27 @@ app.set('trust proxy', 1);
 
 // Security
 app.use(helmet());
+
+// CORS Configuration - supports multiple origins for local development
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+  : [process.env.FRONTEND_URL || 'https://premiumgbrands.com'];
+
+console.log('🌐 CORS allowed origins:', allowedOrigins);
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'https://premiumgbrands.com',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, Postman, curl)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('❌ CORS blocked origin:', origin);
+      console.log('✅ Allowed origins:', allowedOrigins);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
 
@@ -369,6 +392,31 @@ console.log('✅ Batch status management cron job scheduled');
 // This ensures the system self-heals from any discrepancies
 startInventorySyncCron();
 
+// ================================
+// CUSTOMER BALANCE RECONCILIATION CRON JOB
+// ================================
+// Runs every 5 minutes to ensure customer balances match order balances
+// This prevents data inconsistencies and ensures accurate financial records
+cron.schedule('*/5 * * * *', async () => {
+  try {
+    await reconcileCustomerBalances();
+  } catch (error) {
+    console.error('❌ Customer balance reconciliation failed:', error);
+  }
+});
+
+// Run initial check 10 seconds after startup
+setTimeout(async () => {
+  console.log('🚀 Running initial customer balance reconciliation...');
+  try {
+    await reconcileCustomerBalances();
+  } catch (error) {
+    console.error('❌ Initial reconciliation failed:', error);
+  }
+}, 10000);
+
+console.log('✅ Customer balance reconciliation cron job scheduled (runs every 5 minutes)');
+
 
 // ================================
 // ROUTES - STANDALONE MODULES
@@ -384,6 +432,7 @@ app.use(`/api/${apiVersion}/users`, authenticateToken, userRoutes);
 app.use(`/api/${apiVersion}/distribution`, authenticateToken, distributionRoutes);
 app.use(`/api/${apiVersion}/transport`, authenticateToken, transportRoutes);
 app.use(`/api/${apiVersion}/warehouse`, authenticateToken, warehouseRoutes);
+app.use(`/api/${apiVersion}/warehouse/daily-opening-stock`, authenticateToken, warehouseDailyOpeningStockRoutes);
 
 app.use(`/api/${apiVersion}/transport`, authenticateToken, truckRoutes);
 
@@ -392,6 +441,8 @@ app.use(`/api/${apiVersion}/targets`, authenticateToken, targetRoutes); // Distr
 app.use(`/api/${apiVersion}/trucks`, authenticateToken, truckRoutes); // Transport only
 app.use(`/api/${apiVersion}/supplier-companies`, authenticateToken, supplierCompanyRoutes); // Distribution suppliers
 app.use(`/api/${apiVersion}/supplier-products`, authenticateToken, supplierProductRoutes); // Supplier product catalog
+app.use(`/api/${apiVersion}/supplier-targets`, authenticateToken, supplierTargetRoutes); // Supplier targets
+app.use(`/api/${apiVersion}/supplier-incentives`, authenticateToken, supplierIncentiveRoutes); // Supplier incentives/profitability
 
 // SEPARATE ANALYTICS ENDPOINTS
 app.use(`/api/${apiVersion}/analytics/distribution`, authenticateToken, distributionAnalyticsRoutes);

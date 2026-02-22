@@ -940,6 +940,30 @@ router.patch('/orders/:id/items',
         }
       });
 
+      // Recalculate customer balance (sum of all order balances)
+      // Order balance: Positive = customer owes us (debt), Negative = overpaid (credit)
+      // Customer balance: Negative = customer owes us (debt), Positive = overpaid (credit)
+      // So we need to invert the sign
+      const customerOrders = await tx.distributionOrder.findMany({
+        where: { customerId: existingOrder.customerId },
+        select: { balance: true }
+      });
+
+      const totalOrderBalance = customerOrders.reduce((sum, order) => {
+        return sum + parseFloat(order.balance || 0);
+      }, 0);
+
+      // Invert the sign: order balance (positive = debt) -> customer balance (negative = debt)
+      const customerBalance = -totalOrderBalance;
+
+      // Update customer balance
+      await tx.customer.update({
+        where: { id: existingOrder.customerId },
+        data: {
+          customerBalance: customerBalance
+        }
+      });
+
       return order;
     });
 
@@ -1518,29 +1542,15 @@ router.get('/analytics/summary',
   authorizeModule('distribution'),
   asyncHandler(async (req, res) => {
     const { startDate, endDate } = req.query;
-    
-    // Default to current month if no dates provided
-    const now = new Date();
-    const defaultStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const defaultEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-    
-    const dateFilter = {};
-    if (startDate) {
-      dateFilter.gte = new Date(startDate);
-    } else {
-      dateFilter.gte = defaultStart;
-    }
-    
-    if (endDate) {
-      dateFilter.lte = new Date(endDate);
-    } else {
-      dateFilter.lte = defaultEnd;
-    }
 
-    // Get all orders for the period
+    const dateFilter = {};
+    if (startDate) dateFilter.gte = new Date(startDate);
+    if (endDate) dateFilter.lte = new Date(endDate);
+
+    // Get all orders for the period (no dateFilter = all time)
     const allOrders = await prisma.distributionOrder.findMany({
       where: {
-        createdAt: dateFilter
+        createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined
       },
       include: {
         customer: { 

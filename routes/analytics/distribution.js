@@ -31,18 +31,28 @@ router.get('/summary',
     if (startDate) dateFilter.gte = new Date(startDate);
     if (endDate) dateFilter.lte = new Date(endDate);
 
-    // Get distribution orders only
-    const orders = await prisma.distributionOrder.findMany({
-      where: {
-        createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined,
-        status: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] }
-      },
-      include: {
-        orderItems: { include: { product: true } },
-        customer: { select: { name: true } },
-        location: { select: { name: true } }
-      }
-    });
+    // Get all distribution orders (no status filter — count everything)
+    const [orders, activeCustomerCount, recentOrders] = await Promise.all([
+      prisma.distributionOrder.findMany({
+        where: {
+          createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined,
+        },
+        include: {
+          orderItems: { include: { product: true } },
+          customer: { select: { name: true } },
+          location: { select: { name: true } }
+        }
+      }),
+      prisma.customer.count({ where: { isActive: true } }),
+      prisma.distributionOrder.findMany({
+        take: 5,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          customer: { select: { name: true } },
+          location: { select: { name: true } }
+        }
+      })
+    ]);
 
     // Calculate pure distribution metrics
     let totalRevenue = 0;
@@ -57,7 +67,7 @@ router.get('/summary',
       totalRevenue += orderRevenue;
       totalPacks += order.totalPacks;
       totalPallets += order.totalPallets;
-      
+
       // Customer analytics
       const customerName = order.customer?.name || 'Unknown';
       if (!customerStats[customerName]) {
@@ -75,7 +85,7 @@ router.get('/summary',
       locationStats[locationName].orders += 1;
       locationStats[locationName].revenue += orderRevenue;
       locationStats[locationName].packs += order.totalPacks;
-      
+
       // Calculate COGS for this order
       for (const item of order.orderItems) {
         const itemPacks = (item.pallets * item.product.packsPerPallet) + item.packs;
@@ -101,16 +111,25 @@ router.get('/summary',
     res.json({
       success: true,
       data: {
-        summary: {
-          totalRevenue: parseFloat(totalRevenue.toFixed(2)),
-          totalCOGS: parseFloat(totalCOGS.toFixed(2)),
-          grossProfit: parseFloat(grossProfit.toFixed(2)),
-          profitMargin: parseFloat(profitMargin.toFixed(2)),
-          totalOrders: orders.length,
-          totalPacks,
-          totalPallets,
-          averageOrderValue: parseFloat(averageOrderValue.toFixed(2))
-        },
+        // Flat fields — matches what DistributionDashboard.tsx reads from stats.X
+        totalRevenue: parseFloat(totalRevenue.toFixed(2)),
+        totalCOGS: parseFloat(totalCOGS.toFixed(2)),
+        grossProfit: parseFloat(grossProfit.toFixed(2)),
+        profitMargin: parseFloat(profitMargin.toFixed(2)),
+        totalOrders: orders.length,
+        totalPacks,
+        totalPallets,
+        averageOrderValue: parseFloat(averageOrderValue.toFixed(2)),
+        activeCustomers: activeCustomerCount,
+        recentOrders: recentOrders.map(o => ({
+          id: o.id,
+          orderNumber: o.orderNumber,
+          customer: o.customer,
+          finalAmount: parseFloat(o.finalAmount),
+          status: o.status,
+          createdAt: o.createdAt,
+          locationId: o.locationId,
+        })),
         topCustomers,
         topLocations,
         period: { startDate, endDate }

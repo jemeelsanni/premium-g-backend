@@ -80,15 +80,15 @@ async function markDepletedBatches() {
  */
 async function generateExpiryAlerts() {
   const today = new Date();
-  const sevenDaysFromNow = new Date();
-  sevenDaysFromNow.setDate(today.getDate() + 7);
+  const sixtyDaysFromNow = new Date();
+  sixtyDaysFromNow.setDate(today.getDate() + 60);
 
-  // Critical: Expiring within 7 days
+  // Critical: Expiring within 60 days
   const criticalBatches = await prisma.warehouseProductPurchase.findMany({
     where: {
       expiryDate: {
         gte: today,
-        lte: sevenDaysFromNow
+        lte: sixtyDaysFromNow
       },
       batchStatus: 'ACTIVE',
       quantityRemaining: { gt: 0 }
@@ -101,7 +101,7 @@ async function generateExpiryAlerts() {
   });
 
   if (criticalBatches.length > 0) {
-    console.log(`⚠️  CRITICAL: ${criticalBatches.length} batches expiring within 7 days`);
+    console.log(`⚠️  CRITICAL: ${criticalBatches.length} batches expiring within 60 days`);
     // Log only a summary to reduce log volume
     // Individual batch details should be sent via email/SMS instead
 

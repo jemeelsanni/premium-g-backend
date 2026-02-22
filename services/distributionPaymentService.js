@@ -234,10 +234,9 @@ class DistributionPaymentService {
       throw new BusinessError('Payment amount cannot exceed order total');
     }
 
-    // ✅ Generate numbers automatically if not provided
+    // ✅ Generate payment reference and invoice number automatically if not provided
     const supplierCode = order.supplierCompany.code;
     const finalReference = reference || await generatePaymentReference();
-    const finalSupplierOrderNumber = supplierOrderNumber || await generateSupplierOrderNumber(supplierCode);
     const finalSupplierInvoiceNumber = supplierInvoiceNumber || await generateSupplierInvoiceNumber(supplierCode);
 
     // Record payment in transaction
@@ -262,7 +261,6 @@ class DistributionPaymentService {
           amountPaidToSupplier: paymentAmount,
           paymentDateToSupplier: new Date(),
           supplierStatus: 'PAYMENT_SENT',
-          supplierOrderNumber: finalSupplierOrderNumber,
           supplierInvoiceNumber: finalSupplierInvoiceNumber,
           status: 'SENT_TO_SUPPLIER'
         },
@@ -285,7 +283,6 @@ class DistributionPaymentService {
           entityId: orderId,
           newValues: {
             paymentReference: finalReference,
-            supplierOrderNumber: finalSupplierOrderNumber,
             supplierInvoiceNumber: finalSupplierInvoiceNumber,
             amount: paymentAmount,
             supplierName: order.supplierCompany.name
@@ -297,7 +294,6 @@ class DistributionPaymentService {
         order: updatedOrder,
         payment,
         paymentReference: finalReference,
-        supplierOrderNumber: finalSupplierOrderNumber,
         supplierInvoiceNumber: finalSupplierInvoiceNumber
       };
     });
@@ -311,6 +307,7 @@ class DistributionPaymentService {
     supplierStatus,
     orderRaisedAt,
     loadedDate,
+    supplierReferenceNumber,
     userId
   }) {
     const order = await prisma.distributionOrder.findUnique({
@@ -334,8 +331,12 @@ class DistributionPaymentService {
 
     // Handle specific status updates
     if (supplierStatus === 'ORDER_RAISED') {
+      if (!supplierReferenceNumber) {
+        throw new BusinessError('Supplier reference number is required when setting status to ORDER_RAISED');
+      }
       updateData.orderRaisedBySupplier = true;
       updateData.orderRaisedAt = orderRaisedAt || new Date();
+      updateData.supplierOrderNumber = supplierReferenceNumber;
       updateData.status = 'PROCESSING_BY_SUPPLIER';
     }
 

@@ -56,6 +56,9 @@ router.get(
             isActive: true,
           },
         },
+        categorySku: {
+          include: { supplierCategory: true }
+        },
       },
       orderBy: [
         { supplierCompany: { name: 'asc' } },
@@ -98,6 +101,14 @@ router.get(
     const supplierProducts = await prisma.supplierProduct.findMany({
       where,
       include: {
+        supplierCompany: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            isActive: true,
+          },
+        },
         product: {
           select: {
             id: true,
@@ -111,11 +122,19 @@ router.get(
             isActive: true,
           },
         },
+        categorySku: {
+          include: { supplierCategory: true }
+        },
       },
       orderBy: {
         product: { name: 'asc' },
       },
     });
+
+    console.log(`[SUPPLIER PRODUCTS] Found ${supplierProducts.length} products for supplier ${supplierId}`);
+    if (supplierProducts.length > 0) {
+      console.log('[SUPPLIER PRODUCTS] First product:', JSON.stringify(supplierProducts[0], null, 2));
+    }
 
     res.json({
       success: true,
@@ -144,6 +163,9 @@ router.get(
       include: {
         supplierCompany: true,
         product: true,
+        categorySku: {
+          include: { supplierCategory: true }
+        },
       },
     });
 
@@ -245,6 +267,7 @@ router.post(
     const {
       supplierCompanyId,
       productId,
+      supplierCategorySkuId,
       supplierCostPerPack,
       isAvailable,
       minimumOrderPacks,
@@ -289,6 +312,7 @@ router.post(
       data: {
         supplierCompanyId,
         productId,
+        supplierCategorySkuId: supplierCategorySkuId || null,
         supplierCostPerPack: parseFloat(supplierCostPerPack),
         isAvailable: isAvailable !== undefined ? isAvailable : true,
         minimumOrderPacks: minimumOrderPacks || null,
@@ -298,6 +322,9 @@ router.post(
       include: {
         supplierCompany: true,
         product: true,
+        categorySku: {
+          include: { supplierCategory: true }
+        },
       },
     });
 
@@ -390,6 +417,9 @@ router.put(
         include: {
           supplierCompany: true,
           product: true,
+          categorySku: {
+            include: { supplierCategory: true }
+          },
         },
       });
 

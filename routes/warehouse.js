@@ -29,6 +29,9 @@ router.use('/debtors', warehouseDebtorsRouter);
 const warehouseOpeningStockRouter = require('./warehouse-opening-stock');
 router.use('/opening-stock', warehouseOpeningStockRouter);
 
+const warehouseStockCountRouter = require('./warehouse-stock-count');
+router.use('/', warehouseStockCountRouter);
+
 
 // Include discount management routes (if created)
 let checkCustomerDiscount;
@@ -461,6 +464,8 @@ router.get('/products', asyncHandler(async (req, res) => {
       name: p.name,
       productNo: p.productNo,
       pricePerPack: p.pricePerPack,
+      minSellingPrice: p.minSellingPrice,
+      maxSellingPrice: p.maxSellingPrice,
       currentStock: totalStock,
       minimumStock: minLevel,
       maximumStock: maxLevel,
@@ -522,21 +527,32 @@ async function calculateSimpleAverageCost(tx, productId, unitType) {
 }
 
 async function allocateSaleQuantityFEFO(tx, productId, quantityToSell, unitType) {
-  // Fetch available batches sorted by expiry date (FEFO - First Expired, First Out)
-  const availableBatches = await tx.warehouseProductPurchase.findMany({
-    where: {
-      productId,
-      unitType, // Only match batches with same unit type
-      batchStatus: 'ACTIVE',
-      quantityRemaining: { gt: 0 }
-    },
-    orderBy: [
-      { expiryDate: 'asc' }, // Expiring soon goes first
-      { purchaseDate: 'asc' } // Then FIFO for same expiry
-    ]
-  });
+  // ============================================================================
+  // PESSIMISTIC LOCKING: Lock batches to prevent race conditions
+  // This ensures no two concurrent sales can allocate from the same batch
+  // ============================================================================
 
-  if (availableBatches.length === 0) {
+  // Use raw SQL with FOR UPDATE to lock the rows during allocation
+  // This prevents race conditions where two sales read the same stock level
+  const availableBatches = await tx.$queryRaw`
+    SELECT
+      id,
+      batch_number as "batchNumber",
+      expiry_date as "expiryDate",
+      cost_per_unit as "costPerUnit",
+      quantity_remaining as "quantityRemaining",
+      quantity_sold as "quantitySold",
+      batch_status as "batchStatus"
+    FROM warehouse_product_purchases
+    WHERE product_id = ${productId}
+      AND unit_type = ${unitType}::"UnitType"
+      AND batch_status = 'ACTIVE'::"BatchStatus"
+      AND quantity_remaining > 0
+    ORDER BY expiry_date ASC NULLS LAST, purchase_date ASC
+    FOR UPDATE
+  `;
+
+  if (!availableBatches || availableBatches.length === 0) {
     throw new BusinessError('No active batches available for this product', 'NO_BATCHES');
   }
 
@@ -566,7 +582,7 @@ async function allocateSaleQuantityFEFO(tx, productId, quantityToSell, unitType)
       batchId: batch.id,
       batchNumber: batch.batchNumber,
       expiryDate: batch.expiryDate,
-      costPerUnit: batch.costPerUnit, // ✅ ADD THIS LINE
+      costPerUnit: batch.costPerUnit,
       quantityAllocated: quantityFromThisBatch,
       newRemainingQty: batch.quantityRemaining - quantityFromThisBatch,
       newSoldQty: batch.quantitySold + quantityFromThisBatch
@@ -1040,7 +1056,51 @@ router.post(
           });
         }
 
-        console.log('✅✅✅ Transaction completed successfully');
+        // ============================================================================
+        // FINAL INTEGRITY CHECK: Validate batch data before committing
+        // This prevents any discrepancies from being persisted
+        // ============================================================================
+        const integrityCheck = await tx.$queryRaw`
+          SELECT
+            COUNT(*) as invalid_batches
+          FROM warehouse_product_purchases
+          WHERE product_id = ${productId}
+            AND (
+              quantity_remaining < 0
+              OR quantity_sold < 0
+              OR quantity_remaining + quantity_sold != quantity
+            )
+        `;
+
+        if (integrityCheck[0]?.invalid_batches > 0) {
+          throw new BusinessError(
+            'Batch integrity check failed. Transaction rolled back.',
+            'BATCH_INTEGRITY_ERROR'
+          );
+        }
+
+        // Verify batch quantitySold matches the warehouseBatchSale records
+        const batchSalesCheck = await tx.$queryRaw`
+          SELECT
+            wpp.id,
+            wpp.quantity_sold as batch_qty_sold,
+            COALESCE(SUM(wbs.quantity_sold), 0) as tracked_sales
+          FROM warehouse_product_purchases wpp
+          LEFT JOIN warehouse_batch_sales wbs ON wbs.batch_id = wpp.id
+          WHERE wpp.product_id = ${productId}
+          GROUP BY wpp.id, wpp.quantity_sold
+          HAVING wpp.quantity_sold != COALESCE(SUM(wbs.quantity_sold), 0)
+        `;
+
+        if (batchSalesCheck.length > 0) {
+          console.error('⚠️ Batch-sales mismatch detected:', batchSalesCheck);
+          throw new BusinessError(
+            'Batch-sales tracking mismatch. Transaction rolled back.',
+            'BATCH_SALES_MISMATCH'
+          );
+        }
+
+        console.log('✅✅✅ Transaction completed successfully (integrity verified)');
         return { warehouseSale, batchSaleRecords };
       });
 
@@ -1779,6 +1839,27 @@ router.delete('/sales/:id',
       await tx.warehouseSale.delete({
         where: { id }
       });
+
+      // ============================================================================
+      // INTEGRITY CHECK: Verify batch data is valid after reversal
+      // ============================================================================
+      const integrityCheck = await tx.$queryRaw`
+        SELECT COUNT(*) as invalid_batches
+        FROM warehouse_product_purchases
+        WHERE product_id = ${sale.productId}
+          AND (
+            quantity_remaining < 0
+            OR quantity_sold < 0
+            OR quantity_remaining + quantity_sold != quantity
+          )
+      `;
+
+      if (integrityCheck[0]?.invalid_batches > 0) {
+        throw new BusinessError(
+          'Batch integrity check failed after deletion. Transaction rolled back.',
+          'BATCH_INTEGRITY_ERROR'
+        );
+      }
     });
 
     // ============================================================================

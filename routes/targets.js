@@ -28,7 +28,12 @@ const createTargetValidation = [
     .withMessage('Weekly targets must be an array of exactly 4 values'),
   body('weeklyTargets.*')
     .isInt({ min: 0 })
-    .withMessage('Each weekly target must be a non-negative integer')
+    .withMessage('Each weekly target must be a non-negative integer'),
+  body('categoryTargets').optional().isObject().withMessage('Category targets must be an object'),
+  body('categoryTargets.CSD').optional().isInt({ min: 0 }),
+  body('categoryTargets.ED').optional().isInt({ min: 0 }),
+  body('categoryTargets.WATER').optional().isInt({ min: 0 }),
+  body('categoryTargets.JUICE').optional().isInt({ min: 0 }),
 ];
 
 const updateWeeklyPerformanceValidation = [
@@ -130,7 +135,7 @@ router.post('/',
       throw new ValidationError('Invalid input data', errors.array());
     }
 
-    const { year, month, totalPacksTarget, weeklyTargets } = req.body;
+    const { year, month, totalPacksTarget, weeklyTargets, categoryTargets } = req.body;
 
     // Validate that weekly targets sum up to total target
     const weeklySum = weeklyTargets.reduce((sum, target) => sum + target, 0);
@@ -138,18 +143,30 @@ router.post('/',
       throw new ValidationError('Weekly targets must sum up to total monthly target');
     }
 
+    // Build category targets object (only include provided categories)
+    const resolvedCategoryTargets = categoryTargets
+      ? {
+          CSD: categoryTargets.CSD !== undefined ? parseInt(categoryTargets.CSD) : 0,
+          ED: categoryTargets.ED !== undefined ? parseInt(categoryTargets.ED) : 0,
+          WATER: categoryTargets.WATER !== undefined ? parseInt(categoryTargets.WATER) : 0,
+          JUICE: categoryTargets.JUICE !== undefined ? parseInt(categoryTargets.JUICE) : 0,
+        }
+      : null;
+
     // Create or update target
     const target = await prisma.distributionTarget.upsert({
       where: { year_month: { year, month } },
       update: {
         totalPacksTarget,
-        weeklyTargets
+        weeklyTargets,
+        ...(resolvedCategoryTargets !== null && { categoryTargets: resolvedCategoryTargets }),
       },
       create: {
         year,
         month,
         totalPacksTarget,
-        weeklyTargets
+        weeklyTargets,
+        ...(resolvedCategoryTargets !== null && { categoryTargets: resolvedCategoryTargets }),
       }
     });
 

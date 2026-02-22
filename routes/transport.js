@@ -26,25 +26,18 @@ router.use(authorizeModule('transport'));
 
 const createTransportOrderValidation = [
   body('orderNumber').notEmpty().withMessage('Order number is required'),
-  body('clientName').notEmpty().withMessage('Client name is required'), // Will be mapped to name
-  body('clientPhone').optional().trim(), // Will be mapped to phone
-  body('pickupLocation').notEmpty().withMessage('Pickup location is required'),
-  body('deliveryAddress').notEmpty().withMessage('Delivery address is required'),
+  body('clientName').notEmpty().withMessage('Client name is required'),
+  body('clientPhone').optional().trim(),
+  body('pickupLocation').optional().trim(),
   body('locationId').notEmpty().custom(validateCuid('location ID')),
   body('totalOrderAmount').isFloat({ min: 0 }).withMessage('Order amount must be positive'),
-  body('fuelRequired').isFloat({ min: 0 }).withMessage('Fuel required must be positive'),
-  body('fuelPricePerLiter').isFloat({ min: 0 }).withMessage('Fuel price must be positive'),
-  body('driverWages').isFloat({ min: 0 }).withMessage('Driver wages must be positive'),
-  body('tripAllowance').isFloat({ min: 0 }).withMessage('Trip allowance must be positive'),
-  body('motorBoyWages').isFloat({ min: 0 }).withMessage('Motor boy wages must be positive'),
-  // ✅ FIX: Updated truck ID validation
+  body('fuelCostPerLitre').isFloat({ min: 0 }).withMessage('Fuel cost per litre must be positive'),
+  body('tripAllowance').optional().isFloat({ min: 0 }).withMessage('Trip allowance must be positive'),
   body('truckId')
     .optional()
     .custom((value) => {
       if (!value || value === '') return true;
-      if (typeof value === 'string' && value.length >= 3 && value.length <= 50) {
-        return true;
-      }
+      if (typeof value === 'string' && value.length >= 3 && value.length <= 50) return true;
       throw new Error('Invalid truck ID format');
     }),
   body('driverDetails').optional().trim(),
@@ -53,14 +46,12 @@ const createTransportOrderValidation = [
 
 const updateTransportOrderValidation = [
   body('clientName').optional().notEmpty(),
-  body('pickupLocation').optional().notEmpty(),
-  body('deliveryAddress').optional().notEmpty(),
+  body('pickupLocation').optional().trim(),
   body('totalOrderAmount').optional().isFloat({ min: 0 }),
-  body('fuelRequired').optional().isFloat({ min: 0 }),
-  body('fuelPricePerLiter').optional().isFloat({ min: 0 }),
+  body('fuelCostPerLitre').optional().isFloat({ min: 0 }),
   body('truckId').optional().custom(validateCuid('truck ID')),
   body('driverDetails').optional().trim(),
-  body('truckExpensesDescription').optional().trim()  // ADD THIS
+  body('truckExpensesDescription').optional().trim()
 ];
 
 const createExpenseValidation = [
@@ -93,24 +84,21 @@ const createExpenseValidation = [
 // ================================
 
 async function calculateOrderCosts(
-  locationId, 
-  fuelRequired, 
-  fuelPricePerLiter, 
+  locationId,
+  fuelRequired,
+  fuelPricePerLiter,
   totalOrderAmount,
-  driverWages,      // ✅ ADD THIS
-  tripAllowance,    // ✅ ADD THIS
-  motorBoyWages     // ✅ ADD THIS
+  driverWages,
+  tripAllowance
 ) {
   // Get haulage rate for location
   const haulageRate = await prisma.haulageRate.findFirst({
-    where: { 
+    where: {
       locationId,
       isActive: true
     },
     orderBy: { effectiveDate: 'desc' }
   });
-
-  
 
   const baseHaulageRate = haulageRate ? parseFloat(haulageRate.rate) : 50000;
 
@@ -120,10 +108,10 @@ async function calculateOrderCosts(
   const serviceChargeExpense = (serviceChargePercent / 100) * baseHaulageRate;
   const truckExpenses = 0; // Initial, can be updated later
 
-  const totalTripExpenses = totalFuelCost + driverWages + tripAllowance + motorBoyWages + serviceChargeExpense + truckExpenses;
-  
+  const totalTripExpenses = totalFuelCost + driverWages + tripAllowance + serviceChargeExpense + truckExpenses;
+
   const revenue = totalOrderAmount;
-  const grossProfit = revenue - totalFuelCost - driverWages - tripAllowance - motorBoyWages;
+  const grossProfit = revenue - totalFuelCost - driverWages - tripAllowance;
   const netProfit = revenue - totalTripExpenses;
   const profitMargin = revenue > 0 ? parseFloat(((netProfit / revenue) * 100).toFixed(2)) : 0;
 
@@ -134,7 +122,6 @@ async function calculateOrderCosts(
     totalFuelCost,
     driverWages,
     tripAllowance,
-    motorBoyWages,
     serviceChargePercent,
     serviceChargeExpense,
     truckExpenses,
@@ -167,34 +154,42 @@ router.post('/orders',
       clientName,
       clientPhone,
       pickupLocation,
-      deliveryAddress,
       locationId,
       totalOrderAmount,
-      fuelRequired,
-      fuelPricePerLiter,
-      driverWages,
+      fuelCostPerLitre,
       tripAllowance,
-      motorBoyWages,
       truckId,
       driverDetails,
       invoiceNumber,
-      paymentMethod // Payment method for the revenue
+      paymentMethod
     } = req.body;
 
     const userId = req.user.id;
+
+    // Fetch location to get pre-configured costs (fuelRequired and driverWages)
+    const location = await prisma.location.findUnique({
+      where: { id: locationId },
+      select: { fuelRequired: true, driverWages: true, name: true }
+    });
+    if (!location) throw new NotFoundError('Location not found');
+
+    const fuelRequired = parseFloat(location.fuelRequired);
+    const fuelPricePerLiter = parseFloat(fuelCostPerLitre);
+    const driverWages = parseFloat(location.driverWages);
+    const resolvedTripAllowance = tripAllowance ? parseFloat(tripAllowance) : 0;
 
     // Generate order number
     const orderCount = await prisma.transportOrder.count();
     const orderNumber = `TO-${new Date().getFullYear()}-${String(orderCount + 1).padStart(4, '0')}`;
 
-    // Calculate costs
-    const totalFuelCost = parseFloat(fuelRequired) * parseFloat(fuelPricePerLiter);
+    // Calculate costs from location rates
+    const totalFuelCost = fuelRequired * fuelPricePerLiter;
     const serviceChargePercent = 10.0;
     const serviceChargeExpense = (parseFloat(totalOrderAmount) * serviceChargePercent) / 100;
-    
-    // Total wages (driver + trip allowance + motor boy)
-    const totalWages = parseFloat(driverWages) + parseFloat(tripAllowance) + parseFloat(motorBoyWages);
-    
+
+    // Total wages (driver + optional trip allowance)
+    const totalWages = driverWages + resolvedTripAllowance;
+
     const totalTripExpenses = totalFuelCost + totalWages + serviceChargeExpense;
     const grossProfit = parseFloat(totalOrderAmount) - totalTripExpenses;
     const netProfit = grossProfit;
@@ -208,16 +203,15 @@ router.post('/orders',
           orderNumber,
           name: clientName,
           phone: clientPhone,
-          pickupLocation,
-          deliveryAddress,
+          pickupLocation: pickupLocation || null,
+          deliveryAddress: null,
           locationId,
           totalOrderAmount: parseFloat(totalOrderAmount),
-          fuelRequired: parseFloat(fuelRequired),
-          fuelPricePerLiter: parseFloat(fuelPricePerLiter),
+          fuelRequired,
+          fuelPricePerLiter,
           totalFuelCost,
-          driverWages: parseFloat(driverWages),
-          tripAllowance: parseFloat(tripAllowance),
-          motorBoyWages: parseFloat(motorBoyWages),
+          driverWages,
+          tripAllowance: resolvedTripAllowance,
           serviceChargeExpense,
           totalTripExpenses,
           grossProfit,
@@ -251,7 +245,7 @@ router.post('/orders',
           transactionType: 'CASH_IN',
           amount: parseFloat(totalOrderAmount),
           paymentMethod: paymentMethod || 'BANK_TRANSFER',
-          description: `Transport Revenue: ${clientName} - ${pickupLocation} to ${deliveryAddress}`,
+          description: `Transport Revenue: ${clientName} - ${pickupLocation || location.name}`,
           referenceNumber: orderNumber,
           cashier: userId,
           module: 'TRANSPORT'
@@ -264,7 +258,7 @@ router.post('/orders',
           transactionType: 'CASH_OUT',
           amount: totalFuelCost,
           paymentMethod: 'CASH', // Fuel typically paid in cash
-          description: `Fuel Cost: ${orderNumber} - ${fuelRequired}L @ ₦${fuelPricePerLiter}/L`,
+          description: `Fuel Cost: ${orderNumber} - ${fuelRequired}L @ ₦${fuelPricePerLiter.toFixed(2)}/L`,
           referenceNumber: `${orderNumber}-FUEL`,
           cashier: userId,
           module: 'TRANSPORT'
@@ -277,7 +271,7 @@ router.post('/orders',
           transactionType: 'CASH_OUT',
           amount: totalWages,
           paymentMethod: 'CASH', // Wages typically paid in cash
-          description: `Wages & Allowances: ${orderNumber} - Driver: ₦${driverWages}, Trip: ₦${tripAllowance}, Motor Boy: ₦${motorBoyWages}`,
+          description: `Wages & Allowances: ${orderNumber} - Driver: ₦${driverWages}, Trip: ₦${resolvedTripAllowance}`,
           referenceNumber: `${orderNumber}-WAGES`,
           cashier: userId,
           module: 'TRANSPORT'
@@ -613,7 +607,6 @@ router.put('/orders/:id',
         totalFuelCost: calculatedCosts.totalFuelCost,
         driverWages: calculatedCosts.driverWages,
         tripAllowance: calculatedCosts.tripAllowance,
-        motorBoyWages: calculatedCosts.motorBoyWages,
         serviceChargeExpense: calculatedCosts.serviceChargeExpense,
         totalTripExpenses: calculatedCosts.totalTripExpenses,
         grossProfit: calculatedCosts.grossProfit,
@@ -729,12 +722,12 @@ router.put('/orders/:id/status',
 );
 
 // ================================
-// LOCATIONS (NEW)
+// LOCATIONS
 // ================================
 
 // @route   GET /api/v1/transport/locations
-// @desc    Get delivery locations
-// @access  Private (Transport module access)
+// @desc    Get all transport locations
+// @access  Private
 router.get('/locations',
   asyncHandler(async (req, res) => {
     const locations = await prisma.location.findMany({
@@ -744,14 +737,98 @@ router.get('/locations',
         id: true,
         name: true,
         address: true,
-        isActive: true
+        fuelRequired: true,
+        fuelCostPerLitre: true,
+        driverWages: true,
+        deliveryNotes: true,
+        isActive: true,
+        createdAt: true,
+      }
+    });
+    res.json({ success: true, data: { locations } });
+  })
+);
+
+// @route   POST /api/v1/transport/locations
+// @desc    Create a transport location
+// @access  Private (admin)
+router.post('/locations',
+  authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
+  [
+    body('name').notEmpty().withMessage('Location name is required'),
+    body('fuelRequired').isFloat({ min: 0 }).withMessage('Fuel required must be a positive number'),
+    body('driverWages').isFloat({ min: 0 }).withMessage('Driver wages must be a positive number'),
+    body('address').optional().trim(),
+    body('deliveryNotes').optional().trim(),
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) throw new ValidationError('Invalid input data', errors.array());
+
+    const { name, fuelRequired, driverWages, address, deliveryNotes } = req.body;
+
+    const location = await prisma.location.create({
+      data: {
+        name,
+        fuelRequired: parseFloat(fuelRequired),
+        driverWages: parseFloat(driverWages),
+        address: address || null,
+        deliveryNotes: deliveryNotes || null,
       }
     });
 
-    res.json({
-      success: true,
-      data: { locations }
-    });
+    res.status(201).json({ success: true, message: 'Location created successfully', data: { location } });
+  })
+);
+
+// @route   PUT /api/v1/transport/locations/:id
+// @desc    Update a transport location
+// @access  Private (admin)
+router.put('/locations/:id',
+  authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
+  [
+    body('name').optional().notEmpty().withMessage('Name cannot be empty'),
+    body('fuelRequired').optional().isFloat({ min: 0 }),
+    body('driverWages').optional().isFloat({ min: 0 }),
+    body('address').optional().trim(),
+    body('deliveryNotes').optional().trim(),
+    body('isActive').optional().isBoolean(),
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) throw new ValidationError('Invalid input data', errors.array());
+
+    const { id } = req.params;
+    const { name, fuelRequired, driverWages, address, deliveryNotes, isActive } = req.body;
+
+    const existing = await prisma.location.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundError('Location not found');
+
+    const updateData = {};
+    if (name !== undefined) updateData.name = name;
+    if (fuelRequired !== undefined) updateData.fuelRequired = parseFloat(fuelRequired);
+    if (driverWages !== undefined) updateData.driverWages = parseFloat(driverWages);
+    if (address !== undefined) updateData.address = address;
+    if (deliveryNotes !== undefined) updateData.deliveryNotes = deliveryNotes;
+    if (isActive !== undefined) updateData.isActive = isActive;
+
+    const location = await prisma.location.update({ where: { id }, data: updateData });
+    res.json({ success: true, message: 'Location updated successfully', data: { location } });
+  })
+);
+
+// @route   DELETE /api/v1/transport/locations/:id
+// @desc    Deactivate (soft-delete) a transport location
+// @access  Private (admin)
+router.delete('/locations/:id',
+  authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const existing = await prisma.location.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundError('Location not found');
+
+    await prisma.location.update({ where: { id }, data: { isActive: false } });
+    res.json({ success: true, message: 'Location deactivated successfully' });
   })
 );
 
@@ -1461,10 +1538,9 @@ router.get('/orders/export/csv',
       { label: 'Fuel (Liters)', value: 'fuelInLiters' },
       { label: 'Fuel Cost (NGN)', value: 'fuelCost' },
       { label: 'Trip Allowance (NGN)', value: 'tripAllowance' },
-      { label: 'Motorboy Wages (NGN)', value: 'motorBoyWages' },
       { label: 'Service Charge (NGN)', value: 'serviceCharge' },
-      { label: 'Truck Expenses (NGN)', value: 'truckExpenses' },  // ADD THIS
-      { label: 'Truck Expenses Description', value: 'truckExpensesDescription' },  // ADD THIS
+      { label: 'Truck Expenses (NGN)', value: 'truckExpenses' },
+      { label: 'Truck Expenses Description', value: 'truckExpensesDescription' },
       { label: 'Total Expenses (NGN)', value: 'totalExpenses' },
       { label: 'Net Profit (NGN)', value: 'netProfit' },
       { label: 'Profit Margin (%)', value: 'profitMargin' },
@@ -1485,10 +1561,9 @@ router.get('/orders/export/csv',
       fuelInLiters: parseFloat(order.fuelRequired || 0).toFixed(2),
       fuelCost: parseFloat(order.totalFuelCost || 0).toFixed(2),
       tripAllowance: parseFloat(order.tripAllowance || 0).toFixed(2),
-      motorBoyWages: parseFloat(order.motorBoyWages || 0).toFixed(2),
       serviceCharge: parseFloat(order.serviceChargeExpense || 0).toFixed(2),
-      truckExpenses: parseFloat(order.truckExpenses || 0).toFixed(2),  // ADD THIS
-      truckExpensesDescription: order.truckExpensesDescription || 'N/A',  // ADD THIS
+      truckExpenses: parseFloat(order.truckExpenses || 0).toFixed(2),
+      truckExpensesDescription: order.truckExpensesDescription || 'N/A',
       totalExpenses: parseFloat(order.totalTripExpenses || 0).toFixed(2),
       netProfit: parseFloat(order.netProfit || 0).toFixed(2),
       profitMargin: parseFloat(order.profitMargin || 0).toFixed(2),
@@ -1889,8 +1964,8 @@ router.get('/orders/:id/export/pdf',
 
     const expenses = [
       ['Fuel Cost:', order.totalFuelCost, `(${parseFloat(order.fuelRequired || 0).toFixed(1)} liters @ NGN ${parseFloat(order.fuelPricePerLiter || 0).toFixed(2)}/L)`],
+      ['Driver Wages:', order.driverWages],
       ['Trip Allowance:', order.tripAllowance],
-      ['Motorboy Wages:', order.motorBoyWages],
       ['Service Charge (10%):', order.serviceChargeExpense],
       ['Truck Expenses:', order.truckExpenses, order.truckExpensesDescription || ''],  // ADD THIS LINE
       ['Total Expenses:', order.totalTripExpenses, '', true]
@@ -2263,7 +2338,6 @@ router.get('/sales/export/csv',
       { label: 'Fuel Cost (NGN)', value: 'fuelCost' },
       { label: 'Driver Wages (NGN)', value: 'driverWages' },
       { label: 'Trip Allowance (NGN)', value: 'tripAllowance' },
-      { label: 'Motor Boy Wages (NGN)', value: 'motorBoyWages' },
       { label: 'Service Charge (NGN)', value: 'serviceCharge' },
       { label: 'Truck Expenses (NGN)', value: 'truckExpenses' },
       { label: 'Total Expenses (NGN)', value: 'totalExpenses' },
@@ -2287,7 +2361,6 @@ router.get('/sales/export/csv',
       fuelCost: parseFloat(order.fuelCost || 0).toFixed(2),
       driverWages: parseFloat(order.driverWages || 0).toFixed(2),
       tripAllowance: parseFloat(order.tripAllowance || 0).toFixed(2),
-      motorBoyWages: parseFloat(order.motorBoyWages || 0).toFixed(2),
       serviceCharge: parseFloat(order.serviceChargeExpense || 0).toFixed(2),
       truckExpenses: parseFloat(order.truckExpenses || 0).toFixed(2),
       totalExpenses: parseFloat(order.totalTripExpenses || 0).toFixed(2),

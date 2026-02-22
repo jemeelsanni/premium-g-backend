@@ -175,7 +175,12 @@ router.put('/payments/supplier/status',
     body('orderId').custom(validateCuid('order ID')),
     body('supplierStatus').isIn(['PAYMENT_SENT', 'ORDER_RAISED', 'PROCESSING', 'LOADED', 'DISPATCHED']),
     body('orderRaisedAt').optional().isISO8601(),
-    body('loadedDate').optional().isISO8601()
+    body('loadedDate').optional().isISO8601(),
+    body('supplierReferenceNumber')
+      .if(body('supplierStatus').equals('ORDER_RAISED'))
+      .notEmpty()
+      .withMessage('Supplier reference number is required when setting status to ORDER_RAISED')
+      .trim()
   ],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -187,7 +192,8 @@ router.put('/payments/supplier/status',
       orderId,
       supplierStatus,
       orderRaisedAt,
-      loadedDate
+      loadedDate,
+      supplierReferenceNumber
     } = req.body;
 
     const order = await distributionPaymentService.updateSupplierStatus({
@@ -195,6 +201,7 @@ router.put('/payments/supplier/status',
       supplierStatus,
       orderRaisedAt: orderRaisedAt ? new Date(orderRaisedAt) : null,
       loadedDate: loadedDate ? new Date(loadedDate) : null,
+      supplierReferenceNumber,
       userId: req.user.id
     });
 

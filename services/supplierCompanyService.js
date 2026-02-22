@@ -1,6 +1,14 @@
 const { PrismaClient } = require('@prisma/client');
-const { NotFoundError, ValidationError, BusinessError } = require('../middleware/errorHandler');
+const { NotFoundError, ValidationError } = require('../middleware/errorHandler');
 const prisma = new PrismaClient();
+
+// Maps enum to human-readable category name
+const CATEGORY_NAMES = {
+  CSD: 'Carbonated Soda Drink',
+  ED: 'Energy Drink',
+  WATER: 'Water',
+  JUICE: 'Juice'
+};
 
 class SupplierCompanyService {
   /**
@@ -19,6 +27,15 @@ class SupplierCompanyService {
       where,
       orderBy: {
         name: 'asc'
+      },
+      include: {
+        productCategories: {
+          include: {
+            skus: {
+              orderBy: [{ skuValue: 'asc' }]
+            }
+          }
+        }
       }
     });
 
@@ -26,7 +43,7 @@ class SupplierCompanyService {
   }
 
   /**
-   * Get supplier company by ID
+   * Get supplier company by ID (includes categories + SKUs)
    */
   async getSupplierCompanyById(id) {
     const company = await prisma.supplierCompany.findUnique({
@@ -36,6 +53,14 @@ class SupplierCompanyService {
           select: {
             distributionOrders: true
           }
+        },
+        productCategories: {
+          include: {
+            skus: {
+              orderBy: [{ skuValue: 'asc' }]
+            }
+          },
+          orderBy: { categoryType: 'asc' }
         }
       }
     });
@@ -45,6 +70,34 @@ class SupplierCompanyService {
     }
 
     return company;
+  }
+
+  /**
+   * Get supplier categories with SKUs
+   */
+  async getSupplierCategories(supplierId) {
+    const company = await prisma.supplierCompany.findUnique({
+      where: { id: supplierId }
+    });
+
+    if (!company) {
+      throw new NotFoundError('Supplier company not found');
+    }
+
+    const categories = await prisma.supplierCategory.findMany({
+      where: { supplierCompanyId: supplierId },
+      include: {
+        skus: {
+          orderBy: [{ skuValue: 'asc' }]
+        }
+      },
+      orderBy: { categoryType: 'asc' }
+    });
+
+    return categories.map(cat => ({
+      ...cat,
+      categoryName: CATEGORY_NAMES[cat.categoryType] || cat.categoryType
+    }));
   }
 
   /**
@@ -59,10 +112,10 @@ class SupplierCompanyService {
   }
 
   /**
-   * Create new supplier company
+   * Create new supplier company (with optional product categories + SKUs)
    */
   async createSupplierCompany(data) {
-    const { name, code, email, phone, address, contactPerson, notes } = data;
+    const { name, code, email, phone, address, contactPerson, notes, productCategories = [] } = data;
 
     // Check if name already exists
     const existingByName = await prisma.supplierCompany.findUnique({
@@ -82,26 +135,66 @@ class SupplierCompanyService {
       throw new ValidationError('A supplier company with this code already exists');
     }
 
-    const company = await prisma.supplierCompany.create({
-      data: {
-        name,
-        code: code.toUpperCase(),
-        email,
-        phone,
-        address,
-        contactPerson,
-        notes
+    // Validate category types
+    const validCategoryTypes = ['CSD', 'ED', 'WATER', 'JUICE'];
+    for (const cat of productCategories) {
+      if (!validCategoryTypes.includes(cat.categoryType)) {
+        throw new ValidationError(`Invalid category type: ${cat.categoryType}. Must be one of: ${validCategoryTypes.join(', ')}`);
       }
+    }
+
+    // Create company with categories and SKUs in a transaction
+    const company = await prisma.$transaction(async (tx) => {
+      const created = await tx.supplierCompany.create({
+        data: {
+          name,
+          code: code.toUpperCase(),
+          email,
+          phone,
+          address,
+          contactPerson,
+          notes
+        }
+      });
+
+      // Create categories with their SKUs
+      for (const cat of productCategories) {
+        await tx.supplierCategory.create({
+          data: {
+            supplierCompanyId: created.id,
+            categoryType: cat.categoryType,
+            skus: {
+              create: (cat.skus || []).map(sku => ({
+                skuValue: parseFloat(sku.skuValue),
+                skuUnit: sku.skuUnit
+              }))
+            }
+          },
+          include: { skus: true }
+        });
+      }
+
+      return tx.supplierCompany.findUnique({
+        where: { id: created.id },
+        include: {
+          productCategories: {
+            include: {
+              skus: { orderBy: [{ skuValue: 'asc' }] }
+            },
+            orderBy: { categoryType: 'asc' }
+          }
+        }
+      });
     });
 
     return company;
   }
 
   /**
-   * Update supplier company
+   * Update supplier company (with optional category sync)
    */
   async updateSupplierCompany(id, data) {
-    const { name, code, email, phone, address, contactPerson, notes, isActive } = data;
+    const { name, code, email, phone, address, contactPerson, notes, isActive, productCategories } = data;
 
     // Check if company exists
     const existing = await prisma.supplierCompany.findUnique({
@@ -149,6 +242,89 @@ class SupplierCompanyService {
     if (contactPerson !== undefined) updateData.contactPerson = contactPerson;
     if (notes !== undefined) updateData.notes = notes;
     if (isActive !== undefined) updateData.isActive = isActive;
+
+    // If productCategories provided, sync them
+    if (productCategories !== undefined) {
+      const validCategoryTypes = ['CSD', 'ED', 'WATER', 'JUICE'];
+      for (const cat of productCategories) {
+        if (!validCategoryTypes.includes(cat.categoryType)) {
+          throw new ValidationError(`Invalid category type: ${cat.categoryType}`);
+        }
+      }
+
+      return prisma.$transaction(async (tx) => {
+        await tx.supplierCompany.update({
+          where: { id },
+          data: updateData
+        });
+
+        // Sync categories: upsert each, then remove deleted ones
+        const incomingTypes = productCategories.map(c => c.categoryType);
+
+        // Delete categories not in the incoming list
+        await tx.supplierCategory.deleteMany({
+          where: {
+            supplierCompanyId: id,
+            categoryType: { notIn: incomingTypes }
+          }
+        });
+
+        for (const cat of productCategories) {
+          // Upsert the category
+          const existingCat = await tx.supplierCategory.findUnique({
+            where: {
+              supplierCompanyId_categoryType: {
+                supplierCompanyId: id,
+                categoryType: cat.categoryType
+              }
+            },
+            include: { skus: true }
+          });
+
+          if (existingCat) {
+            // Sync SKUs: delete all and recreate
+            await tx.supplierCategorySKU.deleteMany({
+              where: { supplierCategoryId: existingCat.id }
+            });
+
+            for (const sku of (cat.skus || [])) {
+              await tx.supplierCategorySKU.create({
+                data: {
+                  supplierCategoryId: existingCat.id,
+                  skuValue: parseFloat(sku.skuValue),
+                  skuUnit: sku.skuUnit
+                }
+              });
+            }
+          } else {
+            await tx.supplierCategory.create({
+              data: {
+                supplierCompanyId: id,
+                categoryType: cat.categoryType,
+                skus: {
+                  create: (cat.skus || []).map(sku => ({
+                    skuValue: parseFloat(sku.skuValue),
+                    skuUnit: sku.skuUnit
+                  }))
+                }
+              }
+            });
+          }
+        }
+
+        return tx.supplierCompany.findUnique({
+          where: { id },
+          include: {
+            productCategories: {
+              include: {
+                skus: { orderBy: [{ skuValue: 'asc' }] }
+              },
+              orderBy: { categoryType: 'asc' }
+            }
+          }
+        });
+      });
+    }
 
     const company = await prisma.supplierCompany.update({
       where: { id },
