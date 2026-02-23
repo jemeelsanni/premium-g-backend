@@ -332,15 +332,31 @@ router.get('/expiring',
 
       return {
         id: purchase.id,
+        productId: purchase.productId,
+        // Include product as nested object for frontend compatibility
+        product: {
+          id: purchase.productId,
+          name: purchase.product.name,
+          productNo: purchase.product.productNo,
+          pricePerPack: purchase.product.pricePerPack,
+          costPerPack: purchase.product.costPerPack
+        },
+        // Also keep flat properties for backwards compatibility
         productName: purchase.product.name,
         productNo: purchase.product.productNo,
         batchNumber: purchase.batchNumber,
         orderNumber: purchase.orderNumber,
         expiryDate: purchase.expiryDate,
+        quantity: purchase.quantity,
         originalQuantity: purchase.quantity,
         quantityRemaining: purchase.quantityRemaining,
         quantitySold: purchase.quantitySold,
         unitType: purchase.unitType,
+        costPerUnit: purchase.costPerUnit,
+        totalCost: purchase.totalCost,
+        purchaseDate: purchase.purchaseDate,
+        vendorName: purchase.vendorName,
+        batchStatus: purchase.batchStatus,
         valueAtRisk,
         potentialRevenue,
         daysUntilExpiry,
