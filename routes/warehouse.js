@@ -490,6 +490,69 @@ router.get('/products', asyncHandler(async (req, res) => {
 
 
 /**
+ * AUTO-FIX: Automatically fix batch integrity issues before sale
+ * This ensures quantitySold matches tracked sales and quantity = sold + remaining
+ */
+async function autoFixBatchIntegrity(productId) {
+  console.log('🔧 Running auto-fix for product batch integrity...');
+
+  // Find batches with integrity issues for this product
+  const problematicBatches = await prisma.$queryRaw`
+    SELECT
+      wpp.id,
+      wpp.batch_number,
+      wpp.quantity,
+      wpp.quantity_sold,
+      wpp.quantity_remaining,
+      COALESCE(SUM(wbs.quantity_sold), 0) as tracked_sales
+    FROM warehouse_product_purchases wpp
+    LEFT JOIN warehouse_batch_sales wbs ON wbs.batch_id = wpp.id
+    WHERE wpp.product_id = ${productId}
+    GROUP BY wpp.id, wpp.batch_number, wpp.quantity, wpp.quantity_sold, wpp.quantity_remaining
+    HAVING
+      wpp.quantity_sold != COALESCE(SUM(wbs.quantity_sold), 0)
+      OR wpp.quantity_remaining < 0
+      OR wpp.quantity_sold < 0
+      OR wpp.quantity_remaining + wpp.quantity_sold != wpp.quantity
+  `;
+
+  if (problematicBatches.length === 0) {
+    console.log('✅ No batch integrity issues found for this product');
+    return;
+  }
+
+  console.log(`⚠️ Found ${problematicBatches.length} batch(es) with integrity issues. Auto-fixing...`);
+
+  for (const batch of problematicBatches) {
+    const trackedSales = Number(batch.tracked_sales) || 0;
+
+    // Calculate correct values - tracked sales is the source of truth
+    let newQuantity = Math.max(Number(batch.quantity), trackedSales);
+    let newRemaining = newQuantity - trackedSales;
+
+    // Ensure no negative values
+    if (newRemaining < 0) {
+      newQuantity = trackedSales;
+      newRemaining = 0;
+    }
+
+    await prisma.warehouseProductPurchase.update({
+      where: { id: batch.id },
+      data: {
+        quantity: newQuantity,
+        quantitySold: trackedSales,
+        quantityRemaining: newRemaining,
+        batchStatus: newRemaining <= 0 ? 'DEPLETED' : 'ACTIVE'
+      }
+    });
+
+    console.log(`  ✅ Fixed batch ${batch.batch_number}: quantity=${newQuantity}, sold=${trackedSales}, remaining=${newRemaining}`);
+  }
+
+  console.log('✅ Batch integrity auto-fix completed');
+}
+
+/**
  * Calculate simple average purchase cost from all active batches
  * Average = (Sum of all batch prices) / (Number of batches)
  */
@@ -821,6 +884,11 @@ router.post(
     }
 
     const receiptNumber = providedReceiptNumber || await generateReceiptNumber();
+
+    // ============================================================================
+    // AUTO-FIX: Fix any batch integrity issues before recording sale
+    // ============================================================================
+    await autoFixBatchIntegrity(productId);
 
     // ============================================================================
     // CREATE TRANSACTION

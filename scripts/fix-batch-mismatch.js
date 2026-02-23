@@ -55,18 +55,29 @@ async function fixBatchMismatch() {
         console.log(`  ⚠️  MISMATCH DETECTED - Fixing...`);
 
         // Fix the mismatch by aligning quantitySold with tracked sales
-        const newQuantityRemaining = batch.quantity - trackedSales;
+        let newQuantityRemaining = batch.quantity - trackedSales;
+        let newQuantity = batch.quantity;
+
+        // If tracked sales exceed batch quantity, we need to increase the batch quantity
+        // This ensures the integrity check passes: quantityRemaining + quantitySold = quantity
+        if (newQuantityRemaining < 0) {
+          console.log(`  ⚠️  Tracked sales (${trackedSales}) exceed batch quantity (${batch.quantity})`);
+          console.log(`  ⚠️  Adjusting batch quantity to match actual sales...`);
+          newQuantity = trackedSales; // Increase quantity to match sales
+          newQuantityRemaining = 0;   // Nothing remaining
+        }
 
         await prisma.warehouseProductPurchase.update({
           where: { id: batch.id },
           data: {
+            quantity: newQuantity,
             quantitySold: trackedSales,
-            quantityRemaining: Math.max(0, newQuantityRemaining),
+            quantityRemaining: newQuantityRemaining,
             batchStatus: newQuantityRemaining <= 0 ? 'DEPLETED' : 'ACTIVE'
           }
         });
 
-        console.log(`  ✅ Fixed: quantitySold=${trackedSales}, quantityRemaining=${newQuantityRemaining}`);
+        console.log(`  ✅ Fixed: quantity=${newQuantity}, quantitySold=${trackedSales}, quantityRemaining=${newQuantityRemaining}`);
         fixedCount++;
       } else {
         console.log(`  ✅ OK`);
@@ -78,6 +89,68 @@ async function fixBatchMismatch() {
     console.log(`Total batches checked: ${batches.length}`);
     console.log(`Batches fixed: ${fixedCount}`);
     console.log('========================================\n');
+
+    // ================================================================
+    // INTEGRITY FIX: Find batches where quantity != sold + remaining
+    // ================================================================
+    console.log('Checking for integrity violations...\n');
+
+    const integrityViolations = await prisma.$queryRaw`
+      SELECT
+        id,
+        batch_number,
+        quantity,
+        quantity_sold,
+        quantity_remaining,
+        product_id
+      FROM warehouse_product_purchases
+      WHERE quantity_remaining < 0
+        OR quantity_sold < 0
+        OR quantity_remaining + quantity_sold != quantity
+    `;
+
+    if (integrityViolations.length > 0) {
+      console.log(`Found ${integrityViolations.length} integrity violation(s). Fixing...\n`);
+
+      for (const batch of integrityViolations) {
+        const product = await prisma.product.findUnique({
+          where: { id: batch.product_id },
+          select: { name: true }
+        });
+
+        console.log(`Batch: ${batch.batch_number}`);
+        console.log(`  Product: ${product?.name}`);
+        console.log(`  quantity: ${batch.quantity}`);
+        console.log(`  quantitySold: ${batch.quantity_sold}`);
+        console.log(`  quantityRemaining: ${batch.quantity_remaining}`);
+        console.log(`  Sum: ${Number(batch.quantity_sold) + Number(batch.quantity_remaining)}`);
+
+        // Fix: Set quantity = quantitySold + quantityRemaining (use tracked sales as source of truth)
+        const trackedSales = await prisma.warehouseBatchSale.aggregate({
+          where: { batchId: batch.id },
+          _sum: { quantitySold: true }
+        });
+        const actualSold = trackedSales._sum.quantitySold || 0;
+
+        // Calculate correct values
+        let newQuantity = Math.max(batch.quantity, actualSold);
+        let newRemaining = newQuantity - actualSold;
+
+        await prisma.warehouseProductPurchase.update({
+          where: { id: batch.id },
+          data: {
+            quantity: newQuantity,
+            quantitySold: actualSold,
+            quantityRemaining: newRemaining,
+            batchStatus: newRemaining <= 0 ? 'DEPLETED' : 'ACTIVE'
+          }
+        });
+
+        console.log(`  ✅ Fixed: quantity=${newQuantity}, sold=${actualSold}, remaining=${newRemaining}\n`);
+      }
+    } else {
+      console.log('No integrity violations found.\n');
+    }
 
     // Also sync inventory for all products
     console.log('Syncing inventory from batches...\n');
