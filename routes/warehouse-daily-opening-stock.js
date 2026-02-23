@@ -86,38 +86,76 @@ const rejectionValidation = [
 
 /**
  * Get system opening stock for a product on a given date
- * Opening stock = Total purchases before date - Total sales before date
+ *
+ * Opening stock for a date = Current Inventory
+ *   - Purchases made on/after that date
+ *   + Sales made on/after that date
+ *
+ * This works backwards from current inventory state
  */
 async function getSystemOpeningStock(productId, stockDate) {
   const dateStart = new Date(stockDate);
   dateStart.setHours(0, 0, 0, 0);
 
-  // Get total purchased before this date
-  const purchasesBefore = await prisma.warehouseProductPurchase.aggregate({
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
+  // Get current inventory
+  const currentInventory = await prisma.warehouseInventory.findFirst({
+    where: { productId }
+  });
+
+  const currentPacks = currentInventory?.packs || 0;
+
+  // If checking today's opening stock, use sum of quantityRemaining from active batches
+  // This is more accurate as it reflects actual stock
+  if (dateStart.getTime() === now.getTime()) {
+    const activeBatches = await prisma.warehouseProductPurchase.aggregate({
+      where: {
+        productId,
+        batchStatus: 'ACTIVE'
+      },
+      _sum: { quantityRemaining: true }
+    });
+
+    return {
+      pallets: 0,
+      packs: activeBatches._sum.quantityRemaining || currentPacks,
+      units: 0
+    };
+  }
+
+  // For past dates, calculate opening stock by working backwards
+  // Opening Stock = Current Stock - Purchases since that date + Sales since that date
+
+  // Get purchases made on or after the date
+  const purchasesAfter = await prisma.warehouseProductPurchase.aggregate({
     where: {
       productId,
-      purchaseDate: { lt: dateStart },
+      purchaseDate: { gte: dateStart },
       batchStatus: { in: ['ACTIVE', 'DEPLETED'] }
     },
     _sum: { quantity: true }
   });
 
-  // Get total sold before this date
-  const salesBefore = await prisma.warehouseSale.aggregate({
+  // Get sales made on or after the date
+  const salesAfter = await prisma.warehouseSale.aggregate({
     where: {
       productId,
-      createdAt: { lt: dateStart }
+      createdAt: { gte: dateStart }
     },
     _sum: { quantity: true }
   });
 
-  const totalPurchased = purchasesBefore._sum.quantity || 0;
-  const totalSold = salesBefore._sum.quantity || 0;
+  const totalPurchasedAfter = purchasesAfter._sum.quantity || 0;
+  const totalSoldAfter = salesAfter._sum.quantity || 0;
 
-  // For simplicity, we'll return packs (most common unit)
+  // Opening stock for that date = Current - Purchases after + Sales after
+  const openingStock = currentPacks - totalPurchasedAfter + totalSoldAfter;
+
   return {
     pallets: 0,
-    packs: totalPurchased - totalSold,
+    packs: Math.max(0, openingStock), // Ensure non-negative
     units: 0
   };
 }

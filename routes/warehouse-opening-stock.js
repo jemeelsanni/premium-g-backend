@@ -82,25 +82,6 @@ router.get(
     // Calculate opening stock for each product
     const openingStockData = await Promise.all(
       products.map(async (product) => {
-        // Get all transactions before the target date (for opening stock)
-        // Only include ACTIVE and DEPLETED batches (exclude EXPIRED)
-        const purchasesBeforeDate = await prisma.warehouseProductPurchase.findMany({
-          where: {
-            productId: product.id,
-            purchaseDate: { lt: targetDate },
-            batchStatus: { in: ['ACTIVE', 'DEPLETED'] }
-          },
-          select: { quantity: true, unitType: true }
-        });
-
-        const salesBeforeDate = await prisma.warehouseSale.findMany({
-          where: {
-            productId: product.id,
-            createdAt: { lt: targetDate }
-          },
-          select: { quantity: true, unitType: true }
-        });
-
         // Get transactions ON the target date
         // Only include ACTIVE and DEPLETED batches (exclude EXPIRED)
         const purchasesOnDate = await prisma.warehouseProductPurchase.findMany({
@@ -144,33 +125,79 @@ router.get(
         const currentPacks = product.warehouseInventory[0]?.packs || 0;
         const currentUnits = product.warehouseInventory[0]?.units || 0;
 
-        // Use current inventory as closing stock (if today) or calculate from transactions
-        const isToday = targetDate.toDateString() === new Date().toDateString();
-        let closingStock, totalClosingStock;
+        // Get current inventory total in packs for reference
+        const currentTotalPacks = (currentPallets * (product.packsPerPallet || 1)) + currentPacks + currentUnits;
+
+        // Calculate using consistent unit (packs)
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const isToday = targetDate.getTime() === today.getTime();
+        const isPast = targetDate < today;
+
+        let totalOpeningStock, totalClosingStock;
+        let closingStock;
 
         if (isToday) {
-          // For today, use actual inventory as closing stock
+          // For today: Current inventory is the closing stock (end of day so far)
+          totalClosingStock = currentTotalPacks;
           closingStock = {
             pallets: currentPallets,
             packs: currentPacks,
             units: currentUnits
           };
-          totalClosingStock = (currentPallets * (product.packsPerPallet || 1)) + currentPacks + currentUnits;
+          // Opening = Closing - Purchases Today + Sales Today
+          totalOpeningStock = totalClosingStock - totalPurchasesQuantity + totalSalesQuantity;
+        } else if (isPast) {
+          // For past dates: Work backwards from current inventory
+          // Get all purchases AFTER the target date (end of day) until now
+          const purchasesAfterDate = await prisma.warehouseProductPurchase.aggregate({
+            where: {
+              productId: product.id,
+              purchaseDate: { gt: endOfDay },
+              batchStatus: { in: ['ACTIVE', 'DEPLETED'] }
+            },
+            _sum: { quantity: true }
+          });
+
+          // Get all sales AFTER the target date (end of day) until now
+          const salesAfterDate = await prisma.warehouseSale.aggregate({
+            where: {
+              productId: product.id,
+              createdAt: { gt: endOfDay }
+            },
+            _sum: { quantity: true }
+          });
+
+          const purchasedAfter = purchasesAfterDate._sum.quantity || 0;
+          const soldAfter = salesAfterDate._sum.quantity || 0;
+
+          // Closing stock at end of target date = Current - Purchases After + Sales After
+          totalClosingStock = currentTotalPacks - purchasedAfter + soldAfter;
+
+          // Opening stock = Closing - Purchases on date + Sales on date
+          totalOpeningStock = totalClosingStock - totalPurchasesQuantity + totalSalesQuantity;
+
+          closingStock = {
+            pallets: 0,
+            packs: Math.max(0, totalClosingStock),
+            units: 0
+          };
         } else {
-          // For past dates, calculate from transactions
-          const allPurchases = [...purchasesBeforeDate, ...purchasesOnDate];
-          const allSales = [...salesBeforeDate, ...salesOnDate];
-          closingStock = calculateStock(allPurchases, allSales);
-          totalClosingStock =
-            (closingStock.pallets * (product.packsPerPallet || 1)) +
-            closingStock.packs +
-            closingStock.units;
+          // Future date - use current inventory as estimate
+          totalClosingStock = currentTotalPacks;
+          totalOpeningStock = currentTotalPacks;
+          closingStock = {
+            pallets: currentPallets,
+            packs: currentPacks,
+            units: currentUnits
+          };
         }
 
-        // Calculate opening stock: Closing Stock + Sales Today - Purchases Today
-        const totalOpeningStock = totalClosingStock + totalSalesQuantity - totalPurchasesQuantity;
+        // Ensure non-negative values
+        totalOpeningStock = Math.max(0, totalOpeningStock);
+        totalClosingStock = Math.max(0, totalClosingStock);
 
-        // Distribute opening stock across pallets/packs/units (simplified: keep as packs)
+        // Distribute opening stock (simplified: keep as packs)
         const openingStock = {
           pallets: 0,
           packs: totalOpeningStock,
