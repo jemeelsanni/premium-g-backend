@@ -426,14 +426,23 @@ router.get('/',
       })
     ]);
 
+    // Map entries to match frontend expectations
+    const mappedEntries = entries.map(entry => ({
+      ...entry,
+      submittedByUser: entry.submitter,
+      approvedByUser: entry.approver,
+    }));
+
     res.json({
       success: true,
-      data: entries,
-      pagination: {
-        total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        pages: Math.ceil(total / parseInt(limit))
+      data: {
+        entries: mappedEntries,
+        pagination: {
+          total,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          totalPages: Math.ceil(total / parseInt(limit))
+        }
       }
     });
   })
@@ -602,14 +611,23 @@ router.get('/edit-requests/list',
       })
     ]);
 
+    // Map requests to match frontend expectations
+    const mappedRequests = requests.map(req => ({
+      ...req,
+      requestedByUser: req.requester,
+      approvedByUser: req.approver,
+    }));
+
     res.json({
       success: true,
-      data: requests,
-      pagination: {
-        total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        pages: Math.ceil(total / parseInt(limit))
+      data: {
+        editRequests: mappedRequests,
+        pagination: {
+          total,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          totalPages: Math.ceil(total / parseInt(limit))
+        }
       }
     });
   })
@@ -866,37 +884,71 @@ router.get('/summary/stats',
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    // Calculate week start (Sunday)
+    const weekStart = new Date(today);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+    weekStart.setHours(0, 0, 0, 0);
+
     const [
-      totalEntries,
-      pendingCount,
-      approvedCount,
-      rejectedCount,
-      todayEntries,
-      pendingEditRequests,
-      totalVarianceValue
+      todaySubmitted,
+      todayPending,
+      todayApproved,
+      todayRejected,
+      weekSubmitted,
+      weekPending,
+      weekApproved,
+      weekRejected,
+      pendingEditRequests
     ] = await Promise.all([
-      prisma.dailyOpeningStock.count(),
-      prisma.dailyOpeningStock.count({ where: { status: 'PENDING' } }),
-      prisma.dailyOpeningStock.count({ where: { status: 'APPROVED' } }),
-      prisma.dailyOpeningStock.count({ where: { status: 'REJECTED' } }),
-      prisma.dailyOpeningStock.count({ where: { stockDate: today } }),
-      prisma.dailyOpeningStockEditRequest.count({ where: { status: 'PENDING' } }),
-      prisma.dailyOpeningStock.aggregate({
-        where: { status: 'APPROVED' },
-        _sum: { varianceValue: true }
-      })
+      // Today's stats
+      prisma.dailyOpeningStock.count({
+        where: { stockDate: { gte: today, lt: tomorrow } }
+      }),
+      prisma.dailyOpeningStock.count({
+        where: { stockDate: { gte: today, lt: tomorrow }, status: 'PENDING' }
+      }),
+      prisma.dailyOpeningStock.count({
+        where: { stockDate: { gte: today, lt: tomorrow }, status: 'APPROVED' }
+      }),
+      prisma.dailyOpeningStock.count({
+        where: { stockDate: { gte: today, lt: tomorrow }, status: 'REJECTED' }
+      }),
+      // This week's stats
+      prisma.dailyOpeningStock.count({
+        where: { stockDate: { gte: weekStart } }
+      }),
+      prisma.dailyOpeningStock.count({
+        where: { stockDate: { gte: weekStart }, status: 'PENDING' }
+      }),
+      prisma.dailyOpeningStock.count({
+        where: { stockDate: { gte: weekStart }, status: 'APPROVED' }
+      }),
+      prisma.dailyOpeningStock.count({
+        where: { stockDate: { gte: weekStart }, status: 'REJECTED' }
+      }),
+      // Pending edit requests
+      prisma.dailyOpeningStockEditRequest.count({ where: { status: 'PENDING' } })
     ]);
 
     res.json({
       success: true,
       data: {
-        totalEntries,
-        pendingCount,
-        approvedCount,
-        rejectedCount,
-        todayEntries,
-        pendingEditRequests,
-        totalVarianceValue: totalVarianceValue._sum.varianceValue || 0
+        today: {
+          submitted: todaySubmitted,
+          pending: todayPending,
+          approved: todayApproved,
+          rejected: todayRejected
+        },
+        thisWeek: {
+          submitted: weekSubmitted,
+          pending: weekPending,
+          approved: weekApproved,
+          rejected: weekRejected
+        },
+        pendingEditRequests
       }
     });
   })
@@ -912,36 +964,72 @@ router.get('/comparison/:date',
     const stockDate = new Date(date);
     stockDate.setHours(0, 0, 0, 0);
 
+    // Get all products to show comparison for all
+    const allProducts = await prisma.warehouseProduct.findMany({
+      select: { id: true, name: true, productNo: true },
+      orderBy: { name: 'asc' }
+    });
+
+    // Get entries for this date
     const entries = await prisma.dailyOpeningStock.findMany({
       where: { stockDate },
       include: {
         product: {
-          select: { id: true, name: true, productNo: true, costPerPack: true }
-        },
-        submitter: { select: { username: true } },
-        approver: { select: { username: true } }
-      },
-      orderBy: { product: { name: 'asc' } }
+          select: { id: true, name: true, productNo: true }
+        }
+      }
     });
 
-    // Calculate totals
-    const totals = entries.reduce(
-      (acc, entry) => ({
-        manualPacks: acc.manualPacks + entry.manualPacks,
-        systemPacks: acc.systemPacks + entry.systemPacks,
-        variancePacks: acc.variancePacks + entry.variancePacks,
-        varianceValue: acc.varianceValue + (parseFloat(entry.varianceValue) || 0)
-      }),
-      { manualPacks: 0, systemPacks: 0, variancePacks: 0, varianceValue: 0 }
-    );
+    // Create a map for quick lookup
+    const entriesMap = new Map(entries.map(e => [e.productId, e]));
+
+    // Build comparison data
+    const comparison = allProducts.map(product => {
+      const entry = entriesMap.get(product.id);
+      return {
+        productId: product.id,
+        productName: product.name,
+        productNo: product.productNo,
+        manual: entry ? {
+          pallets: entry.manualPallets || 0,
+          packs: entry.manualPacks || 0,
+          units: entry.manualUnits || 0
+        } : null,
+        system: {
+          pallets: entry?.systemPallets || 0,
+          packs: entry?.systemPacks || 0,
+          units: entry?.systemUnits || 0
+        },
+        variance: entry ? {
+          pallets: entry.variancePallets || 0,
+          packs: entry.variancePacks || 0,
+          units: entry.varianceUnits || 0
+        } : null,
+        status: entry?.status || null,
+        entryId: entry?.id || null
+      };
+    });
+
+    // Calculate summary
+    const submittedEntries = entries.length;
+    const pendingCount = entries.filter(e => e.status === 'PENDING').length;
+    const approvedCount = entries.filter(e => e.status === 'APPROVED').length;
+    const rejectedCount = entries.filter(e => e.status === 'REJECTED').length;
+    const productsWithVariance = entries.filter(e => e.variancePacks !== 0).length;
 
     res.json({
       success: true,
       data: {
         date: stockDate.toISOString().split('T')[0],
-        entries,
-        totals,
-        entriesCount: entries.length
+        comparison,
+        summary: {
+          totalProducts: allProducts.length,
+          submittedCount: submittedEntries,
+          pendingCount,
+          approvedCount,
+          rejectedCount,
+          productsWithVariance
+        }
       }
     });
   })
