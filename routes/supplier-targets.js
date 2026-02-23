@@ -119,8 +119,10 @@ router.get(
         return total + orderPacks;
       }, 0);
 
-      // Calculate weekly actuals
+      // Calculate weekly actuals and daily actuals
       const weeklyActuals = { week1: 0, week2: 0, week3: 0, week4: 0 };
+      const dailyActuals = {}; // { 1: packs, 2: packs, ... 31: packs }
+
       orders.forEach(order => {
         const orderDate = new Date(order.createdAt);
         const dayOfMonth = orderDate.getDate();
@@ -131,6 +133,9 @@ router.get(
         else if (dayOfMonth <= 14) weeklyActuals.week2 += orderPacks;
         else if (dayOfMonth <= 21) weeklyActuals.week3 += orderPacks;
         else weeklyActuals.week4 += orderPacks;
+
+        // Track daily actuals
+        dailyActuals[dayOfMonth] = (dailyActuals[dayOfMonth] || 0) + orderPacks;
       });
 
       const percentageAchieved = target.totalPacksTarget > 0
@@ -143,6 +148,7 @@ router.get(
         ...target,
         actualPacks,
         weeklyActuals,
+        dailyActuals,
         percentageAchieved: Math.round(percentageAchieved * 10) / 10,
         remainingTarget: Math.max(0, target.totalPacksTarget - actualPacks)
       };
@@ -233,8 +239,10 @@ router.get(
         return total + orderPacks;
       }, 0);
 
-      // Calculate weekly actuals
+      // Calculate weekly actuals and daily actuals
       const weeklyActuals = { week1: 0, week2: 0, week3: 0, week4: 0 };
+      const dailyActuals = {}; // { 1: packs, 2: packs, ... 31: packs }
+
       orders.forEach(order => {
         const orderDate = new Date(order.createdAt);
         const dayOfMonth = orderDate.getDate();
@@ -245,6 +253,9 @@ router.get(
         else if (dayOfMonth <= 14) weeklyActuals.week2 += orderPacks;
         else if (dayOfMonth <= 21) weeklyActuals.week3 += orderPacks;
         else weeklyActuals.week4 += orderPacks;
+
+        // Track daily actuals
+        dailyActuals[dayOfMonth] = (dailyActuals[dayOfMonth] || 0) + orderPacks;
       });
 
       const percentageAchieved = target.totalPacksTarget > 0
@@ -255,6 +266,7 @@ router.get(
         ...target,
         actualPacks,
         weeklyActuals,
+        dailyActuals,
         percentageAchieved: Math.round(percentageAchieved * 10) / 10,
         remainingTarget: Math.max(0, target.totalPacksTarget - actualPacks)
       };
