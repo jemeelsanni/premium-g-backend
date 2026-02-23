@@ -583,9 +583,8 @@ async function allocateSaleQuantityFEFO(tx, productId, quantityToSell, unitType)
       batchNumber: batch.batchNumber,
       expiryDate: batch.expiryDate,
       costPerUnit: batch.costPerUnit,
-      quantityAllocated: quantityFromThisBatch,
-      newRemainingQty: batch.quantityRemaining - quantityFromThisBatch,
-      newSoldQty: batch.quantitySold + quantityFromThisBatch
+      quantityAllocated: quantityFromThisBatch
+      // Note: newRemainingQty and newSoldQty removed - using atomic increment/decrement instead
     });
 
     remainingToSell -= quantityFromThisBatch;
@@ -608,21 +607,28 @@ async function updateBatchesAfterSale(tx, saleId, allocations, userId, ipAddress
       where: { id: allocation.batchId }
     });
 
-    // Determine new batch status
-    let newStatus = 'ACTIVE';
-    if (allocation.newRemainingQty === 0) {
-      newStatus = 'DEPLETED';
-    }
-
-    // Update batch quantities and status
+    // ========================================================================
+    // ATOMIC UPDATE: Use increment/decrement to prevent race conditions
+    // This ensures concurrent transactions don't overwrite each other's updates
+    // ========================================================================
     const updatedBatch = await tx.warehouseProductPurchase.update({
       where: { id: allocation.batchId },
       data: {
-        quantityRemaining: allocation.newRemainingQty,
-        quantitySold: allocation.newSoldQty,
-        batchStatus: newStatus
+        quantityRemaining: { decrement: allocation.quantityAllocated },
+        quantitySold: { increment: allocation.quantityAllocated }
       }
     });
+
+    // Update status based on actual remaining quantity (after atomic update)
+    let newStatus = updatedBatch.batchStatus;
+    if (updatedBatch.quantityRemaining <= 0) {
+      newStatus = 'DEPLETED';
+      await tx.warehouseProductPurchase.update({
+        where: { id: allocation.batchId },
+        data: { batchStatus: 'DEPLETED' }
+      });
+      updatedBatch.batchStatus = 'DEPLETED';
+    }
 
     // Log the inventory change to audit log
     await logInventoryChange({
