@@ -46,7 +46,7 @@ const auditLogRoutes = require('./routes/audit-logs');
 
 
 const app = express();
-const prisma = new PrismaClient();
+const prisma = require('./lib/prisma');
 
 // ================================
 // MIDDLEWARE CONFIGURATION

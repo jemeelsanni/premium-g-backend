@@ -1,13 +1,12 @@
 // routes/supplier-products.js
 const express = require('express');
 const { body, param, query } = require('express-validator');
-const { PrismaClient } = require('@prisma/client');
 const { authenticateToken, authorizeModule } = require('../middleware/auth');
 const { asyncHandler, ValidationError, NotFoundError } = require('../middleware/errorHandler');
 const { validateCuid } = require('../utils/validators');
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // ==========================================
 // SUPPLIER PRODUCTS MANAGEMENT

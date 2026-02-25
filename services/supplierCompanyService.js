@@ -1,6 +1,5 @@
-const { PrismaClient } = require('@prisma/client');
 const { NotFoundError, ValidationError } = require('../middleware/errorHandler');
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // Maps enum to human-readable category name
 const CATEGORY_NAMES = {

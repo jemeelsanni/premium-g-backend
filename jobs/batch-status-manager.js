@@ -2,8 +2,7 @@
 // Automated batch status management
 // Run this as a cron job (daily at midnight)
 
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 /**
  * Mark expired batches that haven't been updated yet

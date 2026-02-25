@@ -2,14 +2,13 @@
 
 const express = require('express');
 const { query, validationResult } = require('express-validator');
-const { PrismaClient } = require('@prisma/client');
 
 const { asyncHandler, ValidationError } = require('../../middleware/errorHandler');
 const { authorizeModule } = require('../../middleware/auth');
 const { authorizeRole } = require('../../middleware/auth'); // Import authorizeRole
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../../lib/prisma');
 
 // GET /api/v1/analytics/warehouse/summary
 router.get('/summary',

@@ -2,14 +2,13 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
-const { PrismaClient } = require('@prisma/client');
 
 const { asyncHandler, ValidationError, BusinessError } = require('../middleware/errorHandler');
 const { authenticateToken } = require('../middleware/auth');
 const { logAuthEvent, getClientIP } = require('../middleware/auditLogger');
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // ================================
 // VALIDATION RULES

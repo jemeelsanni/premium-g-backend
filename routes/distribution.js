@@ -18,7 +18,7 @@ const distributionPaymentService = require('../services/distributionPaymentServi
 
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // ================================
 // MIDDLEWARE - Distribution Module Access

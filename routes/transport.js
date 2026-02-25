@@ -2,7 +2,6 @@
 
 const express = require('express');
 const { body, query, param, validationResult } = require('express-validator');
-const { PrismaClient } = require('@prisma/client');
 const { Parser } = require('json2csv');
 const PDFDocument = require('pdfkit-table', { PDFDocument: require('pdfkit') });
 
@@ -13,7 +12,7 @@ const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 const { validateCuid } = require('../utils/validators');
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // ================================
 // MIDDLEWARE

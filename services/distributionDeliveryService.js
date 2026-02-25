@@ -1,6 +1,5 @@
-const { PrismaClient } = require('@prisma/client');
 const { NotFoundError, ValidationError, BusinessError } = require('../middleware/errorHandler');
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 class DistributionDeliveryService {
 

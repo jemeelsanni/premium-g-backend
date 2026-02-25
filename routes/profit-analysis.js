@@ -1,13 +1,12 @@
 const express = require('express');
 const { query, param, body, validationResult } = require('express-validator');
-const { PrismaClient } = require('@prisma/client');
 
 const { asyncHandler, ValidationError, NotFoundError, BusinessError } = require('../middleware/errorHandler');
 const { authorizeRole } = require('../middleware/auth');
 const { validateCuid } = require('../utils/validators');
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // ================================
 // COMPREHENSIVE PROFIT CALCULATION

@@ -5,12 +5,11 @@
 
 const express = require('express');
 const router = express.Router();
-const { PrismaClient } = require('@prisma/client');
 const { body, query, validationResult } = require('express-validator');
 const { authorizeModule } = require('../middleware/auth');
 const { asyncHandler, ValidationError } = require('../middleware/errorHandler');
 
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // ================================
 // GET ALL DEBTORS (GROUPED BY RECEIPT)

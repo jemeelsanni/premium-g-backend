@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const { PrismaClient } = require('@prisma/client');
 const { body, param, validationResult } = require('express-validator');
 const { asyncHandler } = require('../middleware/errorHandler');
 const { authorizeRole, authorizeModule } = require('../middleware/auth');
@@ -9,7 +8,7 @@ const { validateCuid } = require('../utils/validators');
 const { logDataChange } = require('../middleware/auditLogger');
 const { getClientIP } = require('../utils/helpers');
 
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // ================================
 // VALIDATION RULES

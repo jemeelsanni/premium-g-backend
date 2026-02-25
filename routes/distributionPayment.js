@@ -15,7 +15,7 @@ const {
 
 
 
-const prisma = new PrismaClient();  // ✅ ADD THIS LINE
+const prisma = require('../lib/prisma');
 
 
 // Helper for validation

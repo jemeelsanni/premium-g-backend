@@ -1,6 +1,5 @@
 const express = require('express');
 const { body, query, param, validationResult } = require('express-validator');
-const { PrismaClient } = require('@prisma/client');
 
 const PDFDocument = require('pdfkit');
 const { Parser } = require('json2csv');
@@ -11,7 +10,7 @@ const { validateCuid } = require('../utils/validators');
 const { syncProductInventory } = require('../services/inventorySyncService');
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 const warehouseCustomersRouter = require('./warehouse-customers');
 router.use('/', warehouseCustomersRouter);
@@ -2952,18 +2951,16 @@ router.get('/sales/:id/export/pdf',
       throw new ValidationError('Invalid input data', errors.array());
     }
 
-    const { id } = req.params;
-    const where = { id };
+    const { id: receiptNumber } = req.params;
+    const where = { receiptNumber };
 
     // Role-based access
     if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
       where.salesOfficer = req.user.id;
     }
 
-    const { id: receiptNumber } = req.params;
-
 const sale = await prisma.warehouseSale.findFirst({
-  where: { receiptNumber },
+  where,
   include: {
     product: true,
     warehouseCustomer: {

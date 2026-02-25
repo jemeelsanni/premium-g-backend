@@ -2,14 +2,13 @@
 
 const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
-const { PrismaClient } = require('@prisma/client');
 
 const { asyncHandler, ValidationError, NotFoundError } = require('../middleware/errorHandler');
 const { authorizeModule } = require('../middleware/auth');
 const { validateCuid } = require('../utils/validators');
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // ================================
 // WAREHOUSE CUSTOMER ROUTES

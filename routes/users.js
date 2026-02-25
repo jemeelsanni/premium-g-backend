@@ -1,6 +1,5 @@
 const express = require('express');
 const { body, query, param, validationResult } = require('express-validator');
-const { PrismaClient } = require('@prisma/client');
 
 const { asyncHandler, ValidationError, BusinessError, NotFoundError } = require('../middleware/errorHandler');
 const { authorizeRole } = require('../middleware/auth');
@@ -8,7 +7,7 @@ const { getUserActivity } = require('../middleware/auditLogger');
 const { validateCuid } = require('../utils/validators'); // ✅ ADDED
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // ================================
 // VALIDATION RULES - UPDATED FOR CUID

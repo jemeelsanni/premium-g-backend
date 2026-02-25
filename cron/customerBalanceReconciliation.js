@@ -1,6 +1,5 @@
 // cron/customerBalanceReconciliation.js
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 /**
  * Reconcile customer balances with their order balances

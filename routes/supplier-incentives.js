@@ -1,13 +1,12 @@
 // routes/supplier-incentives.js
 const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
-const { PrismaClient } = require('@prisma/client');
 const { authenticateToken } = require('../middleware/auth');
 const { asyncHandler, ValidationError, NotFoundError } = require('../middleware/errorHandler');
 const { validateCuid } = require('../utils/validators');
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // Authorization middleware for write operations
 const authorizeAdmin = (req, res, next) => {
