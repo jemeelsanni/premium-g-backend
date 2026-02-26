@@ -6,7 +6,6 @@ const distributionDeliveryService = require('../services/distributionDeliverySer
 const { asyncHandler } = require('../middleware/errorHandler');
 const { authorizeModule } = require('../middleware/auth');
 const { ValidationError, BusinessError } = require('../middleware/errorHandler');
-const { PrismaClient } = require('@prisma/client');  // ✅ ADD THIS LINE
 const {
   generatePaymentReference,
   generateSupplierOrderNumber,
@@ -244,9 +243,6 @@ router.get('/payments/:orderId/summary',
 router.get('/payments/pending',
   authorizeModule('distribution', 'admin'),
   asyncHandler(async (req, res) => {
-    const { PrismaClient } = require('@prisma/client');
-    const prisma = new PrismaClient();
-
     const pendingOrders = await prisma.distributionOrder.findMany({
       where: {
         paymentStatus: { in: ['PENDING', 'PARTIAL'] }
@@ -468,9 +464,6 @@ router.get('/delivery/:orderId/summary',
 router.get('/delivery/in-transit',
   authorizeModule('distribution'),
   asyncHandler(async (req, res) => {
-    const { PrismaClient } = require('@prisma/client');
-    const prisma = new PrismaClient();
-
     const inTransitOrders = await prisma.distributionOrder.findMany({
       where: {
         deliveryStatus: 'IN_TRANSIT'
@@ -517,9 +510,6 @@ router.get('/delivery/in-transit',
 router.get('/delivery/pending-review',
   authorizeModule('distribution', 'admin'),
   asyncHandler(async (req, res) => {
-    const { PrismaClient } = require('@prisma/client');
-    const prisma = new PrismaClient();
-
     const pendingReview = await prisma.distributionOrder.findMany({
       where: {
         status: 'IN_TRANSIT',

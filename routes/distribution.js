@@ -1,7 +1,5 @@
 const express = require('express');
 const { body, query, param, validationResult } = require('express-validator');
-const { PrismaClient } = require('@prisma/client');
-
 const { asyncHandler, ValidationError, BusinessError, NotFoundError } = require('../middleware/errorHandler');
 const { authorizeModule, authorizeRole } = require('../middleware/auth');
 const { logDataChange, getClientIP } = require('../middleware/auditLogger');
@@ -167,9 +165,6 @@ const validateTruckCapacity = async (orderItems) => {
 
 // Helper function to validate order before creation
 async function validateOrderCreation(customerId, orderItems, totalAmount) {
-  const { PrismaClient } = require('@prisma/client');
-  const prisma = new PrismaClient();
-
   // Check customer
   const customer = await prisma.customer.findUnique({
     where: { id: customerId }
