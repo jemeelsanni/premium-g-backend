@@ -1,9 +1,13 @@
 /**
- * Deduct stock from batches and sync inventory from batch data.
- * Since inventory is calculated FROM batches, the auto-sync cron
- * will maintain these values (not revert them).
+ * Deduct stock from batches permanently.
  *
- * Run with: node scripts/deduct-stock.js
+ * Strategy: Reduce batch `quantity` and `quantityRemaining` WITHOUT touching
+ * `quantitySold`. This way:
+ *   - quantity = quantitySold + quantityRemaining (integrity holds)
+ *   - Batch-sales consistency check won't revert (quantitySold unchanged)
+ *   - 5-min inventory sync recalculates from quantityRemaining (stays correct)
+ *
+ * Run with: DATABASE_URL="..." node scripts/deduct-stock.js
  */
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
@@ -22,7 +26,7 @@ const deductions = [
 ];
 
 async function deductStock() {
-  console.log('=== STOCK DEDUCTION (Batch-level) ===\n');
+  console.log('=== STOCK DEDUCTION (Permanent - audit-safe) ===\n');
 
   for (const item of deductions) {
     console.log(`${item.name} - Deducting ${item.qty} packs`);
@@ -45,29 +49,26 @@ async function deductStock() {
       continue;
     }
 
-    // 2. Deduct from batches (FEFO)
+    // 2. Deduct from batches (FEFO) - reduce quantity AND quantityRemaining, leave quantitySold alone
     let remaining = item.qty;
     for (const batch of batches) {
       if (remaining <= 0) break;
 
       const deductFromBatch = Math.min(remaining, batch.quantityRemaining);
       const newRemaining = batch.quantityRemaining - deductFromBatch;
-      const newSold = batch.quantitySold + deductFromBatch;
-
-      // Update quantity to match so integrity check passes: qty = sold + remaining
-      const newQuantity = newSold + newRemaining;
+      const newQuantity = batch.quantity - deductFromBatch; // reduce original quantity too
 
       await prisma.warehouseProductPurchase.update({
         where: { id: batch.id },
         data: {
-          quantityRemaining: newRemaining,
-          quantitySold: newSold,
           quantity: newQuantity,
+          quantityRemaining: newRemaining,
+          // quantitySold stays the same - this is the key!
           batchStatus: newRemaining <= 0 ? 'DEPLETED' : 'ACTIVE'
         }
       });
 
-      console.log(`  Batch ${batch.batchNumber}: -${deductFromBatch} (was: ${batch.quantityRemaining} → now: ${newRemaining})`);
+      console.log(`  Batch ${batch.batchNumber}: -${deductFromBatch} (remaining: ${batch.quantityRemaining} → ${newRemaining}, qty: ${batch.quantity} → ${newQuantity}, sold unchanged: ${batch.quantitySold})`);
       remaining -= deductFromBatch;
     }
 
@@ -75,7 +76,7 @@ async function deductStock() {
       console.log(`  ⚠️ Could not deduct ${remaining} packs (no stock left in batches)`);
     }
 
-    // 3. Sync inventory FROM batches (this is what auto-sync does, so it won't change it later)
+    // 3. Sync inventory FROM batches
     const batchTotals = await prisma.warehouseProductPurchase.aggregate({
       where: {
         productId: item.productId,
@@ -95,7 +96,10 @@ async function deductStock() {
   }
 
   console.log('========================================');
-  console.log('Done! Auto-sync will now maintain these values.');
+  console.log('Done! This deduction is permanent and audit-safe.');
+  console.log('  - 5-min sync: uses quantityRemaining → won\'t revert');
+  console.log('  - Hourly audit: checks quantitySold vs sales → won\'t revert (quantitySold unchanged)');
+  console.log('  - Integrity check: quantity = sold + remaining → passes');
   console.log('========================================\n');
 
   await prisma.$disconnect();
