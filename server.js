@@ -58,6 +58,7 @@ app.set('trust proxy', 1);
 // Security
 app.use(helmet());
 
+
 // CORS Configuration - supports multiple origins
 const defaultOrigins = [
   'https://premiumgbrands.com',
@@ -568,6 +569,24 @@ app.get(`/api/${apiVersion}/docs`, (req, res) => {
 // ================================
 
 app.use(notFound);
+
+// Prisma auto-reconnect error handler - catches "not yet connected" and reconnects
+app.use(async (err, req, res, next) => {
+  if (err && err.message && err.message.includes('not yet connected')) {
+    console.log('⚠️ Prisma disconnected, reconnecting...');
+    try {
+      await prisma.$connect();
+      console.log('✅ Prisma reconnected');
+      res.status(503).json({ error: 'Database was reconnecting. Please retry your request.' });
+    } catch (reconnectErr) {
+      console.error('❌ Prisma reconnect failed:', reconnectErr.message);
+      res.status(503).json({ error: 'Database temporarily unavailable. Please try again.' });
+    }
+  } else {
+    next(err);
+  }
+});
+
 app.use(errorHandler);
 
 // ================================
@@ -576,8 +595,28 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 3002;
 
-const server = app.listen(PORT, () => {
-  console.log(`
+// Connect to database BEFORE accepting requests
+async function startServer() {
+  // Retry Prisma connection up to 5 times with exponential backoff
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      await prisma.$connect();
+      console.log('✅ Prisma connected to database');
+      break;
+    } catch (err) {
+      console.error(`❌ Prisma connection attempt ${attempt}/5 failed:`, err.message);
+      if (attempt < 5) {
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+        console.log(`   Retrying in ${delay / 1000}s...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        console.error('❌ Could not connect to database. Starting server anyway...');
+      }
+    }
+  }
+
+  const server = app.listen(PORT, () => {
+    console.log(`
 ╔══════════════════════════════════════════════════════════════════╗
 ║                    Premium G Enterprise System                   ║
 ║                      STANDALONE MODULES v2.0                    ║
@@ -592,26 +631,29 @@ const server = app.listen(PORT, () => {
 ║  🚛 Transport: Active & Standalone                              ║
 ║  📦 Warehouse: Active & Standalone                              ║
 ╚══════════════════════════════════════════════════════════════════╝
-  `);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, shutting down gracefully...');
-  server.close(async () => {
-    await prisma.$disconnect();
-    console.log('Server shut down successfully');
-    process.exit(0);
+    `);
   });
-});
 
-process.on('SIGINT', async () => {
-  console.log('SIGINT received, shutting down gracefully...');
-  server.close(async () => {
-    await prisma.$disconnect();
-    console.log('Server shut down successfully');
-    process.exit(0);
+  // Graceful shutdown
+  process.on('SIGTERM', async () => {
+    console.log('SIGTERM received, shutting down gracefully...');
+    server.close(async () => {
+      await prisma.$disconnect();
+      console.log('Server shut down successfully');
+      process.exit(0);
+    });
   });
-});
+
+  process.on('SIGINT', async () => {
+    console.log('SIGINT received, shutting down gracefully...');
+    server.close(async () => {
+      await prisma.$disconnect();
+      console.log('Server shut down successfully');
+      process.exit(0);
+    });
+  });
+}
+
+startServer();
 
 module.exports = app;
