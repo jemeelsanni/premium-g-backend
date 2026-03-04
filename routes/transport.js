@@ -168,7 +168,7 @@ router.post('/orders',
     // Fetch location to get pre-configured costs (fuelRequired and driverWages)
     const location = await prisma.location.findUnique({
       where: { id: locationId },
-      select: { fuelRequired: true, driverWages: true, name: true }
+      select: { fuelRequired: true, driverWages: true, orderAmount: true, name: true }
     });
     if (!location) throw new NotFoundError('Location not found');
 
@@ -757,6 +757,7 @@ router.post('/locations',
     body('name').notEmpty().withMessage('Location name is required'),
     body('fuelRequired').isFloat({ min: 0 }).withMessage('Fuel required must be a positive number'),
     body('driverWages').isFloat({ min: 0 }).withMessage('Driver wages must be a positive number'),
+    body('orderAmount').optional().isFloat({ min: 0 }),
     body('address').optional().trim(),
     body('deliveryNotes').optional().trim(),
   ],
@@ -764,13 +765,14 @@ router.post('/locations',
     const errors = validationResult(req);
     if (!errors.isEmpty()) throw new ValidationError('Invalid input data', errors.array());
 
-    const { name, fuelRequired, driverWages, address, deliveryNotes } = req.body;
+    const { name, fuelRequired, driverWages, orderAmount, address, deliveryNotes } = req.body;
 
     const location = await prisma.location.create({
       data: {
         name,
         fuelRequired: parseFloat(fuelRequired),
         driverWages: parseFloat(driverWages),
+        orderAmount: orderAmount ? parseFloat(orderAmount) : 0,
         address: address || null,
         deliveryNotes: deliveryNotes || null,
       }

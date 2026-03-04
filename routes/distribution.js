@@ -413,23 +413,14 @@ router.post('/orders',
       });
     }
 
-    // Fetch the location to get its fixed order amount
-    const orderLocation = await prisma.location.findUnique({
-      where: { id: finalLocationId }
-    });
-
-    // Use location's fixed order amount if set, otherwise fall back to calculated total
-    const locationOrderAmount = orderLocation?.orderAmount ? parseFloat(orderLocation.orderAmount) : 0;
-    const finalOrderAmount = locationOrderAmount > 0 ? locationOrderAmount : totalAmount;
-
     // Calculate payment details
     const initialPayment = parseFloat(amountPaid) || 0;
-    const orderBalance = finalOrderAmount - initialPayment;
+    const orderBalance = totalAmount - initialPayment;
 
     // Determine payment status based on amount paid
     let paymentStatus = 'PENDING';
-    if (initialPayment >= finalOrderAmount) {
-      paymentStatus = initialPayment > finalOrderAmount ? 'OVERPAID' : 'CONFIRMED';
+    if (initialPayment >= totalAmount) {
+      paymentStatus = initialPayment > totalAmount ? 'OVERPAID' : 'CONFIRMED';
     } else if (initialPayment > 0) {
       paymentStatus = 'PARTIAL';
     }
@@ -446,8 +437,8 @@ router.post('/orders',
           deliveryLocation: deliveryLocation.trim(),
           totalPallets,
           totalPacks,
-          originalAmount: finalOrderAmount,
-          finalAmount: finalOrderAmount,
+          originalAmount: totalAmount,
+          finalAmount: totalAmount,
           balance: orderBalance,
           amountPaid: initialPayment,
           status: 'PENDING',
