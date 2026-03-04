@@ -789,6 +789,7 @@ router.put('/locations/:id',
     body('name').optional().notEmpty().withMessage('Name cannot be empty'),
     body('fuelRequired').optional().isFloat({ min: 0 }),
     body('driverWages').optional().isFloat({ min: 0 }),
+    body('orderAmount').optional().isFloat({ min: 0 }),
     body('address').optional().trim(),
     body('deliveryNotes').optional().trim(),
     body('isActive').optional().isBoolean(),
@@ -798,7 +799,7 @@ router.put('/locations/:id',
     if (!errors.isEmpty()) throw new ValidationError('Invalid input data', errors.array());
 
     const { id } = req.params;
-    const { name, fuelRequired, driverWages, address, deliveryNotes, isActive } = req.body;
+    const { name, fuelRequired, driverWages, orderAmount, address, deliveryNotes, isActive } = req.body;
 
     const existing = await prisma.location.findUnique({ where: { id } });
     if (!existing) throw new NotFoundError('Location not found');
@@ -807,6 +808,7 @@ router.put('/locations/:id',
     if (name !== undefined) updateData.name = name;
     if (fuelRequired !== undefined) updateData.fuelRequired = parseFloat(fuelRequired);
     if (driverWages !== undefined) updateData.driverWages = parseFloat(driverWages);
+    if (orderAmount !== undefined) updateData.orderAmount = parseFloat(orderAmount);
     if (address !== undefined) updateData.address = address;
     if (deliveryNotes !== undefined) updateData.deliveryNotes = deliveryNotes;
     if (isActive !== undefined) updateData.isActive = isActive;

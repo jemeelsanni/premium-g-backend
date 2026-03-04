@@ -245,6 +245,7 @@ model Location {
   fuelRequired     Decimal @default(0) @map("fuel_required") @db.Decimal(8, 2)
   fuelCostPerLitre Decimal @default(0) @map("fuel_cost_per_litre") @db.Decimal(8, 2)
   driverWages      Decimal @default(0) @map("driver_wages") @db.Decimal(8, 2)
+  orderAmount      Decimal @default(0) @map("order_amount") @db.Decimal(12, 2)
   deliveryNotes    String? @map("delivery_notes")
   isActive         Boolean @default(true) @map("is_active")
 

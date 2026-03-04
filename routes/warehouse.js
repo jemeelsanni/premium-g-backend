@@ -438,18 +438,19 @@ router.get('/products', asyncHandler(async (req, res) => {
   });
 
   const formattedProducts = products.map(p => {
-    // 🧠 Handle multiple inventories
+    // Use only the first (primary) inventory record to avoid double-counting duplicates
     const inventories = Array.isArray(p.warehouseInventory)
       ? p.warehouseInventory
       : [p.warehouseInventory].filter(Boolean);
 
-    const totalStock = inventories.reduce(
-      (sum, inv) => sum + (inv.pallets ?? 0) + (inv.packs ?? 0) + (inv.units ?? 0),
-      0
-    );
+    // Pick the primary inventory record (prefer 'Main Warehouse', fallback to first)
+    const primaryInventory = inventories.find(inv => inv.location === 'Main Warehouse')
+      || inventories[0]
+      || { pallets: 0, packs: 0, units: 0, reorderLevel: 0, maxStockLevel: 0 };
 
-    const minLevel = Math.min(...inventories.map(inv => inv.reorderLevel ?? 0), 0);
-    const maxLevel = Math.max(...inventories.map(inv => inv.maxStockLevel ?? 0), 0);
+    const totalStock = (primaryInventory.pallets ?? 0) + (primaryInventory.packs ?? 0) + (primaryInventory.units ?? 0);
+    const minLevel = primaryInventory.reorderLevel ?? 0;
+    const maxLevel = primaryInventory.maxStockLevel ?? 0;
 
     const stockStatus =
       totalStock <= minLevel

@@ -107,7 +107,7 @@ async function clearTodayWarehouseSales() {
         where: {
           productId_location: {
             productId: productId,
-            location: 'main'
+            location: 'Main Warehouse'
           }
         },
         update: {
@@ -117,7 +117,7 @@ async function clearTodayWarehouseSales() {
         },
         create: {
           productId: productId,
-          location: 'main',
+          location: 'Main Warehouse',
           packs: totalStock,
           units: 0,
           pallets: 0

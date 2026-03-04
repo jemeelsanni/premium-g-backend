@@ -413,14 +413,23 @@ router.post('/orders',
       });
     }
 
+    // Fetch the location to get its fixed order amount
+    const orderLocation = await prisma.location.findUnique({
+      where: { id: finalLocationId }
+    });
+
+    // Use location's fixed order amount if set, otherwise fall back to calculated total
+    const locationOrderAmount = orderLocation?.orderAmount ? parseFloat(orderLocation.orderAmount) : 0;
+    const finalOrderAmount = locationOrderAmount > 0 ? locationOrderAmount : totalAmount;
+
     // Calculate payment details
     const initialPayment = parseFloat(amountPaid) || 0;
-    const orderBalance = totalAmount - initialPayment;
+    const orderBalance = finalOrderAmount - initialPayment;
 
     // Determine payment status based on amount paid
     let paymentStatus = 'PENDING';
-    if (initialPayment >= totalAmount) {
-      paymentStatus = initialPayment > totalAmount ? 'OVERPAID' : 'CONFIRMED';
+    if (initialPayment >= finalOrderAmount) {
+      paymentStatus = initialPayment > finalOrderAmount ? 'OVERPAID' : 'CONFIRMED';
     } else if (initialPayment > 0) {
       paymentStatus = 'PARTIAL';
     }
@@ -434,11 +443,11 @@ router.post('/orders',
           customerId,
           supplierCompanyId: supplierCompanyId || null,
           locationId: finalLocationId,
-          deliveryLocation: deliveryLocation.trim(),  // ✅ Store the text field
+          deliveryLocation: deliveryLocation.trim(),
           totalPallets,
           totalPacks,
-          originalAmount: totalAmount,
-          finalAmount: totalAmount,
+          originalAmount: finalOrderAmount,
+          finalAmount: finalOrderAmount,
           balance: orderBalance,
           amountPaid: initialPayment,
           status: 'PENDING',

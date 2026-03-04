@@ -119,22 +119,24 @@ router.post('/',
         }
       });
 
-      // 2. Find or create inventory record
-      let inventory = await tx.warehouseInventory.findFirst({
-        where: { productId }
-      });
-
-      if (!inventory) {
-        inventory = await tx.warehouseInventory.create({
-          data: {
+      // 2. Find or create inventory record (use upsert to avoid duplicates)
+      let inventory = await tx.warehouseInventory.upsert({
+        where: {
+          productId_location: {
             productId,
-            pallets: 0,
-            packs: 0,
-            units: 0,
-            reorderLevel: 10
+            location: 'Main Warehouse'
           }
-        });
-      }
+        },
+        create: {
+          productId,
+          pallets: 0,
+          packs: 0,
+          units: 0,
+          reorderLevel: 10,
+          location: 'Main Warehouse'
+        },
+        update: {} // No update needed, just get the existing record
+      });
 
       // Update inventory based on unit type
       const updates = {

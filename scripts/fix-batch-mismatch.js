@@ -175,7 +175,7 @@ async function fixBatchMismatch() {
         where: {
           productId_location: {
             productId: product.id,
-            location: 'main'
+            location: 'Main Warehouse'
           }
         },
         update: {
@@ -185,7 +185,7 @@ async function fixBatchMismatch() {
         },
         create: {
           productId: product.id,
-          location: 'main',
+          location: 'Main Warehouse',
           packs: totalStock,
           units: 0,
           pallets: 0

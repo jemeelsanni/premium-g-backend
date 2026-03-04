@@ -143,7 +143,11 @@ const createLocationValidation = [
   body('fuelAdjustment')
     .optional()
     .isDecimal({ decimal_digits: '0,2' })
-    .withMessage('Fuel adjustment must be a valid decimal')
+    .withMessage('Fuel adjustment must be a valid decimal'),
+  body('orderAmount')
+    .optional()
+    .isDecimal({ decimal_digits: '0,2' })
+    .withMessage('Order amount must be a valid decimal')
 ];
 
 // ================================
@@ -288,14 +292,21 @@ router.post('/products',
 
     // Only create warehouse inventory if module includes warehouse
     if (module === 'WAREHOUSE' || module === 'BOTH') {
-      await prisma.warehouseInventory.create({
-        data: {
+      await prisma.warehouseInventory.upsert({
+        where: {
+          productId_location: {
+            productId: product.id,
+            location: 'Main Warehouse'
+          }
+        },
+        create: {
           productId: product.id,
           packs: 0,
           units: 0,
           reorderLevel: 20,
           location: 'Main Warehouse'
-        }
+        },
+        update: {} // Already exists, no update needed
       });
     }
 
@@ -482,6 +493,9 @@ router.post('/locations',
     const locationData = req.body;
     if (locationData.fuelAdjustment) {
       locationData.fuelAdjustment = parseFloat(locationData.fuelAdjustment);
+    }
+    if (locationData.orderAmount) {
+      locationData.orderAmount = parseFloat(locationData.orderAmount);
     }
 
     const location = await prisma.location.create({

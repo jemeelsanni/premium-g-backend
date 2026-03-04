@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "locations" ADD COLUMN IF NOT EXISTS "order_amount" DECIMAL(12,2) NOT NULL DEFAULT 0;

@@ -591,10 +591,11 @@ router.put('/stock-counts/:id/approve',
 
       if (hasVariance) {
         // 3. Update the warehouse inventory
+        const inventoryLocation = stockCount.location || 'Main Warehouse';
         const existingInventory = await tx.warehouseInventory.findFirst({
           where: {
             productId: stockCount.productId,
-            location: stockCount.location
+            location: inventoryLocation
           }
         });
 
@@ -605,18 +606,6 @@ router.put('/stock-counts/:id/approve',
               pallets: stockCount.countedPallets,
               packs: stockCount.countedPacks,
               units: stockCount.countedUnits
-            }
-          });
-        } else {
-          // Create new inventory record if none exists
-          await tx.warehouseInventory.create({
-            data: {
-              productId: stockCount.productId,
-              location: stockCount.location,
-              pallets: stockCount.countedPallets,
-              packs: stockCount.countedPacks,
-              units: stockCount.countedUnits,
-              reorderLevel: 0
             }
           });
         }
