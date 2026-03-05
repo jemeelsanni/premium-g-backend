@@ -187,11 +187,21 @@ app.get('/health', async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(503).json({
-      status: 'unhealthy',
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
+    // Try to reconnect before reporting unhealthy
+    try {
+      await prisma.$connect();
+      res.json({
+        status: 'healthy',
+        recovered: true,
+        timestamp: new Date().toISOString()
+      });
+    } catch (reconnectErr) {
+      res.status(503).json({
+        status: 'unhealthy',
+        error: reconnectErr.message,
+        timestamp: new Date().toISOString()
+      });
+    }
   }
 });
 
@@ -565,6 +575,25 @@ async function startServer() {
       }
     }
   }
+
+  // ================================
+  // PRISMA KEEPALIVE - prevent stale connections
+  // ================================
+  // Ping the database every 4 minutes to keep the connection alive
+  // Railway restarts services every 24h and connections can go stale
+  setInterval(async () => {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+    } catch (err) {
+      console.log('⚠️ Prisma keepalive failed, reconnecting...');
+      try {
+        await prisma.$connect();
+        console.log('✅ Prisma reconnected via keepalive');
+      } catch (reconnectErr) {
+        console.error('❌ Prisma keepalive reconnect failed:', reconnectErr.message);
+      }
+    }
+  }, 4 * 60 * 1000); // Every 4 minutes
 
   // ================================
   // START CRON JOBS (only after Prisma is connected)
