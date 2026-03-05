@@ -373,56 +373,7 @@ app.get('/api/system/status', authenticateToken, async (req, res) => {
   }
 });
 
-cron.schedule('0 0 * * *', async () => {
-  console.log('🕐 Running scheduled batch status management...');
-  try {
-    await manageBatchStatus();
-  } catch (error) {
-    console.error('❌ Scheduled job failed:', error);
-  }
-});
-
-// Optional: Run at startup to catch any missed updates
-if (process.env.NODE_ENV === 'production') {
-  setTimeout(async () => {
-    console.log('🚀 Running initial batch status check...');
-    await manageBatchStatus();
-  }, 5000); // Wait 5 seconds after startup
-}
-
-console.log('✅ Batch status management cron job scheduled');
-
-// ================================
-// INVENTORY AUTO-SYNC CRON JOB
-// ================================
-// Automatically syncs inventory with batch data every 5 minutes
-// This ensures the system self-heals from any discrepancies
-startInventorySyncCron();
-
-// ================================
-// CUSTOMER BALANCE RECONCILIATION CRON JOB
-// ================================
-// Runs every 5 minutes to ensure customer balances match order balances
-// This prevents data inconsistencies and ensures accurate financial records
-cron.schedule('*/5 * * * *', async () => {
-  try {
-    await reconcileCustomerBalances();
-  } catch (error) {
-    console.error('❌ Customer balance reconciliation failed:', error);
-  }
-});
-
-// Run initial check 10 seconds after startup
-setTimeout(async () => {
-  console.log('🚀 Running initial customer balance reconciliation...');
-  try {
-    await reconcileCustomerBalances();
-  } catch (error) {
-    console.error('❌ Initial reconciliation failed:', error);
-  }
-}, 10000);
-
-console.log('✅ Customer balance reconciliation cron job scheduled (runs every 5 minutes)');
+// NOTE: All cron jobs are started inside startServer() AFTER Prisma connects
 
 
 // ================================
@@ -614,6 +565,46 @@ async function startServer() {
       }
     }
   }
+
+  // ================================
+  // START CRON JOBS (only after Prisma is connected)
+  // ================================
+
+  // Batch status management - daily at midnight
+  cron.schedule('0 0 * * *', async () => {
+    console.log('🕐 Running scheduled batch status management...');
+    try {
+      await manageBatchStatus();
+    } catch (error) {
+      console.error('❌ Scheduled job failed:', error);
+    }
+  });
+
+  // Inventory auto-sync (every 5 min) + hourly audit + daily integrity
+  startInventorySyncCron();
+
+  // Customer balance reconciliation - every 5 minutes
+  cron.schedule('*/5 * * * *', async () => {
+    try {
+      await reconcileCustomerBalances();
+    } catch (error) {
+      console.error('❌ Customer balance reconciliation failed:', error);
+    }
+  });
+
+  console.log('✅ All cron jobs started (after Prisma connected)');
+
+  // Run initial checks after a short delay
+  setTimeout(async () => {
+    try {
+      console.log('🚀 Running initial batch status check...');
+      await manageBatchStatus();
+      console.log('🚀 Running initial customer balance reconciliation...');
+      await reconcileCustomerBalances();
+    } catch (error) {
+      console.error('❌ Initial startup checks failed:', error);
+    }
+  }, 5000);
 
   const server = app.listen(PORT, () => {
     console.log(`
