@@ -187,9 +187,9 @@ app.get('/health', async (req, res) => {
       }
     });
   } catch (error) {
-    // Try to reconnect before reporting unhealthy
+    // Destroy old client and create fresh one
     try {
-      await prisma.$connect();
+      await prisma.$reconnect();
       res.json({
         status: 'healthy',
         recovered: true,
@@ -536,8 +536,7 @@ app.use(async (err, req, res, next) => {
   if (err && err.message && err.message.includes('not yet connected')) {
     console.log('⚠️ Prisma disconnected, reconnecting...');
     try {
-      await prisma.$connect();
-      console.log('✅ Prisma reconnected');
+      await prisma.$reconnect();
       res.status(503).json({ error: 'Database was reconnecting. Please retry your request.' });
     } catch (reconnectErr) {
       console.error('❌ Prisma reconnect failed:', reconnectErr.message);
@@ -558,20 +557,22 @@ const PORT = process.env.PORT || 3002;
 
 // Connect to database BEFORE accepting requests
 async function startServer() {
-  // Retry Prisma connection up to 5 times with exponential backoff
-  for (let attempt = 1; attempt <= 5; attempt++) {
+  // Retry Prisma connection up to 15 times (covers ~2 minutes of retries)
+  for (let attempt = 1; attempt <= 15; attempt++) {
     try {
       await prisma.$connect();
       console.log('✅ Prisma connected to database');
       break;
     } catch (err) {
-      console.error(`❌ Prisma connection attempt ${attempt}/5 failed:`, err.message);
-      if (attempt < 5) {
-        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+      console.error(`❌ Prisma connection attempt ${attempt}/15 failed:`, err.message);
+      if (attempt < 15) {
+        const delay = Math.min(2000 * attempt, 10000); // 2s, 4s, 6s, ... 10s max
         console.log(`   Retrying in ${delay / 1000}s...`);
         await new Promise(resolve => setTimeout(resolve, delay));
       } else {
-        console.error('❌ Could not connect to database. Starting server anyway...');
+        // If we can't connect after 15 tries, crash so Railway restarts us
+        console.error('❌ Could not connect to database after 15 attempts. Exiting...');
+        process.exit(1);
       }
     }
   }
@@ -579,21 +580,15 @@ async function startServer() {
   // ================================
   // PRISMA KEEPALIVE - prevent stale connections
   // ================================
-  // Ping the database every 4 minutes to keep the connection alive
-  // Railway restarts services every 24h and connections can go stale
+  // Ping database every 2 minutes. If it fails, destroy and recreate the client.
   setInterval(async () => {
     try {
       await prisma.$queryRaw`SELECT 1`;
     } catch (err) {
-      console.log('⚠️ Prisma keepalive failed, reconnecting...');
-      try {
-        await prisma.$connect();
-        console.log('✅ Prisma reconnected via keepalive');
-      } catch (reconnectErr) {
-        console.error('❌ Prisma keepalive reconnect failed:', reconnectErr.message);
-      }
+      console.log('⚠️ Prisma keepalive failed, creating fresh client...');
+      await prisma.$reconnect();
     }
-  }, 4 * 60 * 1000); // Every 4 minutes
+  }, 2 * 60 * 1000); // Every 2 minutes
 
   // ================================
   // START CRON JOBS (only after Prisma is connected)
