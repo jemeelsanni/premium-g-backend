@@ -616,8 +616,10 @@ router.get('/orders', asyncHandler(async (req, res) => {
   // Build where clause
   const where = {};
 
-  // Role-based filtering - non-admins see only their own orders
-  if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+  // Role-based filtering - only non-distribution roles are restricted to own orders
+  // Distribution sales reps can see all distribution orders for full pipeline visibility
+  const isDistributionUser = ['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'DISTRIBUTION_SALES_REP'].includes(req.user.role);
+  if (!isDistributionUser) {
     where.createdBy = req.user.id;
   }
 
@@ -706,8 +708,9 @@ router.get('/orders/:id',
     const { id } = req.params;
     const where = { id };
 
-    // Role-based access
-    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+    // Role-based access - distribution users can view all orders
+    const isDistributionUser = ['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'DISTRIBUTION_SALES_REP'].includes(req.user.role);
+    if (!isDistributionUser) {
       where.createdBy = req.user.id;
     }
 
