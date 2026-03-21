@@ -416,19 +416,19 @@ router.get('/orders',
       if (endDate) where.createdAt.lte = new Date(endDate);
     }
 
-    // Search functionality
+    // Search functionality - ✅ Use correct database field names
     if (search) {
       where.OR = [
-        { clientName: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search, mode: 'insensitive' } },
         { orderNumber: { contains: search, mode: 'insensitive' } },
-        { clientPhone: { contains: search, mode: 'insensitive' } },
+        { phone: { contains: search, mode: 'insensitive' } },
         { pickupLocation: { contains: search, mode: 'insensitive' } },
         { deliveryAddress: { contains: search, mode: 'insensitive' } }
       ];
     }
 
     if (clientName) {
-      where.clientName = { contains: clientName, mode: 'insensitive' };
+      where.name = { contains: clientName, mode: 'insensitive' };
     }
 
     // Fetch orders with pagination
@@ -453,10 +453,18 @@ router.get('/orders',
       prisma.transportOrder.count({ where })
     ]);
 
+    // ✅ Transform orders to use frontend field names
+    const transformedOrders = orders.map(order => ({
+      ...order,
+      clientName: order.name,
+      clientPhone: order.phone,
+      fuelCostPerLitre: order.fuelPricePerLiter
+    }));
+
     res.json({
       success: true,
       data: {
-        orders,
+        orders: transformedOrders,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
@@ -570,9 +578,17 @@ router.get('/orders/:id',
       throw new NotFoundError('Transport order not found');
     }
 
+    // ✅ Map database field names to frontend field names
+    const transformedOrder = {
+      ...order,
+      clientName: order.name,
+      clientPhone: order.phone,
+      fuelCostPerLitre: order.fuelPricePerLiter
+    };
+
     res.json({
       success: true,
-      data: { order }
+      data: { order: transformedOrder }
     });
   })
 );
@@ -608,17 +624,48 @@ router.put('/orders/:id',
       }
     }
 
+    // ✅ Map frontend field names to database field names
+    const prismaData = {};
+
+    // Map clientName to name
+    if (updateData.clientName !== undefined) {
+      prismaData.name = updateData.clientName;
+    }
+
+    // Map clientPhone to phone
+    if (updateData.clientPhone !== undefined) {
+      prismaData.phone = updateData.clientPhone;
+    }
+
+    // Copy other fields that have the same names
+    const directFields = [
+      'orderNumber', 'pickupLocation', 'locationId', 'totalOrderAmount',
+      'fuelCostPerLitre', 'tripAllowance', 'truckId', 'driverDetails',
+      'invoiceNumber', 'truckExpensesDescription', 'deliveryAddress'
+    ];
+
+    directFields.forEach(field => {
+      if (updateData[field] !== undefined) {
+        prismaData[field] = updateData[field];
+      }
+    });
+
+    // Map fuelCostPerLitre to fuelPricePerLiter (note the spelling difference)
+    if (updateData.fuelCostPerLitre !== undefined) {
+      prismaData.fuelPricePerLiter = parseFloat(updateData.fuelCostPerLitre);
+    }
+
     // Recalculate if financial fields changed
     let calculatedCosts = null;
-    if (updateData.fuelRequired || updateData.fuelPricePerLiter || updateData.totalOrderAmount) {
+    if (updateData.fuelRequired || updateData.fuelCostPerLitre || updateData.totalOrderAmount) {
       calculatedCosts = await calculateOrderCosts(
         updateData.locationId || existingOrder.locationId,
         updateData.fuelRequired || parseFloat(existingOrder.fuelRequired),
-        updateData.fuelPricePerLiter || parseFloat(existingOrder.fuelPricePerLiter),
+        updateData.fuelCostPerLitre || parseFloat(existingOrder.fuelPricePerLiter),
         updateData.totalOrderAmount || parseFloat(existingOrder.totalOrderAmount)
       );
 
-      Object.assign(updateData, {
+      Object.assign(prismaData, {
         totalFuelCost: calculatedCosts.totalFuelCost,
         driverWages: calculatedCosts.driverWages,
         tripAllowance: calculatedCosts.tripAllowance,
@@ -632,7 +679,7 @@ router.put('/orders/:id',
 
     const updatedOrder = await prisma.transportOrder.update({
       where: { id },
-      data: updateData,
+      data: prismaData,
       include: {
         location: true,
         truck: true
