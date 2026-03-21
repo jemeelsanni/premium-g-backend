@@ -44,10 +44,13 @@ const createTransportOrderValidation = [
 ];
 
 const updateTransportOrderValidation = [
+  body('orderNumber').optional().trim(),
   body('clientName').optional().notEmpty(),
+  body('clientPhone').optional().trim(),
   body('pickupLocation').optional().trim(),
   body('totalOrderAmount').optional().isFloat({ min: 0 }),
   body('fuelCostPerLitre').optional().isFloat({ min: 0 }),
+  body('tripAllowance').optional().isFloat({ min: 0 }).withMessage('Trip allowance must be positive'),
   body('truckId')
     .optional({ nullable: true, checkFalsy: true })
     .custom((value) => {
@@ -56,8 +59,8 @@ const updateTransportOrderValidation = [
       throw new Error('Invalid truck ID format');
     }),
   body('driverDetails').optional().trim(),
+  body('invoiceNumber').optional().trim(),
   body('truckExpensesDescription').optional().trim(),
-  body('tripAllowance').optional().isFloat({ min: 0 }).withMessage('Trip allowance must be positive'),
   body('locationId').optional().custom((value) => {
     if (!value || value === '') return true;
     return validateCuid('location ID')(value);
