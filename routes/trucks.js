@@ -39,7 +39,15 @@ const createTruckValidation = [
   body('notes')
     .optional()
     .trim()
-    .isLength({ max: 500 }).withMessage('Notes must not exceed 500 characters')
+    .isLength({ max: 500 }).withMessage('Notes must not exceed 500 characters'),
+  body('driverName')
+    .optional()
+    .trim()
+    .isLength({ max: 100 }).withMessage('Driver name must not exceed 100 characters'),
+  body('driverPhone')
+    .optional()
+    .trim()
+    .isLength({ max: 20 }).withMessage('Driver phone must not exceed 20 characters')
 ];
 
 const updateTruckValidation = [
@@ -70,7 +78,15 @@ const updateTruckValidation = [
   body('notes')
     .optional()
     .trim()
-    .isLength({ max: 500 }).withMessage('Notes must not exceed 500 characters')
+    .isLength({ max: 500 }).withMessage('Notes must not exceed 500 characters'),
+  body('driverName')
+    .optional()
+    .trim()
+    .isLength({ max: 100 }).withMessage('Driver name must not exceed 100 characters'),
+  body('driverPhone')
+    .optional()
+    .trim()
+    .isLength({ max: 20 }).withMessage('Driver phone must not exceed 20 characters')
 ];
 
 // ================================
@@ -89,7 +105,7 @@ router.post('/trucks',
       throw new ValidationError('Invalid input data', errors.array());
     }
 
-    const { truckId, registrationNumber, maxPallets, make, model, year, notes } = req.body;
+    const { truckId, registrationNumber, maxPallets, make, model, year, notes, driverName, driverPhone } = req.body;
     const userId = req.user.id;
 
     // Check for duplicate truck ID
@@ -113,7 +129,9 @@ router.post('/trucks',
         make,
         model,
         year: year ? parseInt(year) : null,
-        notes
+        notes,
+        driverName,
+        driverPhone
       }
     });
 
