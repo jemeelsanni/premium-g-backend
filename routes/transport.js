@@ -48,9 +48,20 @@ const updateTransportOrderValidation = [
   body('pickupLocation').optional().trim(),
   body('totalOrderAmount').optional().isFloat({ min: 0 }),
   body('fuelCostPerLitre').optional().isFloat({ min: 0 }),
-  body('truckId').optional().custom(validateCuid('truck ID')),
+  body('truckId')
+    .optional({ nullable: true, checkFalsy: true })
+    .custom((value) => {
+      if (!value || value === '') return true;
+      if (typeof value === 'string' && value.length >= 3 && value.length <= 50) return true;
+      throw new Error('Invalid truck ID format');
+    }),
   body('driverDetails').optional().trim(),
-  body('truckExpensesDescription').optional().trim()
+  body('truckExpensesDescription').optional().trim(),
+  body('tripAllowance').optional().isFloat({ min: 0 }).withMessage('Trip allowance must be positive'),
+  body('locationId').optional().custom((value) => {
+    if (!value || value === '') return true;
+    return validateCuid('location ID')(value);
+  })
 ];
 
 const createExpenseValidation = [
