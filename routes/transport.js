@@ -385,8 +385,9 @@ router.get('/orders',
     // Build where clause
     const where = {};
 
-    // Role-based filtering - non-admins see only their own orders
-    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+    // Role-based filtering - transport users can see all orders
+    const isTransportUser = ['SUPER_ADMIN', 'TRANSPORT_ADMIN', 'TRANSPORT_STAFF'].includes(req.user.role);
+    if (!isTransportUser) {
       where.createdBy = req.user.id;
     }
 
@@ -533,8 +534,9 @@ router.get('/orders/:id',
     const { id } = req.params;
     const where = { id };
 
-    // Role-based access
-    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+    // Role-based access - transport users can view all orders
+    const isTransportUser = ['SUPER_ADMIN', 'TRANSPORT_ADMIN', 'TRANSPORT_STAFF'].includes(req.user.role);
+    if (!isTransportUser) {
       where.createdBy = req.user.id;
     }
 
