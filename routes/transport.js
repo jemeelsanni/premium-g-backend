@@ -49,7 +49,9 @@ const updateTransportOrderValidation = [
   body('clientPhone').optional().trim(),
   body('pickupLocation').optional().trim(),
   body('totalOrderAmount').optional().isFloat({ min: 0 }),
+  body('fuelRequired').optional().isFloat({ min: 0 }),
   body('fuelCostPerLitre').optional().isFloat({ min: 0 }),
+  body('driverWages').optional().isFloat({ min: 0 }),
   body('tripAllowance').optional().isFloat({ min: 0 }).withMessage('Trip allowance must be positive'),
   body('truckId')
     .optional({ nullable: true, checkFalsy: true })
@@ -628,53 +630,111 @@ router.put('/orders/:id',
     const prismaData = {};
 
     // Map clientName to name
-    if (updateData.clientName !== undefined) {
+    if (updateData.clientName !== undefined && updateData.clientName !== null) {
       prismaData.name = updateData.clientName;
     }
 
     // Map clientPhone to phone
-    if (updateData.clientPhone !== undefined) {
+    if (updateData.clientPhone !== undefined && updateData.clientPhone !== null) {
       prismaData.phone = updateData.clientPhone;
     }
 
-    // Copy other fields that have the same names
+    // Copy other fields that have the same names (excluding relation fields, calculated fields, and duplicates)
+    // Note: tripAllowance, driverWages, fuelRequired are handled in calculations, not direct updates
     const directFields = [
-      'orderNumber', 'pickupLocation', 'locationId', 'totalOrderAmount',
-      'fuelCostPerLitre', 'tripAllowance', 'truckId', 'driverDetails',
+      'orderNumber', 'pickupLocation', 'truckId', 'driverDetails',
       'invoiceNumber', 'truckExpensesDescription', 'deliveryAddress'
     ];
 
     directFields.forEach(field => {
-      if (updateData[field] !== undefined) {
+      if (updateData[field] !== undefined && updateData[field] !== null && updateData[field] !== '') {
         prismaData[field] = updateData[field];
       }
     });
 
     // Map fuelCostPerLitre to fuelPricePerLiter (note the spelling difference)
-    if (updateData.fuelCostPerLitre !== undefined) {
+    if (updateData.fuelCostPerLitre !== undefined && updateData.fuelCostPerLitre !== null) {
       prismaData.fuelPricePerLiter = parseFloat(updateData.fuelCostPerLitre);
     }
 
-    // Recalculate if financial fields changed
+    // Handle locationId as a relation if it's being changed
+    if (updateData.locationId && updateData.locationId !== existingOrder.locationId) {
+      prismaData.location = {
+        connect: { id: updateData.locationId }
+      };
+    }
+
+    // Recalculate if financial fields changed or location changed
     let calculatedCosts = null;
-    if (updateData.fuelRequired || updateData.fuelCostPerLitre || updateData.totalOrderAmount) {
+    const shouldRecalculate = updateData.fuelRequired !== undefined ||
+                              updateData.fuelCostPerLitre !== undefined ||
+                              updateData.totalOrderAmount !== undefined ||
+                              updateData.driverWages !== undefined ||
+                              updateData.tripAllowance !== undefined ||
+                              updateData.locationId !== undefined;
+
+    if (shouldRecalculate) {
+      // Determine which location to use
+      const effectiveLocationId = updateData.locationId || existingOrder.locationId;
+
+      // If location changed or we need location data, fetch it
+      let locationData = null;
+      if (updateData.locationId && updateData.locationId !== existingOrder.locationId) {
+        locationData = await prisma.location.findUnique({
+          where: { id: updateData.locationId },
+          select: { fuelRequired: true, driverWages: true }
+        });
+        if (!locationData) {
+          throw new NotFoundError('Location not found');
+        }
+      }
+
+      // Get current or updated values, ensuring they're valid numbers
+      // If fuelRequired/driverWages not provided but location changed, use new location's values
+      const fuelRequired = updateData.fuelRequired !== undefined
+        ? parseFloat(updateData.fuelRequired)
+        : (locationData ? parseFloat(locationData.fuelRequired) : parseFloat(existingOrder.fuelRequired));
+
+      const driverWages = updateData.driverWages !== undefined
+        ? parseFloat(updateData.driverWages)
+        : (locationData ? parseFloat(locationData.driverWages) : parseFloat(existingOrder.driverWages || 0));
+
+      const fuelCostPerLitre = updateData.fuelCostPerLitre !== undefined
+        ? parseFloat(updateData.fuelCostPerLitre)
+        : parseFloat(existingOrder.fuelPricePerLiter);
+
+      const totalOrderAmount = updateData.totalOrderAmount !== undefined
+        ? parseFloat(updateData.totalOrderAmount)
+        : parseFloat(existingOrder.totalOrderAmount);
+
+      const tripAllowance = updateData.tripAllowance !== undefined
+        ? parseFloat(updateData.tripAllowance)
+        : parseFloat(existingOrder.tripAllowance || 0);
+
       calculatedCosts = await calculateOrderCosts(
-        updateData.locationId || existingOrder.locationId,
-        updateData.fuelRequired || parseFloat(existingOrder.fuelRequired),
-        updateData.fuelCostPerLitre || parseFloat(existingOrder.fuelPricePerLiter),
-        updateData.totalOrderAmount || parseFloat(existingOrder.totalOrderAmount)
+        effectiveLocationId,
+        fuelRequired,
+        fuelCostPerLitre,
+        totalOrderAmount,
+        driverWages,
+        tripAllowance
       );
 
-      Object.assign(prismaData, {
-        totalFuelCost: calculatedCosts.totalFuelCost,
-        driverWages: calculatedCosts.driverWages,
-        tripAllowance: calculatedCosts.tripAllowance,
-        serviceChargeExpense: calculatedCosts.serviceChargeExpense,
-        totalTripExpenses: calculatedCosts.totalTripExpenses,
-        grossProfit: calculatedCosts.grossProfit,
-        netProfit: calculatedCosts.netProfit,
-        profitMargin: calculatedCosts.profitMargin
-      });
+      // Only add calculated values if they're valid numbers
+      if (calculatedCosts && !isNaN(calculatedCosts.totalTripExpenses) && isFinite(calculatedCosts.totalTripExpenses)) {
+        Object.assign(prismaData, {
+          fuelRequired: calculatedCosts.fuelRequired,
+          totalFuelCost: parseFloat(calculatedCosts.totalFuelCost.toFixed(2)),
+          driverWages: parseFloat(calculatedCosts.driverWages.toFixed(2)),
+          tripAllowance: parseFloat(calculatedCosts.tripAllowance.toFixed(2)),
+          serviceChargeExpense: parseFloat(calculatedCosts.serviceChargeExpense.toFixed(2)),
+          totalTripExpenses: parseFloat(calculatedCosts.totalTripExpenses.toFixed(2)),
+          grossProfit: parseFloat(calculatedCosts.grossProfit.toFixed(2)),
+          netProfit: parseFloat(calculatedCosts.netProfit.toFixed(2)),
+          profitMargin: calculatedCosts.profitMargin,
+          totalOrderAmount: calculatedCosts.totalOrderAmount
+        });
+      }
     }
 
     const updatedOrder = await prisma.transportOrder.update({
@@ -697,10 +757,18 @@ router.put('/orders/:id',
       getClientIP(req)
     );
 
+    // ✅ Transform response to match frontend field names
+    const transformedOrder = {
+      ...updatedOrder,
+      clientName: updatedOrder.name,
+      clientPhone: updatedOrder.phone,
+      fuelCostPerLitre: updatedOrder.fuelPricePerLiter
+    };
+
     res.json({
       success: true,
       message: 'Transport order updated successfully',
-      data: { order: updatedOrder }
+      data: { order: transformedOrder }
     });
   })
 );
