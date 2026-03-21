@@ -92,10 +92,7 @@ router.get('/customers',
     if (customerType) where.customerType = customerType;
     if (isActive !== 'all') where.isActive = isActive === 'true';
 
-    // Role-based filtering for sales reps
-    if (req.user.role === 'DISTRIBUTION_SALES_REP') {
-      where.salesRepId = req.user.id;
-    }
+    // Removed sales rep filtering - all distribution users can see all customers
 
     const [customers, total] = await Promise.all([
         prisma.customer.findMany({
