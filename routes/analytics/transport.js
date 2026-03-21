@@ -47,10 +47,9 @@ router.get('/dashboard',
         }
       }),
 
-      // ✅ FIXED: Use correct enum values
+      // Calculate revenue from ALL orders regardless of status
       prisma.transportOrder.aggregate({
         where: {
-          deliveryStatus: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] },
           createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined
         },
         _sum: { totalOrderAmount: true, netProfit: true }
@@ -92,10 +91,9 @@ router.get('/dashboard',
     const profit = parseFloat(totalRevenue._sum.netProfit || 0);
     const expenses = parseFloat(totalExpenses._sum.amount || 0);
 
-    // ✅ NEW: Get detailed orders for expense breakdown
-    const deliveredOrders = await prisma.transportOrder.findMany({
+    // Get ALL orders for expense breakdown (regardless of status)
+    const allOrders = await prisma.transportOrder.findMany({
       where: {
-        deliveryStatus: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] },
         createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined
       }
     });
@@ -106,7 +104,7 @@ router.get('/dashboard',
     let totalServiceCharges = 0;
     let totalTripExpenses = 0;
 
-    deliveredOrders.forEach(order => {
+    allOrders.forEach(order => {
       totalFuelCosts += parseFloat(order.totalFuelCost || 0);
       totalDriverWages += parseFloat(order.driverWages || 0) + parseFloat(order.tripAllowance || 0);
       totalServiceCharges += parseFloat(order.serviceChargeExpense || 0);
@@ -141,7 +139,7 @@ router.get('/dashboard',
           grossProfit: parseFloat(grossProfit.toFixed(2)),
           netProfit: parseFloat(netProfit.toFixed(2)),
           profitMargin: parseFloat(profitMargin.toFixed(2)),
-          totalTrips: deliveredOrders.length
+          totalTrips: allOrders.length
         },
         recentOrders: recentOrders.map(order => ({
           id: order.id,
@@ -175,8 +173,7 @@ router.get('/summary',
     }
 
     const orderWhere = {
-      createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined,
-      deliveryStatus: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] }
+      createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined
     };
     if (truckId) orderWhere.truckId = truckId;
 
@@ -331,9 +328,7 @@ router.get('/profit-analysis',
   asyncHandler(async (req, res) => {
     const { startDate, endDate, locationId } = req.query;
 
-    const where = {
-      deliveryStatus: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] }
-    };
+    const where = {};
 
     if (startDate || endDate) {
       where.createdAt = {};
@@ -406,7 +401,7 @@ router.get('/profit-analysis',
         SUM(net_profit) as profit,
         AVG(profit_margin) as avg_margin
       FROM transport_orders
-      WHERE delivery_status IN ('DELIVERED', 'PARTIALLY_DELIVERED')
+      WHERE 1=1
         ${startDate ? prisma.Prisma.sql`AND created_at >= ${new Date(startDate)}` : prisma.Prisma.empty}
         ${endDate ? prisma.Prisma.sql`AND created_at <= ${new Date(endDate)}` : prisma.Prisma.empty}
       GROUP BY DATE_TRUNC('month', created_at)
@@ -489,8 +484,7 @@ router.get('/trucks/:truckId/performance',
       prisma.transportOrder.findMany({
         where: {
           truckId,
-          createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined,
-          deliveryStatus: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] }
+          createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined
         },
         include: {
           location: { select: { name: true } }
@@ -601,8 +595,7 @@ router.get('/clients',
 
     const orders = await prisma.transportOrder.findMany({
       where: {
-        createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined,
-        deliveryStatus: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] }
+        createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined
       },
       select: {
         clientName: true,
