@@ -640,9 +640,10 @@ router.put('/orders/:id',
     }
 
     // Copy other fields that have the same names (excluding relation fields, calculated fields, and duplicates)
-    // Note: tripAllowance, driverWages, fuelRequired are handled in calculations, not direct updates
+    // Note: tripAllowance, driverWages, fuelRequired are handled in calculations
+    // Note: truckId and locationId are relation fields handled separately
     const directFields = [
-      'orderNumber', 'pickupLocation', 'truckId', 'driverDetails',
+      'orderNumber', 'pickupLocation', 'driverDetails',
       'invoiceNumber', 'truckExpensesDescription', 'deliveryAddress'
     ];
 
@@ -655,6 +656,19 @@ router.put('/orders/:id',
     // Map fuelCostPerLitre to fuelPricePerLiter (note the spelling difference)
     if (updateData.fuelCostPerLitre !== undefined && updateData.fuelCostPerLitre !== null) {
       prismaData.fuelPricePerLiter = parseFloat(updateData.fuelCostPerLitre);
+    }
+
+    // Handle truckId as a relation
+    if (updateData.truckId !== undefined) {
+      if (updateData.truckId === null || updateData.truckId === '') {
+        // Disconnect truck if null or empty
+        prismaData.truck = { disconnect: true };
+      } else if (updateData.truckId !== existingOrder.truckId) {
+        // Connect to new truck if changed
+        prismaData.truck = {
+          connect: { truckId: updateData.truckId }
+        };
+      }
     }
 
     // Handle locationId as a relation if it's being changed
