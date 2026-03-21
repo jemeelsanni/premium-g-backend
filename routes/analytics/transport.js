@@ -92,6 +92,31 @@ router.get('/dashboard',
     const profit = parseFloat(totalRevenue._sum.netProfit || 0);
     const expenses = parseFloat(totalExpenses._sum.amount || 0);
 
+    // ✅ NEW: Get detailed orders for expense breakdown
+    const deliveredOrders = await prisma.transportOrder.findMany({
+      where: {
+        deliveryStatus: { in: ['DELIVERED', 'PARTIALLY_DELIVERED'] },
+        createdAt: Object.keys(dateFilter).length > 0 ? dateFilter : undefined
+      }
+    });
+
+    // Calculate detailed expense breakdown
+    let totalFuelCosts = 0;
+    let totalDriverWages = 0;
+    let totalServiceCharges = 0;
+    let totalTripExpenses = 0;
+
+    deliveredOrders.forEach(order => {
+      totalFuelCosts += parseFloat(order.totalFuelCost || 0);
+      totalDriverWages += parseFloat(order.driverWages || 0) + parseFloat(order.tripAllowance || 0);
+      totalServiceCharges += parseFloat(order.serviceChargeExpense || 0);
+      totalTripExpenses += parseFloat(order.totalTripExpenses || 0);
+    });
+
+    const grossProfit = revenue - totalTripExpenses;
+    const netProfit = revenue - totalTripExpenses - expenses;
+    const profitMargin = revenue > 0 ? (netProfit / revenue) * 100 : 0;
+
     res.json({
       success: true,
       data: {
@@ -102,6 +127,22 @@ router.get('/dashboard',
         fleetSize: trucks,
         pendingExpenses,
         profitMargin: revenue > 0 ? parseFloat(((profit / revenue) * 100).toFixed(2)) : 0,
+        // ✅ NEW: Add detailed summary for profitability display
+        summary: {
+          totalRevenue: parseFloat(revenue.toFixed(2)),
+          tripExpenses: {
+            fuel: parseFloat(totalFuelCosts.toFixed(2)),
+            wages: parseFloat(totalDriverWages.toFixed(2)),
+            serviceCharges: parseFloat(totalServiceCharges.toFixed(2)),
+            total: parseFloat(totalTripExpenses.toFixed(2))
+          },
+          nonTripExpenses: parseFloat(expenses.toFixed(2)),
+          totalExpenses: parseFloat((totalTripExpenses + expenses).toFixed(2)),
+          grossProfit: parseFloat(grossProfit.toFixed(2)),
+          netProfit: parseFloat(netProfit.toFixed(2)),
+          profitMargin: parseFloat(profitMargin.toFixed(2)),
+          totalTrips: deliveredOrders.length
+        },
         recentOrders: recentOrders.map(order => ({
           id: order.id,
           orderNumber: order.orderNumber,
