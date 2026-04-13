@@ -61,9 +61,9 @@ const MODULE_PERMISSIONS = {
     admin: []
   },
   [USER_ROLES.CASHIER]: {
-    distribution: [], // NO ACCESS
-    transport: [], // NO ACCESS
-    warehouse: ['read'], // Only cash flow operations
+    distribution: ['read', 'write', 'admin'], // Full access
+    transport: ['read', 'write', 'admin'],    // Full access
+    warehouse: ['read', 'write'],             // View + edit (no admin)
     admin: []
   }
 };
