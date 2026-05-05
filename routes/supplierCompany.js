@@ -102,12 +102,12 @@ router.get('/:id/stats', authenticateToken, async (req, res) => {
 /**
  * @route   POST /api/v1/supplier-companies
  * @desc    Create new supplier company
- * @access  Private (SUPER_ADMIN, DISTRIBUTION_ADMIN only)
+ * @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER, ACCOUNTANT only)
  */
 router.post(
   '/',
   authenticateToken,
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
   async (req, res) => {
     try {
       const { name, code, email, phone, address, contactPerson, notes, productCategories } = req.body;
@@ -150,12 +150,12 @@ router.post(
 /**
  * @route   PUT /api/v1/supplier-companies/:id
  * @desc    Update supplier company
- * @access  Private (SUPER_ADMIN, DISTRIBUTION_ADMIN only)
+ * @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER, ACCOUNTANT only)
  */
 router.put(
   '/:id',
   authenticateToken,
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -194,12 +194,12 @@ router.put(
 /**
  * @route   DELETE /api/v1/supplier-companies/:id
  * @desc    Delete supplier company
- * @access  Private (SUPER_ADMIN only)
+ * @access  Private (MANAGING_DIRECTOR only)
  */
 router.delete(
   '/:id',
   authenticateToken,
-  authorizeRole(['SUPER_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR']),
   async (req, res) => {
     try {
       const { id } = req.params;

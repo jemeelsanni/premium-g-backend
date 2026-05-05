@@ -91,7 +91,7 @@ router.post('/discounts/request',
 
 // Get discount approval requests (Admin only)
 router.get('/discounts/requests',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
   [
     query('status').optional().isIn(['PENDING', 'APPROVED', 'REJECTED', 'EXPIRED']),
     query('page').optional().isInt({ min: 1 }),
@@ -150,7 +150,7 @@ const [requests, total] = await Promise.all([
 // @desc    Approve/Reject discount request (Super Admin only)
 // @access  Private (Super Admin)
 router.put('/discounts/requests/:id/review',
-  authorizeRole(['SUPER_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR']),
   param('id').custom(validateCuid('request ID')),
   [
     body('action').isIn(['approve', 'reject']),

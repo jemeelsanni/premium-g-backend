@@ -611,9 +611,9 @@ router.post('/:id/edit-request',
 
 // @route   GET /api/v1/warehouse/daily-opening-stock/edit-requests
 // @desc    Get all edit requests (for admin review)
-// @access  Private (SUPER_ADMIN, WAREHOUSE_ADMIN, CASHIER)
+// @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER, CASHIER)
 router.get('/edit-requests/list',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN', 'CASHIER']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
   [
     query('status').optional().isIn(['PENDING', 'APPROVED', 'REJECTED']),
     query('page').optional().isInt({ min: 1 }),
@@ -676,9 +676,9 @@ router.get('/edit-requests/list',
 
 // @route   PUT /api/v1/warehouse/daily-opening-stock/:id/approve
 // @desc    Approve daily opening stock entry
-// @access  Private (SUPER_ADMIN, WAREHOUSE_ADMIN, CASHIER)
+// @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER, CASHIER)
 router.put('/:id/approve',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN', 'CASHIER']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
   [param('id').custom(validateCuid('daily opening stock ID'))],
   approvalValidation,
   asyncHandler(async (req, res) => {
@@ -727,9 +727,9 @@ router.put('/:id/approve',
 
 // @route   PUT /api/v1/warehouse/daily-opening-stock/:id/reject
 // @desc    Reject daily opening stock entry
-// @access  Private (SUPER_ADMIN, WAREHOUSE_ADMIN, CASHIER)
+// @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER, CASHIER)
 router.put('/:id/reject',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN', 'CASHIER']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
   [param('id').custom(validateCuid('daily opening stock ID'))],
   rejectionValidation,
   asyncHandler(async (req, res) => {
@@ -777,9 +777,9 @@ router.put('/:id/reject',
 
 // @route   PUT /api/v1/warehouse/daily-opening-stock/edit-requests/:id/approve
 // @desc    Approve edit request and update the original entry
-// @access  Private (SUPER_ADMIN, WAREHOUSE_ADMIN, CASHIER)
+// @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER, CASHIER)
 router.put('/edit-requests/:id/approve',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN', 'CASHIER']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
   [param('id').custom(validateCuid('edit request ID'))],
   approvalValidation,
   asyncHandler(async (req, res) => {
@@ -857,9 +857,9 @@ router.put('/edit-requests/:id/approve',
 
 // @route   PUT /api/v1/warehouse/daily-opening-stock/edit-requests/:id/reject
 // @desc    Reject edit request
-// @access  Private (SUPER_ADMIN, WAREHOUSE_ADMIN, CASHIER)
+// @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER, CASHIER)
 router.put('/edit-requests/:id/reject',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN', 'CASHIER']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
   [param('id').custom(validateCuid('edit request ID'))],
   rejectionValidation,
   asyncHandler(async (req, res) => {

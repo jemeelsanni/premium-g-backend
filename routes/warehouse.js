@@ -340,7 +340,7 @@ router.get('/inventory', asyncHandler(async (req, res) => {
 // @desc    Update inventory levels
 // @access  Private (Warehouse Admin)
 router.put('/inventory/:id',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
   param('id').custom(validateCuid('inventory ID')),
   [
     body('pallets').optional().isInt({ min: 0 }),
@@ -1497,7 +1497,7 @@ router.get('/sales/receipt/:receiptNumber',
     const { receiptNumber } = req.params;
     const where = { receiptNumber };
 
-    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+    if (!['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT'].includes(req.user.role)) {
       where.salesOfficer = req.user.id;
     }
 
@@ -1648,7 +1648,7 @@ router.get('/sales/:id',
     const where = { id };
 
     // Role-based access
-    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+    if (!['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT'].includes(req.user.role)) {
       where.salesOfficer = req.user.id;
     }
 
@@ -1678,7 +1678,7 @@ router.get('/sales/:id',
 // @desc    Update warehouse sale (admin only)
 // @access  Private (Warehouse Admin, Super Admin)
 router.put('/sales/:id',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
   [
     param('id').custom(validateCuid('sale ID')),
     body('quantity').optional().isInt({ min: 1 }),
@@ -1760,7 +1760,7 @@ router.put('/sales/:id',
 // @desc    Delete warehouse sale (reverse inventory and cash flow)
 // @access  Private (Warehouse Admin, Super Admin)
 router.delete('/sales/:id',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
   [
     param('id').custom(validateCuid('sale ID'))
   ],
@@ -1964,7 +1964,7 @@ router.post('/cash-flow',
     }
 
     // Only cashiers and warehouse admins
-    if (!['CASHIER', 'WAREHOUSE_ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
+    if (!['CASHIER', 'GENERAL_MANAGER', 'MANAGING_DIRECTOR'].includes(req.user.role)) {
       throw new BusinessError('Access denied', 'INSUFFICIENT_PERMISSIONS');
     }
 
@@ -2439,7 +2439,7 @@ router.get(
 // @desc    Get detailed profit summary with expense allocation
 // @access  Private (Warehouse Admin)
 router.get('/analytics/profit-summary',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
   asyncHandler(async (req, res) => {
     const { startDate, endDate } = req.query;
 
@@ -2638,7 +2638,7 @@ router.get('/sales/export/csv',
     if (productId) where.productId = productId;
 
     // Role-based access
-    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+    if (!['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT'].includes(req.user.role)) {
       where.salesOfficer = req.user.id;
     }
 
@@ -2753,7 +2753,7 @@ router.get('/sales/export/pdf',
     if (productId) where.productId = productId;
 
     // Role-based access
-    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+    if (!['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT'].includes(req.user.role)) {
       where.salesOfficer = req.user.id;
     }
 
@@ -2956,7 +2956,7 @@ router.get('/sales/:id/export/pdf',
     const where = { receiptNumber };
 
     // Role-based access
-    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+    if (!['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT'].includes(req.user.role)) {
       where.salesOfficer = req.user.id;
     }
 
@@ -3111,7 +3111,7 @@ const sale = await prisma.warehouseSale.findFirst({
     yPos += 20;
 
     // ===== COST & PROFIT ANALYSIS =====
-    if (req.user.role.includes('ADMIN') || req.user.role === 'SUPER_ADMIN') {
+    if (['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT'].includes(req.user.role)) {
       doc.fontSize(14)
          .font('Helvetica-Bold')
          .fillColor('#1e40af')

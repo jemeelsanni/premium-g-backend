@@ -618,7 +618,7 @@ router.get('/orders', asyncHandler(async (req, res) => {
 
   // Role-based filtering - only non-distribution roles are restricted to own orders
   // Distribution sales reps can see all distribution orders for full pipeline visibility
-  const isDistributionUser = ['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'DISTRIBUTION_SALES_REP'].includes(req.user.role);
+  const isDistributionUser = ['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT', 'DISTRIBUTORSHIP_SALES_REP'].includes(req.user.role);
   if (!isDistributionUser) {
     where.createdBy = req.user.id;
   }
@@ -709,7 +709,7 @@ router.get('/orders/:id',
     const where = { id };
 
     // Role-based access - distribution users can view all orders
-    const isDistributionUser = ['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'DISTRIBUTION_SALES_REP'].includes(req.user.role);
+    const isDistributionUser = ['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT', 'DISTRIBUTORSHIP_SALES_REP'].includes(req.user.role);
     if (!isDistributionUser) {
       where.createdBy = req.user.id;
     }
@@ -889,7 +889,7 @@ router.patch('/orders/:id/items',
     }
 
     // Check permissions
-    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+    if (!['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT'].includes(req.user.role)) {
       if (existingOrder.createdBy !== userId) {
         throw new BusinessError('You can only modify your own orders', 'ACCESS_DENIED');
       }
@@ -1011,12 +1011,12 @@ router.put('/orders/:id',
     }
 
     // Check permissions - users can only modify their own entries
-    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+    if (!['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT'].includes(req.user.role)) {
       if (existingOrder.createdBy !== userId) {
         throw new BusinessError('You can only modify your own orders', 'ACCESS_DENIED');
       }
-    } else if (req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
-      // Admins can only view, not modify
+    } else if (req.user.role === 'GENERAL_MANAGER' || req.user.role === 'ACCOUNTANT') {
+      // General Manager and Accountant can only view, not modify
       throw new BusinessError('Admins have view-only access to user entries', 'ADMIN_VIEW_ONLY');
     }
 
@@ -1377,7 +1377,7 @@ router.post('/orders/bulk/confirm-payments',
     const { orderIds, notes } = req.body;
 
     // Check if user is authorized (accountant/admin)
-    if (!['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'CASHIER'].includes(req.user.role)) {
+    if (!['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT', 'CASHIER'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
         message: 'Only accountants and admins can confirm payments'

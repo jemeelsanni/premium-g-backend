@@ -48,7 +48,7 @@ const updateWarehouseExpenseValidation = [
 // ================================
 
 // @route   POST /api/v1/warehouse/expenses
-// @desc    Create new warehouse expense (auto-approve for WAREHOUSE_ADMIN)
+// @desc    Create new warehouse expense (auto-approve for GENERAL_MANAGER)
 // @access  Private (Warehouse Admin, Sales Officer)
 
 router.post('/expenses',
@@ -62,10 +62,10 @@ router.post('/expenses',
     const expenseData = {
       ...req.body,
       createdBy: req.user.id,
-      // ✨ Auto-approve if created by WAREHOUSE_ADMIN
-      status: req.user.role === 'WAREHOUSE_ADMIN' ? 'APPROVED' : 'PENDING',
-      approvedBy: req.user.role === 'WAREHOUSE_ADMIN' ? req.user.id : null,
-      approvedAt: req.user.role === 'WAREHOUSE_ADMIN' ? new Date() : null,
+      // ✨ Auto-approve if created by GENERAL_MANAGER
+      status: req.user.role === 'GENERAL_MANAGER' ? 'APPROVED' : 'PENDING',
+      approvedBy: req.user.role === 'GENERAL_MANAGER' ? req.user.id : null,
+      approvedAt: req.user.role === 'GENERAL_MANAGER' ? new Date() : null,
     };
 
     // Use transaction to create expense and cash flow together (if auto-approved)
@@ -83,7 +83,7 @@ router.post('/expenses',
       let cashFlowEntry = null;
 
       // 2. ✨ AUTOMATICALLY CREATE CASH FLOW IF AUTO-APPROVED ✨
-      if (req.user.role === 'WAREHOUSE_ADMIN') {
+      if (req.user.role === 'GENERAL_MANAGER') {
         const cashFlowDescription = expense.product
           ? `Expense: ${expense.category} - ${expense.product.name} (${expense.expenseType.replace(/_/g, ' ')})`
           : `Expense: ${expense.category} - ${expense.expenseType.replace(/_/g, ' ')}`;
@@ -110,7 +110,7 @@ router.post('/expenses',
       return { expense, cashFlowEntry };
     });
 
-    const message = req.user.role === 'WAREHOUSE_ADMIN' 
+    const message = req.user.role === 'GENERAL_MANAGER'
       ? 'Warehouse expense created and automatically approved. Cash flow entry created.'
       : 'Warehouse expense created successfully and submitted for approval';
 
@@ -119,7 +119,7 @@ router.post('/expenses',
       message,
       data: { 
         expense: result.expense,
-        cashFlowRecorded: req.user.role === 'WAREHOUSE_ADMIN'
+        cashFlowRecorded: req.user.role === 'GENERAL_MANAGER'
       }
     });
   })
@@ -174,7 +174,7 @@ router.get('/expenses',
     }
 
     // Role-based access control
-    if (!['SUPER_ADMIN', 'WAREHOUSE_ADMIN'].includes(req.user.role)) {
+    if (!['MANAGING_DIRECTOR', 'GENERAL_MANAGER'].includes(req.user.role)) {
       where.createdBy = req.user.id;
     }
 
@@ -231,7 +231,7 @@ router.get('/expenses/:id',
     }
 
     // Check access permissions
-    if (!['SUPER_ADMIN', 'WAREHOUSE_ADMIN'].includes(req.user.role) && 
+    if (!['MANAGING_DIRECTOR', 'GENERAL_MANAGER'].includes(req.user.role) &&
         expense.createdBy !== req.user.id) {
       throw new BusinessError('Access denied', 'INSUFFICIENT_PERMISSIONS');
     }
@@ -272,7 +272,7 @@ router.put('/expenses/:id',
 
     // Check permissions
     const canUpdate = 
-      ['SUPER_ADMIN', 'WAREHOUSE_ADMIN'].includes(req.user.role) ||
+      ['MANAGING_DIRECTOR', 'GENERAL_MANAGER'].includes(req.user.role) ||
       expense.createdBy === req.user.id;
 
     if (!canUpdate) {
@@ -281,7 +281,7 @@ router.put('/expenses/:id',
 
     // Handle approval/rejection
     if (updateData.status && ['APPROVED', 'REJECTED'].includes(updateData.status)) {
-      if (!['SUPER_ADMIN', 'WAREHOUSE_ADMIN'].includes(req.user.role)) {
+      if (!['MANAGING_DIRECTOR', 'GENERAL_MANAGER'].includes(req.user.role)) {
         throw new BusinessError('Only administrators can approve/reject expenses', 'INSUFFICIENT_PERMISSIONS');
       }
       
@@ -362,7 +362,7 @@ router.put('/expenses/:id',
 // @desc    Bulk approve warehouse expenses (with automatic cash flow)
 // @access  Private (Warehouse Admin only)
 router.post('/expenses/bulk-approve',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
   [
     body('expenseIds').isArray({ min: 1 }).withMessage('Expense IDs array is required'),
     body('action').isIn(['approve', 'reject']).withMessage('Action must be approve or reject'),
@@ -476,7 +476,7 @@ router.delete('/expenses/:id',
 
     // Check permissions
     const canDelete = 
-      ['SUPER_ADMIN', 'WAREHOUSE_ADMIN'].includes(req.user.role) ||
+      ['MANAGING_DIRECTOR', 'GENERAL_MANAGER'].includes(req.user.role) ||
       (expense.createdBy === req.user.id && expense.status === 'PENDING');
 
     if (!canDelete) {
@@ -505,7 +505,7 @@ router.delete('/expenses/:id',
 // @desc    Get warehouse expense analytics
 // @access  Private (Warehouse Admin)
 router.get('/expenses/analytics/summary',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
   [
     query('startDate').optional().isISO8601(),
     query('endDate').optional().isISO8601()

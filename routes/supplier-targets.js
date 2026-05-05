@@ -9,12 +9,12 @@ const { validateCuid } = require('../utils/validators');
 const router = express.Router();
 const prisma = require('../lib/prisma');
 
-// Authorization middleware for write operations (SUPER_ADMIN or DISTRIBUTION_ADMIN only)
+// Authorization middleware for write operations (MANAGING_DIRECTOR, GENERAL_MANAGER or ACCOUNTANT only)
 const authorizeAdmin = (req, res, next) => {
-  if (!['SUPER_ADMIN', 'DISTRIBUTION_ADMIN'].includes(req.user.role)) {
+  if (!['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT'].includes(req.user.role)) {
     return res.status(403).json({
       success: false,
-      message: 'Access denied. Only SUPER_ADMIN and DISTRIBUTION_ADMIN can manage supplier targets.'
+      message: 'Access denied. Only MANAGING_DIRECTOR, GENERAL_MANAGER and ACCOUNTANT can manage supplier targets.'
     });
   }
   next();
@@ -321,7 +321,7 @@ router.get(
 // ==========================================
 // POST /api/v1/supplier-targets
 // Create a new supplier target
-// Access: SUPER_ADMIN, DISTRIBUTION_ADMIN only
+// Access: MANAGING_DIRECTOR, GENERAL_MANAGER, ACCOUNTANT only
 // ==========================================
 router.post(
   '/',
@@ -443,7 +443,7 @@ router.post(
 // ==========================================
 // PUT /api/v1/supplier-targets/:id
 // Update a supplier target
-// Access: SUPER_ADMIN, DISTRIBUTION_ADMIN only
+// Access: MANAGING_DIRECTOR, GENERAL_MANAGER, ACCOUNTANT only
 // ==========================================
 router.put(
   '/:id',
@@ -536,7 +536,7 @@ router.put(
 // ==========================================
 // DELETE /api/v1/supplier-targets/:id
 // Delete a supplier target
-// Access: SUPER_ADMIN, DISTRIBUTION_ADMIN only
+// Access: MANAGING_DIRECTOR, GENERAL_MANAGER, ACCOUNTANT only
 // ==========================================
 router.delete(
   '/:id',

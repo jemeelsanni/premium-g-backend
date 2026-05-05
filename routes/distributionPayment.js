@@ -96,7 +96,7 @@ router.post('/payments/confirm',
     }
 
     // Check if user is accountant or admin
-    if (!['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'CASHIER'].includes(req.user.role)) {
+    if (!['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT', 'CASHIER'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
         message: 'Only accountants and admins can confirm payments'

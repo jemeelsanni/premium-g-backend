@@ -7,65 +7,44 @@ const prisma = require('../lib/prisma');
 // ================================
 
 const USER_ROLES = {
-  SUPER_ADMIN: 'SUPER_ADMIN',
-  DISTRIBUTION_ADMIN: 'DISTRIBUTION_ADMIN',
-  TRANSPORT_ADMIN: 'TRANSPORT_ADMIN',
-  WAREHOUSE_ADMIN: 'WAREHOUSE_ADMIN',
-  DISTRIBUTION_SALES_REP: 'DISTRIBUTION_SALES_REP',
-  WAREHOUSE_SALES_OFFICER: 'WAREHOUSE_SALES_OFFICER',
+  MANAGING_DIRECTOR: 'MANAGING_DIRECTOR',
+  GENERAL_MANAGER: 'GENERAL_MANAGER',
+  ACCOUNTANT: 'ACCOUNTANT',
   CASHIER: 'CASHIER',
-  TRANSPORT_STAFF: 'TRANSPORT_STAFF'
+  DISTRIBUTORSHIP_SALES_REP: 'DISTRIBUTORSHIP_SALES_REP',
 };
 
 const MODULE_PERMISSIONS = {
-  [USER_ROLES.SUPER_ADMIN]: {
+  [USER_ROLES.MANAGING_DIRECTOR]: {
     distribution: ['read', 'write', 'admin'],
     transport: ['read', 'write', 'admin'],
     warehouse: ['read', 'write', 'admin'],
     admin: ['read', 'write', 'admin']
   },
-  [USER_ROLES.DISTRIBUTION_ADMIN]: {
+  [USER_ROLES.GENERAL_MANAGER]: {
     distribution: ['read', 'write', 'admin'],
-    transport: [], // NO ACCESS
-    warehouse: [], // NO ACCESS
-    admin: []
-  },
-  [USER_ROLES.TRANSPORT_ADMIN]: {
-    distribution: [], // NO ACCESS
-    transport: ['read', 'write', 'admin'],
-    warehouse: [], // NO ACCESS
-    admin: []
-  },
-  [USER_ROLES.WAREHOUSE_ADMIN]: {
-    distribution: [], // NO ACCESS
-    transport: [], // NO ACCESS
+    transport: [],                            // NO ACCESS
     warehouse: ['read', 'write', 'admin'],
-    admin: []
+    admin: ['read', 'write', 'admin']
   },
-  [USER_ROLES.DISTRIBUTION_SALES_REP]: {
-    distribution: ['read', 'write'],
-    transport: [], // NO ACCESS
-    warehouse: [], // NO ACCESS
-    admin: []
-  },
-  [USER_ROLES.WAREHOUSE_SALES_OFFICER]: {
-    distribution: [], // NO ACCESS
-    transport: [], // NO ACCESS
-    warehouse: ['read', 'write'],
-    admin: []
-  },
-  [USER_ROLES.TRANSPORT_STAFF]: {
-    distribution: [], // NO ACCESS
-    transport: ['read', 'write'],
-    warehouse: [], // NO ACCESS
+  [USER_ROLES.ACCOUNTANT]: {
+    distribution: ['read', 'write', 'admin'],
+    transport: ['read', 'write', 'admin'],
+    warehouse: ['read'],                      // Read-only (expenses list)
     admin: []
   },
   [USER_ROLES.CASHIER]: {
-    distribution: ['read', 'write', 'admin'], // Full access
-    transport: ['read', 'write', 'admin'],    // Full access
-    warehouse: ['read', 'write'],             // View + edit (no admin)
+    distribution: [],                         // NO ACCESS
+    transport: [],                            // NO ACCESS
+    warehouse: ['read', 'write'],
     admin: []
-  }
+  },
+  [USER_ROLES.DISTRIBUTORSHIP_SALES_REP]: {
+    distribution: ['read', 'write'],
+    transport: [],                            // NO ACCESS
+    warehouse: [],                            // NO ACCESS
+    admin: []
+  },
 };
 
 // ================================
@@ -218,7 +197,7 @@ const authorizeOwnEntry = (req, res, next) => {
   const resourceUserId = req.params.userId || req.body.createdBy || req.body.userId;
 
   // Super admin can access anything
-  if (user.role === USER_ROLES.SUPER_ADMIN) {
+  if (user.role === USER_ROLES.MANAGING_DIRECTOR) {
     return next();
   }
 

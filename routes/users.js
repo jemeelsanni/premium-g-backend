@@ -1,5 +1,6 @@
 const express = require('express');
 const { body, query, param, validationResult } = require('express-validator');
+const bcrypt = require('bcrypt');
 
 const { asyncHandler, ValidationError, BusinessError, NotFoundError } = require('../middleware/errorHandler');
 const { authorizeRole } = require('../middleware/auth');
@@ -25,8 +26,7 @@ const updateUserValidation = [
     .withMessage('isActive must be a boolean'),
   body('role')
     .optional()
-    .isIn(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'TRANSPORT_ADMIN', 'WAREHOUSE_ADMIN', 
-           'DISTRIBUTION_SALES_REP', 'WAREHOUSE_SALES_OFFICER', 'CASHIER', 'TRANSPORT_STAFF'])
+    .isIn(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT', 'CASHIER', 'DISTRIBUTORSHIP_SALES_REP'])
     .withMessage('Invalid role specified')
 ];
 
@@ -38,7 +38,7 @@ const updateUserValidation = [
 // @desc    Get all users with filtering and pagination
 // @access  Private (Admin only)
 router.get('/', 
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'TRANSPORT_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
   asyncHandler(async (req, res) => {
     const {
       page = 1,
@@ -112,8 +112,7 @@ router.get('/:id',
     const { id } = req.params;
 
     // Check if user can access this profile
-    const canAccess = req.user.role.includes('ADMIN') || 
-                     req.user.role === 'SUPER_ADMIN' || 
+    const canAccess = ['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT'].includes(req.user.role) ||
                      req.user.id === id;
 
     if (!canAccess) {
@@ -149,7 +148,7 @@ router.get('/:id',
 // @access  Private (Super Admin only)
 router.put('/:id',
   param('id').custom(validateCuid('user ID')), // ✅ UPDATED
-  authorizeRole(['SUPER_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR']),
   updateUserValidation,
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -202,7 +201,7 @@ router.put('/:id',
 // @access  Private (Super Admin only)
 router.delete('/:id',
   param('id').custom(validateCuid('user ID')), // ✅ UPDATED
-  authorizeRole(['SUPER_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR']),
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -260,8 +259,7 @@ router.get('/:id/activity',
     const { days = 30 } = req.query;
 
     // Check if user can access this activity
-    const canAccess = req.user.role.includes('ADMIN') || 
-                     req.user.role === 'SUPER_ADMIN' || 
+    const canAccess = ['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT'].includes(req.user.role) ||
                      req.user.id === id;
 
     if (!canAccess) {
@@ -302,7 +300,7 @@ router.get('/:id/activity',
 // @desc    Get user statistics
 // @access  Private (Admin only)
 router.get('/stats/summary',
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'TRANSPORT_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
   asyncHandler(async (req, res) => {
     const [
       totalUsers,
@@ -352,5 +350,64 @@ router.get('/stats/summary',
 );
 
 
+
+// @route   POST /api/v1/users/:id/reset-password
+// @desc    Reset a user's password (admin-initiated, no old password needed)
+// @access  Private (Managing Director and General Manager only)
+router.post('/:id/reset-password',
+  param('id').custom(validateCuid('user ID')),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
+  [
+    body('newPassword')
+      .isLength({ min: 8 })
+      .withMessage('Password must be at least 8 characters')
+      .matches(/[A-Z]/)
+      .withMessage('Password must contain at least one uppercase letter')
+      .matches(/[a-z]/)
+      .withMessage('Password must contain at least one lowercase letter')
+      .matches(/[0-9]/)
+      .withMessage('Password must contain at least one number')
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      throw new ValidationError('Invalid input data', errors.array());
+    }
+
+    const { id } = req.params;
+    const { newPassword } = req.body;
+
+    // Prevent changing own password through this endpoint
+    if (req.user.id === id) {
+      throw new BusinessError('Use the change-password endpoint to update your own password', 'USE_SELF_CHANGE_PASSWORD');
+    }
+
+    const user = await prisma.user.findUnique({ where: { id } });
+
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+
+    // Hash new password
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+
+    // Update password and invalidate all sessions
+    await Promise.all([
+      prisma.user.update({
+        where: { id },
+        data: { passwordHash }
+      }),
+      prisma.userSession.updateMany({
+        where: { userId: id },
+        data: { isActive: false }
+      })
+    ]);
+
+    res.json({
+      success: true,
+      message: `Password for ${user.username} has been reset successfully`
+    });
+  })
+);
 
 module.exports = router;

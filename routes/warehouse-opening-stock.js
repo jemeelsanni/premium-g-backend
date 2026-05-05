@@ -21,7 +21,7 @@ const { query, validationResult } = require('express-validator');
  */
 router.get(
   '/',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN', 'WAREHOUSE_SALES_OFFICER', 'CASHIER']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
   [
     query('date').optional().isISO8601().withMessage('Invalid date format'),
     query('productId').optional().isString(),
@@ -298,7 +298,7 @@ router.get(
  */
 router.get(
   '/history',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
   [
     query('startDate').isISO8601().withMessage('Start date is required'),
     query('endDate').isISO8601().withMessage('End date is required'),

@@ -148,7 +148,7 @@ GET /api/v1/audit-logs/suspicious-activities?days=30
         "createdAt": "2024-12-13T10:30:00Z",
         "user": {
           "username": "admin_user",
-          "role": "WAREHOUSE_ADMIN"
+          "role": "GENERAL_MANAGER"
         },
         "productName": "Sosa 1 Ltr",
         "triggeredBy": "MANUAL_ADJUSTMENT",
@@ -239,7 +239,7 @@ Each audit log contains:
   "user": {
     "username": "admin_user",
     "email": "admin@example.com",
-    "role": "WAREHOUSE_ADMIN"
+    "role": "GENERAL_MANAGER"
   },
   "action": "UPDATE",
   "entity": "WarehouseInventory",
@@ -278,8 +278,8 @@ Each audit log contains:
 ## üîê Access Control
 
 **Who can view audit logs?**
-- `SUPER_ADMIN` - Full access to all endpoints
-- `WAREHOUSE_ADMIN` - Full access to all endpoints
+- `MANAGING_DIRECTOR` - Full access to all endpoints
+- `GENERAL_MANAGER` - Full access to all endpoints
 - Other roles - No access
 
 ---
@@ -401,7 +401,7 @@ The `audit_logs` table already exists in your schema, so no migration needed! ‚ú
 **Solution**: Check server.js has the route registered (line 383)
 
 ### **Issue**: Permission denied
-**Solution**: Ensure user has SUPER_ADMIN or WAREHOUSE_ADMIN role
+**Solution**: Ensure user has MANAGING_DIRECTOR or GENERAL_MANAGER role
 
 ### **Issue**: Empty logs for old changes
 **Solution**: Audit logging only tracks NEW changes (after implementation). Old changes won't have logs.

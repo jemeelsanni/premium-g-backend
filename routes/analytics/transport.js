@@ -324,7 +324,7 @@ router.get('/summary',
 // @desc    Get detailed profit analysis
 // @access  Private (Admin)
 router.get('/profit-analysis',
-  authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
   asyncHandler(async (req, res) => {
     const { startDate, endDate, locationId } = req.query;
 
@@ -663,7 +663,7 @@ router.get('/clients',
 // @desc    Get expense analytics summary
 // @access  Private (Admin)
 router.get('/expenses/summary',
-  authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
   asyncHandler(async (req, res) => {
     const { startDate, endDate } = req.query;
 

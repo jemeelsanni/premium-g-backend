@@ -173,7 +173,7 @@ router.get('/', asyncHandler(async (req, res) => {
   const where = {};
 
   // Role-based filtering - non-admins see only their own expenses
-  if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+  if (!['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT'].includes(req.user.role)) {
     where.createdBy = req.user.id;
   }
 
@@ -266,7 +266,7 @@ router.get('/:id',
     const where = { id };
 
     // Role-based access - non-admins can only see their own expenses
-    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+    if (!['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT'].includes(req.user.role)) {
       where.createdBy = req.user.id;
     }
 
@@ -321,9 +321,8 @@ router.put('/:id',
     }
 
     // Check permissions
-    if (existingExpense.createdBy !== userId && 
-        !req.user.role.includes('ADMIN') && 
-        req.user.role !== 'SUPER_ADMIN') {
+    if (existingExpense.createdBy !== userId &&
+        !['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT'].includes(req.user.role)) {
       throw new BusinessError('You can only modify your own expenses', 'ACCESS_DENIED');
     }
 
@@ -373,7 +372,7 @@ router.put('/:id',
 // @access  Private (Admin)
 router.post('/:id/approve',
   param('id').custom(validateCuid('expense ID')),
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'TRANSPORT_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
   approveExpenseValidation,
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -454,9 +453,8 @@ router.delete('/:id',
     }
 
     // Check permissions
-    if (expense.createdBy !== userId && 
-        !req.user.role.includes('ADMIN') && 
-        req.user.role !== 'SUPER_ADMIN') {
+    if (expense.createdBy !== userId &&
+        !['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT'].includes(req.user.role)) {
       throw new BusinessError('You can only delete your own expenses', 'ACCESS_DENIED');
     }
 
@@ -484,7 +482,7 @@ router.delete('/:id',
 // @desc    Get expense analytics summary
 // @access  Private (Admin)
 router.get('/analytics/summary',
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'TRANSPORT_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
   asyncHandler(async (req, res) => {
     const { startDate, endDate, period = 'monthly' } = req.query;
     
@@ -593,7 +591,7 @@ router.get('/analytics/summary',
 // @access  Private (Admin)
 router.get('/analytics/location/:locationId',
   param('locationId').custom(validateCuid('location ID')),
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'TRANSPORT_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
   asyncHandler(async (req, res) => {
     const { locationId } = req.params;
     const { startDate, endDate } = req.query;
@@ -672,7 +670,7 @@ router.get('/analytics/location/:locationId',
 // @desc    Get expense analytics for specific truck
 // @access  Private (Admin)
 router.get('/analytics/truck/:truckId',
-  authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
   asyncHandler(async (req, res) => {
     const { truckId } = req.params;
     const { startDate, endDate } = req.query;
@@ -763,7 +761,7 @@ router.get('/analytics/truck/:truckId',
 // @desc    Bulk approve expenses (Admin only)
 // @access  Private (Admin)
 router.post('/bulk-approve',
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'TRANSPORT_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
   body('expenseIds').isArray().withMessage('Expense IDs must be an array'),
   body('expenseIds.*').custom(validateCuid('expense ID')),
   body('action').isIn(['approve', 'reject']).withMessage('Action must be approve or reject'),

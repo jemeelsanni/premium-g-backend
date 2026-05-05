@@ -97,7 +97,7 @@ const updateTruckValidation = [
 // @desc    Create new truck
 // @access  Private (Transport Admin, Super Admin)
 router.post('/trucks',
-  authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
   createTruckValidation,
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -198,7 +198,7 @@ router.get('/trucks/:id',
 // @desc    Update truck
 // @access  Private (Transport Admin, Super Admin)
 router.put('/trucks/:id',
-  authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
   updateTruckValidation,
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -259,7 +259,7 @@ router.put('/trucks/:id',
 // @desc    Delete truck
 // @access  Private (Super Admin only)
 router.delete('/trucks/:id',
-  authorizeRole(['SUPER_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR']),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;

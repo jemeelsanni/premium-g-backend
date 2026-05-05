@@ -253,8 +253,7 @@ router.get('/order/:orderId',
     }
 
     // Check permissions
-    if (!req.user.role.includes('ADMIN') && 
-        req.user.role !== 'SUPER_ADMIN' && 
+    if (!['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT'].includes(req.user.role) &&
         order.createdBy !== req.user.id) {
       throw new BusinessError('Access denied', 'ACCESS_DENIED');
     }
@@ -272,7 +271,7 @@ router.get('/order/:orderId',
 // @desc    Get comprehensive profit dashboard
 // @access  Private (Admin)
 router.get('/dashboard',
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'TRANSPORT_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
   asyncHandler(async (req, res) => {
     const { days = 30 } = req.query;
     
@@ -389,7 +388,7 @@ router.get('/dashboard',
 // @desc    Get monthly profit analysis
 // @access  Private (Admin)
 router.get('/monthly',
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'TRANSPORT_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
   asyncHandler(async (req, res) => {
     const { year, month } = req.query;
     
@@ -418,7 +417,7 @@ router.get('/monthly',
 // @desc    Get yearly profit analysis with monthly breakdown
 // @access  Private (Admin)
 router.get('/yearly',
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'TRANSPORT_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
   asyncHandler(async (req, res) => {
     const { year } = req.query;
     const targetYear = year ? parseInt(year) : new Date().getFullYear();
@@ -490,7 +489,7 @@ router.get('/yearly',
 // @access  Private (Admin)
 router.get('/location/:locationId',
   param('locationId').custom(validateCuid('location ID')),
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'TRANSPORT_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
   asyncHandler(async (req, res) => {
     const { locationId } = req.params;
     const { startDate, endDate, period = '90' } = req.query;
@@ -629,7 +628,7 @@ router.get('/location/:locationId',
 // @access  Private (Admin)
 router.get('/customer/:customerId',
   param('customerId').custom(validateCuid('customer ID')),
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
   asyncHandler(async (req, res) => {
     const { customerId } = req.params;
     const { startDate, endDate, period = '90' } = req.query;
@@ -749,7 +748,7 @@ router.get('/customer/:customerId',
 // @desc    Recalculate profit analysis for all orders
 // @access  Private (Super Admin only)
 router.post('/recalculate',
-  authorizeRole(['SUPER_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR']),
   asyncHandler(async (req, res) => {
     const { startDate, endDate } = req.body;
 

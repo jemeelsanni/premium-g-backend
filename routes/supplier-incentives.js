@@ -10,10 +10,10 @@ const prisma = require('../lib/prisma');
 
 // Authorization middleware for write operations
 const authorizeAdmin = (req, res, next) => {
-  if (!['SUPER_ADMIN', 'DISTRIBUTION_ADMIN'].includes(req.user.role)) {
+  if (!['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT'].includes(req.user.role)) {
     return res.status(403).json({
       success: false,
-      message: 'Access denied. Only SUPER_ADMIN and DISTRIBUTION_ADMIN can manage supplier incentives.'
+      message: 'Access denied. Only MANAGING_DIRECTOR, GENERAL_MANAGER and ACCOUNTANT can manage supplier incentives.'
     });
   }
   next();
@@ -429,7 +429,7 @@ router.get(
 // ==========================================
 // POST /api/v1/supplier-incentives
 // Create a new supplier incentive
-// Access: SUPER_ADMIN, DISTRIBUTION_ADMIN only
+// Access: MANAGING_DIRECTOR, GENERAL_MANAGER, ACCOUNTANT only
 // ==========================================
 router.post(
   '/',
@@ -535,7 +535,7 @@ router.post(
 // ==========================================
 // PUT /api/v1/supplier-incentives/:id
 // Update a supplier incentive
-// Access: SUPER_ADMIN, DISTRIBUTION_ADMIN only
+// Access: MANAGING_DIRECTOR, GENERAL_MANAGER, ACCOUNTANT only
 // ==========================================
 router.put(
   '/:id',
@@ -615,7 +615,7 @@ router.put(
 // ==========================================
 // DELETE /api/v1/supplier-incentives/:id
 // Delete a supplier incentive
-// Access: SUPER_ADMIN, DISTRIBUTION_ADMIN only
+// Access: MANAGING_DIRECTOR, GENERAL_MANAGER, ACCOUNTANT only
 // ==========================================
 router.delete(
   '/:id',

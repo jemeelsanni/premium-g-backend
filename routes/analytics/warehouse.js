@@ -12,7 +12,7 @@ const prisma = require('../../lib/prisma');
 
 // GET /api/v1/analytics/warehouse/summary
 router.get('/summary',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN', 'WAREHOUSE_SALES_OFFICER']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
   [
     query('startDate').optional().isISO8601(),
     query('endDate').optional().isISO8601(),
@@ -445,7 +445,7 @@ router.get('/summary',
 
 
 router.get('/dashboard',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN', 'WAREHOUSE_SALES_OFFICER']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
   asyncHandler(async (req, res) => {
     try {
       const startOfDay = new Date();
@@ -597,7 +597,7 @@ for (const item of inventory) {
 
 // GET /api/v1/analytics/warehouse/inventory/performance
 router.get('/inventory/performance',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
   [
     query('startDate').optional().isISO8601(),
     query('endDate').optional().isISO8601(),

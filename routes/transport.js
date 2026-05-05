@@ -402,7 +402,7 @@ router.get('/orders',
     const where = {};
 
     // Role-based filtering - transport users can see all orders
-    const isTransportUser = ['SUPER_ADMIN', 'TRANSPORT_ADMIN', 'TRANSPORT_STAFF'].includes(req.user.role);
+    const isTransportUser = ['MANAGING_DIRECTOR', 'ACCOUNTANT'].includes(req.user.role);
     if (!isTransportUser) {
       where.createdBy = req.user.id;
     }
@@ -559,7 +559,7 @@ router.get('/orders/:id',
     const where = { id };
 
     // Role-based access - transport users can view all orders
-    const isTransportUser = ['SUPER_ADMIN', 'TRANSPORT_ADMIN', 'TRANSPORT_STAFF'].includes(req.user.role);
+    const isTransportUser = ['MANAGING_DIRECTOR', 'ACCOUNTANT'].includes(req.user.role);
     if (!isTransportUser) {
       where.createdBy = req.user.id;
     }
@@ -620,7 +620,7 @@ router.put('/orders/:id',
     }
 
     // Check permissions
-    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+    if (!['MANAGING_DIRECTOR', 'ACCOUNTANT'].includes(req.user.role)) {
       if (existingOrder.createdBy !== userId) {
         throw new BusinessError('You can only update your own orders', 'PERMISSION_DENIED');
       }
@@ -823,7 +823,7 @@ router.put('/orders/:id/status',
     }
 
     // Check permissions - only allow staff to update their own orders unless admin
-    if (!req.user.role.includes('ADMIN') && req.user.role !== 'SUPER_ADMIN') {
+    if (!['MANAGING_DIRECTOR', 'ACCOUNTANT'].includes(req.user.role)) {
       if (existingOrder.createdBy !== userId) {
         throw new BusinessError('You can only update your own orders', 'PERMISSION_DENIED');
       }
@@ -898,7 +898,7 @@ router.get('/locations',
 // @desc    Create a transport location
 // @access  Private (admin)
 router.post('/locations',
-  authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
   [
     body('name').notEmpty().withMessage('Location name is required'),
     body('fuelRequired').isFloat({ min: 0 }).withMessage('Fuel required must be a positive number'),
@@ -932,7 +932,7 @@ router.post('/locations',
 // @desc    Update a transport location
 // @access  Private (admin)
 router.put('/locations/:id',
-  authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
   [
     body('name').optional().notEmpty().withMessage('Name cannot be empty'),
     body('fuelRequired').optional().isFloat({ min: 0 }),
@@ -970,7 +970,7 @@ router.put('/locations/:id',
 // @desc    Deactivate (soft-delete) a transport location
 // @access  Private (admin)
 router.delete('/locations/:id',
-  authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     const existing = await prisma.location.findUnique({ where: { id } });
@@ -1241,7 +1241,7 @@ router.get('/expenses/:id',
 // @access  Private (Admin only)
 router.put('/expenses/:id/approve',
   param('id').custom(validateCuid('expense ID')),
-  authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     const { notes } = req.body;
@@ -1326,7 +1326,7 @@ router.put('/expenses/:id/approve',
 // @access  Private (Admin only)
 router.put('/expenses/:id/reject',
   param('id').custom(validateCuid('expense ID')),
-  authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
   body('reason').notEmpty().withMessage('Rejection reason is required'),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -1375,7 +1375,7 @@ router.put('/expenses/:id/reject',
 // @desc    Bulk approve expenses (with automatic cash flow)
 // @access  Private (Transport Admin only)
 router.post('/expenses/bulk-approve',
-  authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
   [
     body('expenseIds').isArray({ min: 1 }).withMessage('Expense IDs array is required'),
     body('action').isIn(['approve', 'reject']).withMessage('Action must be approve or reject'),
@@ -1606,7 +1606,7 @@ router.get('/cash-flow',
 // @desc    Get pending expenses for approval
 // @access  Private (Admin only)
 router.get('/expenses/pending/approvals',
-  authorizeRole(['SUPER_ADMIN', 'TRANSPORT_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
   asyncHandler(async (req, res) => {
     const { page = 1, limit = 20 } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);

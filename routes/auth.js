@@ -43,8 +43,7 @@ const registerValidation = [
     .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
     .withMessage('Password must contain at least one uppercase letter, one lowercase letter, and one number'),
   body('role')
-    .isIn(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN', 'TRANSPORT_ADMIN', 'WAREHOUSE_ADMIN', 
-           'DISTRIBUTION_SALES_REP', 'WAREHOUSE_SALES_OFFICER', 'CASHIER', 'TRANSPORT_STAFF'])
+    .isIn(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT', 'CASHIER', 'DISTRIBUTORSHIP_SALES_REP'])
     .withMessage('Invalid role specified')
 ];
 
@@ -181,8 +180,8 @@ router.post('/register',
   registerValidation, 
   asyncHandler(async (req, res) => {
     // Only Super Admin can register new users
-    if (req.user.role !== 'SUPER_ADMIN') {
-      throw new BusinessError('Only Super Admin can register new users', 'INSUFFICIENT_PERMISSIONS');
+    if (req.user.role !== 'MANAGING_DIRECTOR') {
+      throw new BusinessError('Only Managing Director can register new users', 'INSUFFICIENT_PERMISSIONS');
     }
 
     const errors = validationResult(req);

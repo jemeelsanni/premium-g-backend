@@ -138,7 +138,7 @@ router.get('/summary',
 );
 
 router.get('/dashboard', 
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
   asyncHandler(async (req, res) => {
     try {
       const startOfMonth = new Date();

@@ -249,7 +249,7 @@ router.get('/dashboard', asyncHandler(async (req, res) => {
 // @desc    Create new product
 // @access  Private (Super Admin only)
 router.post('/products',
-  authorizeRole([USER_ROLES.SUPER_ADMIN, USER_ROLES.WAREHOUSE_ADMIN]),
+  authorizeRole([USER_ROLES.MANAGING_DIRECTOR, USER_ROLES.GENERAL_MANAGER]),
   createProductValidation,
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -323,7 +323,7 @@ router.post('/products',
 // @route   GET /api/v1/admin/products
 // @desc    Get all products
 // @access  Private (Super Admin only)
-router.get('/products', authorizeRole([USER_ROLES.SUPER_ADMIN, USER_ROLES.WAREHOUSE_ADMIN]), asyncHandler(async (req, res) => {
+router.get('/products', authorizeRole([USER_ROLES.MANAGING_DIRECTOR, USER_ROLES.GENERAL_MANAGER]), asyncHandler(async (req, res) => {
   const {
     page = 1,
     limit = 20,
@@ -373,7 +373,7 @@ router.get('/products', authorizeRole([USER_ROLES.SUPER_ADMIN, USER_ROLES.WAREHO
 // @desc    Update product
 // @access  Private (Super Admin only)
 router.put('/products/:id',
-  authorizeRole([USER_ROLES.SUPER_ADMIN, USER_ROLES.WAREHOUSE_ADMIN]),
+  authorizeRole([USER_ROLES.MANAGING_DIRECTOR, USER_ROLES.GENERAL_MANAGER]),
   param('id').custom(validateCuid('product ID')), // ✅ UPDATED
   createProductValidation,
   asyncHandler(async (req, res) => {
@@ -940,7 +940,7 @@ router.get('/reports/performance', asyncHandler(async (req, res) => {
 // @route   GET /api/v1/admin/products/next-number
 // @desc    Get next product number
 // @access  Private (Admin only)
-router.get('/products/next-number', authorizeRole([USER_ROLES.SUPER_ADMIN, USER_ROLES.WAREHOUSE_ADMIN]), asyncHandler(async (req, res) => {
+router.get('/products/next-number', authorizeRole([USER_ROLES.MANAGING_DIRECTOR, USER_ROLES.GENERAL_MANAGER]), asyncHandler(async (req, res) => {
   const currentYear = new Date().getFullYear();
   const prefix = `PRD-${currentYear}-`;
 

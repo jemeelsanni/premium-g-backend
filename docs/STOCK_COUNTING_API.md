@@ -2,13 +2,13 @@
 
 ## Overview
 
-The Stock Counting feature allows warehouse staff to perform physical stock counts and compare them with system inventory. All counts require approval from authorized personnel (Warehouse Admin, Super Admin, or Cashier).
+The Stock Counting feature allows warehouse staff to perform physical stock counts and compare them with system inventory. All counts require approval from authorized personnel (General Manager, Managing Director, or Cashier).
 
 ## Features
 
 - ✅ Manual stock count entry by warehouse staff
 - ✅ Automatic variance calculation (counted vs system stock)
-- ✅ Approval workflow (only Warehouse Admin, Super Admin, Cashier can approve)
+- ✅ Approval workflow (only General Manager, Managing Director, Cashier can approve)
 - ✅ Automatic inventory adjustment upon approval
 - ✅ Stock adjustment audit trail
 - ✅ Variance value calculation
@@ -19,22 +19,22 @@ The Stock Counting feature allows warehouse staff to perform physical stock coun
 
 ### Who Can Create Stock Counts?
 - Any user with **warehouse write** permission:
-  - `WAREHOUSE_ADMIN`
-  - `WAREHOUSE_SALES_OFFICER`
-  - `SUPER_ADMIN`
+  - `GENERAL_MANAGER`
+  - `CASHIER`
+  - `MANAGING_DIRECTOR`
 
 ### Who Can Approve/Reject Stock Counts?
 - Only these roles can approve or reject:
-  - `SUPER_ADMIN`
-  - `WAREHOUSE_ADMIN`
+  - `MANAGING_DIRECTOR`
+  - `GENERAL_MANAGER`
   - `CASHIER`
 
 ### Who Can Update Stock Counts?
 - The creator of the stock count (if status is PENDING)
-- Warehouse Admin, Super Admin, or Cashier (if status is PENDING)
+- General Manager, Managing Director, or Cashier (if status is PENDING)
 
 ### Who Can Delete Stock Counts?
-- Only `SUPER_ADMIN` and `WAREHOUSE_ADMIN`
+- Only `MANAGING_DIRECTOR` and `GENERAL_MANAGER`
 - Can only delete PENDING or REJECTED counts
 
 ---
@@ -116,7 +116,7 @@ The Stock Counting feature allows warehouse staff to perform physical stock coun
     "countedByUser": {
       "id": "clxxx123456789",
       "username": "john.doe",
-      "role": "WAREHOUSE_SALES_OFFICER"
+      "role": "CASHIER"
     }
   }
 }
@@ -192,7 +192,7 @@ The Stock Counting feature allows warehouse staff to perform physical stock coun
       "countedByUser": {
         "id": "clxxx123456789",
         "username": "john.doe",
-        "role": "WAREHOUSE_SALES_OFFICER"
+        "role": "CASHIER"
       },
       "approver": null
     }
@@ -257,12 +257,12 @@ The Stock Counting feature allows warehouse staff to perform physical stock coun
     "countedByUser": {
       "id": "clxxx123456789",
       "username": "john.doe",
-      "role": "WAREHOUSE_SALES_OFFICER"
+      "role": "CASHIER"
     },
     "approver": {
       "id": "clyyy987654321",
       "username": "admin",
-      "role": "WAREHOUSE_ADMIN"
+      "role": "GENERAL_MANAGER"
     },
     "adjustments": [
       {
@@ -285,7 +285,7 @@ The Stock Counting feature allows warehouse staff to perform physical stock coun
         "adjustedByUser": {
           "id": "clyyy987654321",
           "username": "admin",
-          "role": "WAREHOUSE_ADMIN"
+          "role": "GENERAL_MANAGER"
         }
       }
     ]
@@ -359,7 +359,7 @@ The Stock Counting feature allows warehouse staff to perform physical stock coun
 
 **Endpoint:** `PUT /api/v1/warehouse/stock-counts/:id/approve`
 
-**Authorization:** SUPER_ADMIN, WAREHOUSE_ADMIN, or CASHIER only
+**Authorization:** MANAGING_DIRECTOR, GENERAL_MANAGER, or CASHIER only
 
 **Description:** Approve a stock count and automatically adjust inventory if there's a variance.
 
@@ -436,7 +436,7 @@ The Stock Counting feature allows warehouse staff to perform physical stock coun
 
 **Endpoint:** `PUT /api/v1/warehouse/stock-counts/:id/reject`
 
-**Authorization:** SUPER_ADMIN, WAREHOUSE_ADMIN, or CASHIER only
+**Authorization:** MANAGING_DIRECTOR, GENERAL_MANAGER, or CASHIER only
 
 **Description:** Reject a stock count. No inventory changes are made.
 
@@ -477,7 +477,7 @@ The Stock Counting feature allows warehouse staff to perform physical stock coun
 
 **Endpoint:** `DELETE /api/v1/warehouse/stock-counts/:id`
 
-**Authorization:** SUPER_ADMIN or WAREHOUSE_ADMIN only
+**Authorization:** MANAGING_DIRECTOR or GENERAL_MANAGER only
 
 **Description:** Delete a stock count. Only PENDING or REJECTED counts can be deleted.
 
@@ -685,7 +685,7 @@ model StockAdjustment {
 {
   "success": false,
   "error": "Insufficient permissions",
-  "message": "Only SUPER_ADMIN, WAREHOUSE_ADMIN, and CASHIER can approve stock counts"
+  "message": "Only MANAGING_DIRECTOR, GENERAL_MANAGER, and CASHIER can approve stock counts"
 }
 ```
 
@@ -725,7 +725,7 @@ model StockAdjustment {
 - Role-based access control is strictly enforced
 - Audit logs track all count creations, approvals, and rejections
 - Stock adjustments are immutable once created
-- Only admins can delete counts (and only PENDING/REJECTED ones)
+- Only Managing Director and General Manager can delete counts (and only PENDING/REJECTED ones)
 
 ---
 

@@ -446,7 +446,7 @@ router.put('/stock-counts/:id',
     }
 
     // Only allow the creator or admins to update
-    const isAdmin = ['SUPER_ADMIN', 'WAREHOUSE_ADMIN', 'CASHIER'].includes(req.user.role);
+    const isAdmin = ['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER'].includes(req.user.role);
     if (existingCount.countedBy !== req.user.id && !isAdmin) {
       throw new BusinessError('You can only update your own stock counts');
     }
@@ -515,9 +515,9 @@ router.put('/stock-counts/:id',
 
 // @route   PUT /api/v1/warehouse/stock-counts/:id/approve
 // @desc    Approve stock count and adjust inventory
-// @access  Private (SUPER_ADMIN, WAREHOUSE_ADMIN, CASHIER only)
+// @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER, CASHIER only)
 router.put('/stock-counts/:id/approve',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN', 'CASHIER']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
   [param('id').custom(validateCuid('stock count ID'))],
   approveStockCountValidation,
   asyncHandler(async (req, res) => {
@@ -667,9 +667,9 @@ router.put('/stock-counts/:id/approve',
 
 // @route   PUT /api/v1/warehouse/stock-counts/:id/reject
 // @desc    Reject stock count
-// @access  Private (SUPER_ADMIN, WAREHOUSE_ADMIN, CASHIER only)
+// @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER, CASHIER only)
 router.put('/stock-counts/:id/reject',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN', 'CASHIER']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
   [param('id').custom(validateCuid('stock count ID'))],
   rejectStockCountValidation,
   asyncHandler(async (req, res) => {
@@ -737,9 +737,9 @@ router.put('/stock-counts/:id/reject',
 
 // @route   DELETE /api/v1/warehouse/stock-counts/:id
 // @desc    Delete stock count (only if status is PENDING or REJECTED)
-// @access  Private (SUPER_ADMIN, WAREHOUSE_ADMIN only)
+// @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER only)
 router.delete('/stock-counts/:id',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
   [param('id').custom(validateCuid('stock count ID'))],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);

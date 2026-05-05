@@ -126,7 +126,7 @@ const updateWeeklyPerformanceFromSales = async (year, month) => {
 // @desc    Set monthly distribution target (Admin only)
 // @access  Private (Admin)
 router.post('/',
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
   createTargetValidation,
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -407,7 +407,7 @@ router.get('/weekly',
 // @access  Private (Admin)
 router.put('/weekly/:id',
   param('id').custom(validateCuid('performance ID')),
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
   updateWeeklyPerformanceValidation,
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -567,7 +567,7 @@ router.get('/dashboard',
 // @desc    Recalculate all performance metrics (Admin only)
 // @access  Private (Admin)
 router.post('/recalculate',
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
   asyncHandler(async (req, res) => {
     const { year, month } = req.body;
 
@@ -606,7 +606,7 @@ router.post('/recalculate',
 // @desc    Delete a distribution target
 // @access  Private (Admin only)
 router.delete('/:id',
-  authorizeRole(['SUPER_ADMIN', 'DISTRIBUTION_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
   param('id').custom(validateCuid('target ID')),
   asyncHandler(async (req, res) => {
     const { id } = req.params;

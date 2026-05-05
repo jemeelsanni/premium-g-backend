@@ -14,7 +14,7 @@ const { query, validationResult } = require('express-validator');
  * @access  Private (Super Admin, Warehouse Admin)
  */
 router.get('/',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
   [
     query('entity').optional().isString(),
     query('action').optional().isString(),
@@ -102,7 +102,7 @@ router.get('/',
  * @access  Private (Super Admin, Warehouse Admin)
  */
 router.get('/inventory-changes',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
   [
     query('productId').optional().isString(),
     query('startDate').optional().isISO8601(),
@@ -224,7 +224,7 @@ router.get('/inventory-changes',
  * @access  Private (Super Admin, Warehouse Admin)
  */
 router.get('/suspicious-activities',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
   [
     query('days').optional().isInt({ min: 1, max: 90 }).toInt()
   ],
@@ -337,7 +337,7 @@ router.get('/suspicious-activities',
  * @access  Private (Super Admin, Warehouse Admin)
  */
 router.get('/product/:productId',
-  authorizeRole(['SUPER_ADMIN', 'WAREHOUSE_ADMIN']),
+  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
   asyncHandler(async (req, res) => {
     const { productId } = req.params;
 
