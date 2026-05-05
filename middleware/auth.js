@@ -1,4 +1,6 @@
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const path = require('path');
 
 const prisma = require('../lib/prisma');
 
@@ -14,38 +16,31 @@ const USER_ROLES = {
   DISTRIBUTORSHIP_SALES_REP: 'DISTRIBUTORSHIP_SALES_REP',
 };
 
-const MODULE_PERMISSIONS = {
-  [USER_ROLES.MANAGING_DIRECTOR]: {
-    distribution: ['read', 'write', 'admin'],
-    transport: ['read', 'write', 'admin'],
-    warehouse: ['read', 'write', 'admin'],
-    admin: ['read', 'write', 'admin']
-  },
-  [USER_ROLES.GENERAL_MANAGER]: {
-    distribution: ['read', 'write', 'admin'],
-    transport: [],                            // NO ACCESS
-    warehouse: ['read', 'write', 'admin'],
-    admin: ['read', 'write', 'admin']
-  },
-  [USER_ROLES.ACCOUNTANT]: {
-    distribution: ['read', 'write', 'admin'],
-    transport: ['read', 'write', 'admin'],
-    warehouse: ['read'],                      // Read-only (expenses list)
-    admin: []
-  },
-  [USER_ROLES.CASHIER]: {
-    distribution: [],                         // NO ACCESS
-    transport: [],                            // NO ACCESS
-    warehouse: ['read', 'write'],
-    admin: []
-  },
-  [USER_ROLES.DISTRIBUTORSHIP_SALES_REP]: {
-    distribution: ['read', 'write'],
-    transport: [],                            // NO ACCESS
-    warehouse: [],                            // NO ACCESS
-    admin: []
-  },
+const PERMISSIONS_FILE = path.join(__dirname, '../config/rolePermissions.json');
+
+// Load permissions from file (fresh on every call so edits take effect immediately)
+const getModulePermissions = () => {
+  try {
+    const raw = fs.readFileSync(PERMISSIONS_FILE, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    // Fallback to safe defaults if file is missing or corrupt
+    return {
+      MANAGING_DIRECTOR: { distribution: ['read','write','admin'], transport: ['read','write','admin'], warehouse: ['read','write','admin'], admin: ['read','write','admin'] },
+      GENERAL_MANAGER:   { distribution: ['read','write','admin'], transport: [],                      warehouse: ['read','write','admin'], admin: ['read','write','admin'] },
+      ACCOUNTANT:        { distribution: ['read','write','admin'], transport: ['read','write','admin'], warehouse: ['read'],                admin: [] },
+      CASHIER:           { distribution: [],                       transport: [],                      warehouse: ['read','write'],         admin: [] },
+      DISTRIBUTORSHIP_SALES_REP: { distribution: ['read','write'], transport: [], warehouse: [], admin: [] },
+    };
+  }
 };
+
+// Keep MODULE_PERMISSIONS as a live getter for backward compatibility
+const MODULE_PERMISSIONS = new Proxy({}, {
+  get(_, role) {
+    return getModulePermissions()[role];
+  }
+});
 
 // ================================
 // AUTHENTICATION MIDDLEWARE
@@ -226,13 +221,15 @@ const authorizeOwnEntry = (req, res, next) => {
 // ================================
 
 const hasPermission = (userRole, module, permission) => {
-  const userPermissions = MODULE_PERMISSIONS[userRole] || {};
+  const perms = getModulePermissions();
+  const userPermissions = perms[userRole] || {};
   const modulePermissions = userPermissions[module] || [];
   return modulePermissions.includes(permission);
 };
 
 const getUserModules = (userRole) => {
-  const userPermissions = MODULE_PERMISSIONS[userRole] || {};
+  const perms = getModulePermissions();
+  const userPermissions = perms[userRole] || {};
   return Object.keys(userPermissions).filter(module => userPermissions[module].length > 0);
 };
 
@@ -252,6 +249,8 @@ module.exports = {
   hasPermission,
   getUserModules,
   canAccessModule,
+  getModulePermissions,
+  PERMISSIONS_FILE,
   USER_ROLES,
   MODULE_PERMISSIONS
 };

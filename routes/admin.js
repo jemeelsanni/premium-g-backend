@@ -4,7 +4,8 @@ const { body, query, param, validationResult } = require('express-validator');
 const { asyncHandler, ValidationError, BusinessError } = require('../middleware/errorHandler');
 const { getAuditTrail } = require('../middleware/auditLogger');
 const { validateCuid } = require('../utils/validators'); // ✅ ADDED
-const { authorizeRole, USER_ROLES } = require('../middleware/auth');
+const { authorizeRole, USER_ROLES, getModulePermissions, PERMISSIONS_FILE } = require('../middleware/auth');
+const fs = require('fs');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -971,5 +972,72 @@ router.get('/products/next-number', authorizeRole([USER_ROLES.MANAGING_DIRECTOR,
     data: { productNumber }
   });
 }));
+
+// ================================
+// ROLE PERMISSIONS MANAGEMENT
+// ================================
+
+const VALID_ROLES = ['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT', 'CASHIER', 'DISTRIBUTORSHIP_SALES_REP'];
+const VALID_MODULES = ['distribution', 'transport', 'warehouse', 'admin'];
+const VALID_PERMISSIONS = ['read', 'write', 'admin'];
+
+// @route   GET /api/v1/admin/role-permissions
+// @desc    Get current role permissions config
+// @access  Managing Director and General Manager
+router.get('/role-permissions',
+  authorizeRole([USER_ROLES.MANAGING_DIRECTOR, USER_ROLES.GENERAL_MANAGER]),
+  asyncHandler(async (req, res) => {
+    const permissions = getModulePermissions();
+    res.json({ success: true, data: { permissions } });
+  })
+);
+
+// @route   PUT /api/v1/admin/role-permissions
+// @desc    Update role permissions config
+// @access  Managing Director only
+router.put('/role-permissions',
+  authorizeRole([USER_ROLES.MANAGING_DIRECTOR]),
+  asyncHandler(async (req, res) => {
+    const { permissions } = req.body;
+
+    if (!permissions || typeof permissions !== 'object') {
+      return res.status(400).json({ success: false, message: 'Invalid permissions payload' });
+    }
+
+    // Validate structure
+    for (const role of Object.keys(permissions)) {
+      if (!VALID_ROLES.includes(role)) {
+        return res.status(400).json({ success: false, message: `Invalid role: ${role}` });
+      }
+      for (const mod of Object.keys(permissions[role])) {
+        if (!VALID_MODULES.includes(mod)) {
+          return res.status(400).json({ success: false, message: `Invalid module: ${mod}` });
+        }
+        const perms = permissions[role][mod];
+        if (!Array.isArray(perms)) {
+          return res.status(400).json({ success: false, message: `Permissions for ${role}.${mod} must be an array` });
+        }
+        for (const p of perms) {
+          if (!VALID_PERMISSIONS.includes(p)) {
+            return res.status(400).json({ success: false, message: `Invalid permission level: ${p}` });
+          }
+        }
+      }
+    }
+
+    // Ensure all roles are present (fill missing ones with empty modules)
+    const sanitized = {};
+    for (const role of VALID_ROLES) {
+      sanitized[role] = {};
+      for (const mod of VALID_MODULES) {
+        sanitized[role][mod] = (permissions[role]?.[mod] || []).filter(p => VALID_PERMISSIONS.includes(p));
+      }
+    }
+
+    fs.writeFileSync(PERMISSIONS_FILE, JSON.stringify(sanitized, null, 2), 'utf8');
+
+    res.json({ success: true, message: 'Role permissions updated successfully', data: { permissions: sanitized } });
+  })
+);
 
 module.exports = router;

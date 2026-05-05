@@ -1,0 +1,32 @@
+{
+  "MANAGING_DIRECTOR": {
+    "distribution": ["read", "write", "admin"],
+    "transport": ["read", "write", "admin"],
+    "warehouse": ["read", "write", "admin"],
+    "admin": ["read", "write", "admin"]
+  },
+  "GENERAL_MANAGER": {
+    "distribution": ["read", "write", "admin"],
+    "transport": [],
+    "warehouse": ["read", "write", "admin"],
+    "admin": ["read", "write", "admin"]
+  },
+  "ACCOUNTANT": {
+    "distribution": ["read", "write", "admin"],
+    "transport": ["read", "write", "admin"],
+    "warehouse": ["read"],
+    "admin": []
+  },
+  "CASHIER": {
+    "distribution": [],
+    "transport": [],
+    "warehouse": ["read", "write"],
+    "admin": []
+  },
+  "DISTRIBUTORSHIP_SALES_REP": {
+    "distribution": ["read", "write"],
+    "transport": [],
+    "warehouse": [],
+    "admin": []
+  }
+}
