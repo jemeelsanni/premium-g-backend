@@ -18,21 +18,61 @@ const USER_ROLES = {
 
 const PERMISSIONS_FILE = path.join(__dirname, '../config/rolePermissions.json');
 
-// Load permissions from file (fresh on every call so edits take effect immediately)
-const getModulePermissions = () => {
+// Features that imply "write" access to a module
+const WRITE_FEATURES = new Set([
+  'create_order','edit_order','delete_order','record_payment','confirm_payment',
+  'adjust_price','assign_transport','record_delivery','update_supplier_status',
+  'manage_suppliers','manage_targets','create_expense','approve_expense',
+  'manage_trucks','manage_locations','record_sales','edit_sales','delete_sales',
+  'record_purchases','edit_purchases','delete_purchases','manage_inventory',
+  'edit_debtors','request_discount','approve_discount','manage_expenses',
+  'approve_expenses','submit_opening_stock','approve_opening_stock',
+  'manage_users','reset_passwords','manage_products','manage_customers',
+  'manage_config','manage_role_permissions',
+]);
+
+// Features that imply "admin" access to a module
+const ADMIN_FEATURES = new Set([
+  'delete_order','confirm_payment','adjust_price','approve_expense',
+  'approve_discount','approve_expenses','approve_opening_stock',
+  'manage_users','reset_passwords','manage_config','manage_role_permissions',
+]);
+
+// Load feature-level permissions from file (fresh every call — edits take effect immediately)
+const getFeaturePermissions = () => {
   try {
     const raw = fs.readFileSync(PERMISSIONS_FILE, 'utf8');
     return JSON.parse(raw);
   } catch {
-    // Fallback to safe defaults if file is missing or corrupt
-    return {
-      MANAGING_DIRECTOR: { distribution: ['read','write','admin'], transport: ['read','write','admin'], warehouse: ['read','write','admin'], admin: ['read','write','admin'] },
-      GENERAL_MANAGER:   { distribution: ['read','write','admin'], transport: [],                      warehouse: ['read','write','admin'], admin: ['read','write','admin'] },
-      ACCOUNTANT:        { distribution: ['read','write','admin'], transport: ['read','write','admin'], warehouse: ['read'],                admin: [] },
-      CASHIER:           { distribution: [],                       transport: [],                      warehouse: ['read','write'],         admin: [] },
-      DISTRIBUTORSHIP_SALES_REP: { distribution: ['read','write'], transport: [], warehouse: [], admin: [] },
-    };
+    return {};
   }
+};
+
+// Derive module-level ['read','write','admin'] array from feature booleans
+const deriveModuleLevels = (featureMap) => {
+  const enabledFeatures = Object.entries(featureMap || {})
+    .filter(([, enabled]) => enabled)
+    .map(([key]) => key);
+
+  if (enabledFeatures.length === 0) return [];
+
+  const levels = ['read'];
+  if (enabledFeatures.some(f => WRITE_FEATURES.has(f))) levels.push('write');
+  if (enabledFeatures.some(f => ADMIN_FEATURES.has(f))) levels.push('admin');
+  return levels;
+};
+
+// Returns { distribution: ['read','write','admin'], transport: [], ... } per role
+const getModulePermissions = () => {
+  const features = getFeaturePermissions();
+  const result = {};
+  for (const role of Object.keys(features)) {
+    result[role] = {};
+    for (const mod of Object.keys(features[role])) {
+      result[role][mod] = deriveModuleLevels(features[role][mod]);
+    }
+  }
+  return result;
 };
 
 // Keep MODULE_PERMISSIONS as a live getter for backward compatibility
@@ -250,6 +290,7 @@ module.exports = {
   getUserModules,
   canAccessModule,
   getModulePermissions,
+  getFeaturePermissions,
   PERMISSIONS_FILE,
   USER_ROLES,
   MODULE_PERMISSIONS

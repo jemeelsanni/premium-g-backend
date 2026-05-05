@@ -15,7 +15,7 @@ const {
 
 
 const prisma = require('../lib/prisma');
-
+const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 
 // Helper for validation
 const validateCuid = (field) => {
@@ -72,6 +72,8 @@ router.post('/payments/record',
       userId: req.user.id
     });
 
+    logDataChange(req.user.id, 'DISTRIBUTION_PAYMENT', orderId, 'RECORD_PAYMENT', null, result, getClientIP(req)).catch(console.error);
+
     res.status(201).json({
       success: true,
       message: 'Payment recorded successfully',
@@ -110,6 +112,8 @@ router.post('/payments/confirm',
       req.user.id,
       notes
     );
+
+    logDataChange(req.user.id, 'DISTRIBUTION_PAYMENT', orderId, 'CONFIRM', null, order, getClientIP(req)).catch(console.error);
 
     res.json({
       success: true,
@@ -157,6 +161,8 @@ router.post('/payments/supplier',
       userId: req.user.id
     });
 
+    logDataChange(req.user.id, 'DISTRIBUTION_PAYMENT', orderId, 'RECORD_PAYMENT', null, result, getClientIP(req)).catch(console.error);
+
     res.status(201).json({
       success: true,
       message: 'Payment to supplier recorded successfully',
@@ -203,6 +209,8 @@ router.put('/payments/supplier/status',
       supplierReferenceNumber,
       userId: req.user.id
     });
+
+    logDataChange(req.user.id, 'DISTRIBUTION_PAYMENT', orderId, 'UPDATE', null, order, getClientIP(req)).catch(console.error);
 
     res.json({
       success: true,
@@ -373,6 +381,8 @@ router.post('/delivery/assign-transport',
       userId: req.user.id
     });
 
+    logDataChange(req.user.id, 'DISTRIBUTION_PAYMENT', orderId, 'UPDATE', order, updatedOrder, getClientIP(req)).catch(console.error);
+
     res.json({
       success: true,
       message: 'Transport assigned successfully. Order status updated to IN_TRANSIT.',
@@ -424,6 +434,8 @@ router.post('/delivery/record',
       partialDeliveryReason,
       reviewerId: req.user.id
     });
+
+    logDataChange(req.user.id, 'DISTRIBUTION_PAYMENT', orderId, 'UPDATE', null, order, getClientIP(req)).catch(console.error);
 
     res.json({
       success: true,

@@ -10,6 +10,7 @@ const { authorizeModule } = require('../middleware/auth');
 const { asyncHandler, ValidationError } = require('../middleware/errorHandler');
 
 const prisma = require('../lib/prisma');
+const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 
 // ================================
 // GET ALL DEBTORS (GROUPED BY RECEIPT)
@@ -485,6 +486,8 @@ router.post('/:debtorId/payments',
       return { payment, debtor: updatedDebtor, cashFlowEntry };
     });
 
+    logDataChange(req.user.id, 'WAREHOUSE_DEBTOR', debtorId, 'RECORD_PAYMENT', null, result.payment, getClientIP(req)).catch(console.error);
+
     res.json({
       success: true,
       message: 'Payment recorded successfully and cash flow updated',
@@ -730,6 +733,8 @@ router.post('/receipt/:receiptNumber/payment',
       };
     });
 
+    logDataChange(req.user.id, 'WAREHOUSE_DEBTOR', receiptNumber, 'RECORD_PAYMENT', null, { receiptNumber, totalPayment: parseFloat(amount), payments: result.payments }, getClientIP(req)).catch(console.error);
+
     res.json({
       success: true,
       message: `Payment of ₦${parseFloat(amount).toLocaleString()} recorded successfully for receipt ${receiptNumber}`,
@@ -957,6 +962,8 @@ router.post('/customer/:customerId/payment',
         }))
       };
     });
+
+    logDataChange(req.user.id, 'WAREHOUSE_DEBTOR', customerId, 'RECORD_PAYMENT', null, { customerId, totalPayment: parseFloat(amount), payments: result.payments }, getClientIP(req)).catch(console.error);
 
     res.json({
       success: true,

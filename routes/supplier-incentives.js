@@ -7,6 +7,7 @@ const { validateCuid } = require('../utils/validators');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 
 // Authorization middleware for write operations
 const authorizeAdmin = (req, res, next) => {
@@ -524,6 +525,8 @@ router.post(
       }
     });
 
+    logDataChange(req.user.id, 'SUPPLIER_INCENTIVE', incentive.id, 'CREATE', null, incentive, getClientIP(req)).catch(console.error);
+
     res.status(201).json({
       success: true,
       message: `Incentive created for ${supplier.name} - ${month}/${year}`,
@@ -604,6 +607,8 @@ router.put(
       }
     });
 
+    logDataChange(req.user.id, 'SUPPLIER_INCENTIVE', id, 'UPDATE', existing, incentive, getClientIP(req)).catch(console.error);
+
     res.json({
       success: true,
       message: 'Supplier incentive updated successfully',
@@ -641,6 +646,8 @@ router.delete(
     await prisma.supplierIncentive.delete({
       where: { id }
     });
+
+    logDataChange(req.user.id, 'SUPPLIER_INCENTIVE', id, 'DELETE', incentive, null, getClientIP(req)).catch(console.error);
 
     res.json({
       success: true,

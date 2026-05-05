@@ -9,6 +9,7 @@ const { validateCuid } = require('../utils/validators');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 
 // ================================
 // DISCOUNT APPROVAL REQUEST ROUTES
@@ -80,6 +81,8 @@ router.post('/discounts/request',
         requestedByUser: { select: { username: true } }
       }
     });
+
+    logDataChange(req.user.id, 'WAREHOUSE_DISCOUNT', discountRequest.id, 'CREATE', null, discountRequest, getClientIP(req)).catch(console.error);
 
     res.status(201).json({
       success: true,
@@ -229,6 +232,9 @@ router.put('/discounts/requests/:id/review',
 
       return updatedRequest;
     });
+
+    const discountAuditAction = action === 'approve' ? 'APPROVE' : 'REJECT';
+    logDataChange(req.user.id, 'WAREHOUSE_DISCOUNT', id, discountAuditAction, request, result, getClientIP(req)).catch(console.error);
 
     res.json({
       success: true,

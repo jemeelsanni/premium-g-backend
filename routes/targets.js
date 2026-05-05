@@ -7,6 +7,7 @@ const { validateCuid } = require('../utils/validators');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 
 // ================================
 // VALIDATION RULES
@@ -200,6 +201,8 @@ router.post('/',
 
     // Update performance with actual sales data
     await updateWeeklyPerformanceFromSales(year, month);
+
+    logDataChange(req.user.id, 'DISTRIBUTION_TARGET', target.id, 'CREATE', null, target, getClientIP(req)).catch(console.error);
 
     res.status(201).json({
       success: true,
@@ -439,6 +442,8 @@ router.put('/weekly/:id',
       include: { target: true }
     });
 
+    logDataChange(req.user.id, 'DISTRIBUTION_TARGET', id, 'UPDATE', performance, updatedPerformance, getClientIP(req)).catch(console.error);
+
     res.json({
       success: true,
       message: 'Weekly performance updated successfully',
@@ -623,6 +628,8 @@ router.delete('/:id',
     await prisma.distributionTarget.delete({
       where: { id }
     });
+
+    logDataChange(req.user.id, 'DISTRIBUTION_TARGET', id, 'DELETE', target, null, getClientIP(req)).catch(console.error);
 
     res.json({
       success: true,

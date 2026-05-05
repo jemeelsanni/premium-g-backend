@@ -9,6 +9,7 @@ const { validateCuid } = require('../utils/validators');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 
 // ================================
 // WAREHOUSE CUSTOMER ROUTES
@@ -44,6 +45,8 @@ router.post('/customers',
         createdByUser: { select: { id: true, username: true } }
       }
     });
+
+    logDataChange(req.user.id, 'WAREHOUSE_CUSTOMER', customer.id, 'CREATE', null, customer, getClientIP(req)).catch(console.error);
 
     res.status(201).json({
       success: true,
@@ -465,6 +468,8 @@ router.put('/customers/:id',
     const { id } = req.params;
     const updateData = req.body;
 
+    const existingCustomer = await prisma.warehouseCustomer.findUnique({ where: { id } });
+
     const customer = await prisma.warehouseCustomer.update({
       where: { id },
       data: updateData,
@@ -472,6 +477,8 @@ router.put('/customers/:id',
         createdByUser: { select: { username: true } }
       }
     });
+
+    logDataChange(req.user.id, 'WAREHOUSE_CUSTOMER', id, 'UPDATE', existingCustomer, customer, getClientIP(req)).catch(console.error);
 
     res.json({
       success: true,

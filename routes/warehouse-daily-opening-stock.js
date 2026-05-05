@@ -10,6 +10,7 @@ const { validateCuid } = require('../utils/validators');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 
 // ================================
 // VALIDATION RULES
@@ -274,6 +275,8 @@ router.post('/',
       }
     });
 
+    logDataChange(req.user.id, 'DAILY_OPENING_STOCK', dailyStock.id, 'SUBMIT', null, dailyStock, getClientIP(req)).catch(console.error);
+
     res.status(201).json({
       success: true,
       message: 'Daily opening stock submitted for approval',
@@ -367,6 +370,7 @@ router.post('/bulk',
         });
 
         results.submitted.push(dailyStock);
+        logDataChange(req.user.id, 'DAILY_OPENING_STOCK', dailyStock.id, 'SUBMIT', null, dailyStock, getClientIP(req)).catch(console.error);
       } catch (error) {
         results.errors.push({
           productId: entry.productId,
@@ -601,6 +605,8 @@ router.post('/:id/edit-request',
       }
     });
 
+    logDataChange(req.user.id, 'DAILY_OPENING_STOCK', req.params.id, 'UPDATE', original, editRequest, getClientIP(req)).catch(console.error);
+
     res.status(201).json({
       success: true,
       message: 'Edit request submitted for admin approval',
@@ -717,6 +723,8 @@ router.put('/:id/approve',
       }
     });
 
+    logDataChange(req.user.id, 'DAILY_OPENING_STOCK', req.params.id, 'APPROVE', entry, approved, getClientIP(req)).catch(console.error);
+
     res.json({
       success: true,
       message: 'Daily opening stock approved',
@@ -766,6 +774,8 @@ router.put('/:id/reject',
         approver: { select: { id: true, username: true } }
       }
     });
+
+    logDataChange(req.user.id, 'DAILY_OPENING_STOCK', req.params.id, 'REJECT', entry, rejected, getClientIP(req)).catch(console.error);
 
     res.json({
       success: true,
@@ -847,6 +857,8 @@ router.put('/edit-requests/:id/approve',
       return { approvedRequest, updatedEntry };
     });
 
+    logDataChange(req.user.id, 'DAILY_OPENING_STOCK', editRequest.dailyOpeningStockId, 'APPROVE', editRequest.dailyOpeningStock, result.updatedEntry, getClientIP(req)).catch(console.error);
+
     res.json({
       success: true,
       message: 'Edit request approved and entry updated',
@@ -899,6 +911,8 @@ router.put('/edit-requests/:id/reject',
         requester: { select: { id: true, username: true } }
       }
     });
+
+    logDataChange(req.user.id, 'DAILY_OPENING_STOCK', editRequest.dailyOpeningStockId, 'REJECT', editRequest, rejected, getClientIP(req)).catch(console.error);
 
     res.json({
       success: true,

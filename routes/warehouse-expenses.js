@@ -9,6 +9,7 @@ const { validateCuid } = require('../utils/validators');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 
 // ================================
 // VALIDATION RULES
@@ -114,10 +115,12 @@ router.post('/expenses',
       ? 'Warehouse expense created and automatically approved. Cash flow entry created.'
       : 'Warehouse expense created successfully and submitted for approval';
 
+    logDataChange(req.user.id, 'WAREHOUSE_EXPENSE', result.expense.id, 'CREATE', null, result.expense, getClientIP(req)).catch(console.error);
+
     res.status(201).json({
       success: true,
       message,
-      data: { 
+      data: {
         expense: result.expense,
         cashFlowRecorded: req.user.role === 'GENERAL_MANAGER'
       }
@@ -347,10 +350,13 @@ router.put('/expenses/:id',
       ? 'Warehouse expense approved successfully. Cash flow entry created.'
       : 'Warehouse expense updated successfully';
 
+    const auditAction = isBeingApproved ? 'APPROVE' : 'UPDATE';
+    logDataChange(req.user.id, 'WAREHOUSE_EXPENSE', id, auditAction, expense, result.updatedExpense, getClientIP(req)).catch(console.error);
+
     res.json({
       success: true,
       message: successMessage,
-      data: { 
+      data: {
         expense: result.updatedExpense,
         cashFlowRecorded: isBeingApproved
       }
@@ -446,6 +452,11 @@ router.post('/expenses/bulk-approve',
       ? `${result.updatedCount} expense(s) approved successfully. ${result.cashFlowEntries.length} cash flow entry(ies) created.`
       : `${result.updatedCount} expense(s) rejected successfully`;
 
+    const bulkAuditAction = action === 'approve' ? 'APPROVE' : 'REJECT';
+    expenseIds.forEach(expenseId => {
+      logDataChange(req.user.id, 'WAREHOUSE_EXPENSE', expenseId, bulkAuditAction, null, { status: updateData.status }, getClientIP(req)).catch(console.error);
+    });
+
     res.json({
       success: true,
       message: successMessage,
@@ -493,6 +504,8 @@ router.delete('/expenses/:id',
         approvedAt: new Date()
       }
     });
+
+    logDataChange(req.user.id, 'WAREHOUSE_EXPENSE', id, 'DELETE', expense, null, getClientIP(req)).catch(console.error);
 
     res.json({
       success: true,

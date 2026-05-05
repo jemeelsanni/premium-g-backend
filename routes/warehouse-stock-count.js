@@ -9,6 +9,7 @@ const { validateCuid } = require('../utils/validators');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 
 // ================================
 // VALIDATION RULES
@@ -240,6 +241,8 @@ router.post('/stock-counts',
         }
       }
     });
+
+    logDataChange(req.user.id, 'STOCK_COUNT', stockCount.id, 'CREATE', null, stockCount, getClientIP(req)).catch(console.error);
 
     res.status(201).json({
       success: true,
@@ -505,6 +508,8 @@ router.put('/stock-counts/:id',
       }
     });
 
+    logDataChange(req.user.id, 'STOCK_COUNT', req.params.id, 'UPDATE', existingCount, updatedCount, getClientIP(req)).catch(console.error);
+
     res.json({
       success: true,
       message: 'Stock count updated successfully',
@@ -653,6 +658,8 @@ router.put('/stock-counts/:id/approve',
       ? 'Stock count approved and inventory adjusted successfully'
       : 'Stock count approved. No inventory adjustment needed (no variance)';
 
+    logDataChange(req.user.id, 'STOCK_COUNT', req.params.id, 'APPROVE', stockCount, result.approvedCount, getClientIP(req)).catch(console.error);
+
     res.json({
       success: true,
       message,
@@ -727,6 +734,8 @@ router.put('/stock-counts/:id/reject',
       }
     });
 
+    logDataChange(req.user.id, 'STOCK_COUNT', req.params.id, 'REJECT', stockCount, rejectedCount, getClientIP(req)).catch(console.error);
+
     res.json({
       success: true,
       message: 'Stock count rejected',
@@ -762,6 +771,8 @@ router.delete('/stock-counts/:id',
     await prisma.stockCount.delete({
       where: { id: req.params.id }
     });
+
+    logDataChange(req.user.id, 'STOCK_COUNT', req.params.id, 'DELETE', stockCount, null, getClientIP(req)).catch(console.error);
 
     res.json({
       success: true,

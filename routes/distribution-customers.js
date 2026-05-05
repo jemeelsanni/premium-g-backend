@@ -9,6 +9,7 @@ const { validateCuid } = require('../utils/validators');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 
 // ================================
 // DISTRIBUTION CUSTOMER ROUTES
@@ -51,6 +52,8 @@ router.post('/customers',
                 }
             }
         });
+
+        logDataChange(req.user.id, 'DISTRIBUTION_CUSTOMER', customer.id, 'CREATE', null, customer, getClientIP(req)).catch(console.error);
 
         res.status(201).json({
             success: true,
@@ -204,6 +207,8 @@ router.put('/customers/:id',
       where: { id },
       data: updateData
     });
+
+    logDataChange(req.user.id, 'DISTRIBUTION_CUSTOMER', id, 'UPDATE', existingCustomer, customer, getClientIP(req)).catch(console.error);
 
     res.json({
       success: true,

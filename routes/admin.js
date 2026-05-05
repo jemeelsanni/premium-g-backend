@@ -4,7 +4,7 @@ const { body, query, param, validationResult } = require('express-validator');
 const { asyncHandler, ValidationError, BusinessError } = require('../middleware/errorHandler');
 const { getAuditTrail } = require('../middleware/auditLogger');
 const { validateCuid } = require('../utils/validators'); // ✅ ADDED
-const { authorizeRole, USER_ROLES, getModulePermissions, PERMISSIONS_FILE } = require('../middleware/auth');
+const { authorizeRole, USER_ROLES, getFeaturePermissions, PERMISSIONS_FILE } = require('../middleware/auth');
 const fs = require('fs');
 
 const router = express.Router();
@@ -979,21 +979,19 @@ router.get('/products/next-number', authorizeRole([USER_ROLES.MANAGING_DIRECTOR,
 
 const VALID_ROLES = ['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT', 'CASHIER', 'DISTRIBUTORSHIP_SALES_REP'];
 const VALID_MODULES = ['distribution', 'transport', 'warehouse', 'admin'];
-const VALID_PERMISSIONS = ['read', 'write', 'admin'];
 
 // @route   GET /api/v1/admin/role-permissions
-// @desc    Get current role permissions config
-// @access  Managing Director and General Manager
+// @desc    Get current feature-level role permissions
+// @access  All authenticated users (needed by every role to load their own feature set)
 router.get('/role-permissions',
-  authorizeRole([USER_ROLES.MANAGING_DIRECTOR, USER_ROLES.GENERAL_MANAGER]),
   asyncHandler(async (req, res) => {
-    const permissions = getModulePermissions();
+    const permissions = getFeaturePermissions();
     res.json({ success: true, data: { permissions } });
   })
 );
 
 // @route   PUT /api/v1/admin/role-permissions
-// @desc    Update role permissions config
+// @desc    Update feature-level role permissions
 // @access  Managing Director only
 router.put('/role-permissions',
   authorizeRole([USER_ROLES.MANAGING_DIRECTOR]),
@@ -1004,7 +1002,7 @@ router.put('/role-permissions',
       return res.status(400).json({ success: false, message: 'Invalid permissions payload' });
     }
 
-    // Validate structure
+    // Validate: roles and modules must be known; feature values must be boolean
     for (const role of Object.keys(permissions)) {
       if (!VALID_ROLES.includes(role)) {
         return res.status(400).json({ success: false, message: `Invalid role: ${role}` });
@@ -1013,30 +1011,30 @@ router.put('/role-permissions',
         if (!VALID_MODULES.includes(mod)) {
           return res.status(400).json({ success: false, message: `Invalid module: ${mod}` });
         }
-        const perms = permissions[role][mod];
-        if (!Array.isArray(perms)) {
-          return res.status(400).json({ success: false, message: `Permissions for ${role}.${mod} must be an array` });
-        }
-        for (const p of perms) {
-          if (!VALID_PERMISSIONS.includes(p)) {
-            return res.status(400).json({ success: false, message: `Invalid permission level: ${p}` });
+        for (const [feature, value] of Object.entries(permissions[role][mod])) {
+          if (typeof value !== 'boolean') {
+            return res.status(400).json({ success: false, message: `Feature "${feature}" must be a boolean` });
           }
         }
       }
     }
 
-    // Ensure all roles are present (fill missing ones with empty modules)
-    const sanitized = {};
+    // Load current to preserve any features not included in payload
+    const current = getFeaturePermissions();
+    const merged = JSON.parse(JSON.stringify(current));
+
     for (const role of VALID_ROLES) {
-      sanitized[role] = {};
+      if (!merged[role]) merged[role] = {};
       for (const mod of VALID_MODULES) {
-        sanitized[role][mod] = (permissions[role]?.[mod] || []).filter(p => VALID_PERMISSIONS.includes(p));
+        if (!merged[role][mod]) merged[role][mod] = {};
+        if (permissions[role]?.[mod]) {
+          Object.assign(merged[role][mod], permissions[role][mod]);
+        }
       }
     }
 
-    fs.writeFileSync(PERMISSIONS_FILE, JSON.stringify(sanitized, null, 2), 'utf8');
-
-    res.json({ success: true, message: 'Role permissions updated successfully', data: { permissions: sanitized } });
+    fs.writeFileSync(PERMISSIONS_FILE, JSON.stringify(merged, null, 2), 'utf8');
+    res.json({ success: true, message: 'Role permissions updated successfully', data: { permissions: merged } });
   })
 );
 

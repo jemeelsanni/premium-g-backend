@@ -8,6 +8,7 @@ const { validateCuid } = require('../utils/validators');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 
 // Authorization middleware for write operations (MANAGING_DIRECTOR, GENERAL_MANAGER or ACCOUNTANT only)
 const authorizeAdmin = (req, res, next) => {
@@ -432,6 +433,8 @@ router.post(
       }
     });
 
+    logDataChange(req.user.id, 'SUPPLIER_TARGET', target.id, 'CREATE', null, target, getClientIP(req)).catch(console.error);
+
     res.status(201).json({
       success: true,
       message: `Target created for ${supplier.name} - ${month}/${year}`,
@@ -525,6 +528,8 @@ router.put(
       }
     });
 
+    logDataChange(req.user.id, 'SUPPLIER_TARGET', id, 'UPDATE', existing, target, getClientIP(req)).catch(console.error);
+
     res.json({
       success: true,
       message: 'Supplier target updated successfully',
@@ -562,6 +567,8 @@ router.delete(
     await prisma.supplierTarget.delete({
       where: { id }
     });
+
+    logDataChange(req.user.id, 'SUPPLIER_TARGET', id, 'DELETE', target, null, getClientIP(req)).catch(console.error);
 
     res.json({
       success: true,

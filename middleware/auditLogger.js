@@ -6,13 +6,13 @@ const prisma = require('../lib/prisma');
 // ================================
 
 const auditLogger = async (req, res, next) => {
-  // Skip audit logging for certain routes
+  // Skip GET requests — audit trail only tracks writes
+  if (req.method === 'GET') return next();
+
+  // Skip certain routes
   const skipRoutes = ['/health', '/api/v1/auth/login', '/api/v1/auth/refresh'];
   const shouldSkip = skipRoutes.some(route => req.path.includes(route));
-  
-  if (shouldSkip) {
-    return next();
-  }
+  if (shouldSkip) return next();
 
   // Capture request details
   const originalSend = res.send;
@@ -183,7 +183,11 @@ const getAuditTrail = async (filters = {}) => {
   if (startDate || endDate) {
     where.createdAt = {};
     if (startDate) where.createdAt.gte = new Date(startDate);
-    if (endDate) where.createdAt.lte = new Date(endDate);
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      where.createdAt.lte = end;
+    }
   }
 
   const [total, logs] = await Promise.all([

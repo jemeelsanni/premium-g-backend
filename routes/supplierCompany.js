@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const supplierCompanyService = require('../services/supplierCompanyService');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
+const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 
 /**
  * @route   GET /api/v1/supplier-companies
@@ -131,6 +132,8 @@ router.post(
         productCategories: productCategories || []
       });
 
+      logDataChange(req.user.id, 'SUPPLIER_COMPANY', company.id, 'CREATE', null, company, getClientIP(req)).catch(console.error);
+
       res.status(201).json({
         success: true,
         message: 'Supplier company created successfully',
@@ -161,6 +164,8 @@ router.put(
       const { id } = req.params;
       const { name, code, email, phone, address, contactPerson, notes, isActive, productCategories } = req.body;
 
+      const oldCompany = await supplierCompanyService.getSupplierCompanyById(id).catch(() => null);
+
       const company = await supplierCompanyService.updateSupplierCompany(id, {
         name,
         code,
@@ -172,6 +177,8 @@ router.put(
         isActive,
         productCategories
       });
+
+      logDataChange(req.user.id, 'SUPPLIER_COMPANY', id, 'UPDATE', oldCompany, company, getClientIP(req)).catch(console.error);
 
       res.json({
         success: true,
@@ -203,7 +210,10 @@ router.delete(
   async (req, res) => {
     try {
       const { id } = req.params;
+      const oldCompany = await supplierCompanyService.getSupplierCompanyById(id).catch(() => null);
       const result = await supplierCompanyService.deleteSupplierCompany(id);
+
+      logDataChange(req.user.id, 'SUPPLIER_COMPANY', id, 'DELETE', oldCompany, null, getClientIP(req)).catch(console.error);
 
       res.json({
         success: true,
