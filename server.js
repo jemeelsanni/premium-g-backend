@@ -23,6 +23,7 @@ const userRoutes = require('./routes/users');
 
 // STANDALONE MODULE ROUTES
 const distributionRoutes = require('./routes/distribution');
+const truckLoadRoutes = require('./routes/truckLoads');
 const transportRoutes = require('./routes/transport');
 const warehouseRoutes = require('./routes/warehouse');
 const warehouseDailyOpeningStockRoutes = require('./routes/warehouse-daily-opening-stock');
@@ -397,6 +398,7 @@ app.use(`/api/${apiVersion}/auth`, authRoutes);
 app.use(`/api/${apiVersion}/users`, authenticateToken, userRoutes);
 
 // STANDALONE MODULE ROUTES (completely separate)
+app.use(`/api/${apiVersion}/distribution/truck-loads`, authenticateToken, truckLoadRoutes);
 app.use(`/api/${apiVersion}/distribution`, authenticateToken, distributionRoutes);
 app.use(`/api/${apiVersion}/transport`, authenticateToken, transportRoutes);
 app.use(`/api/${apiVersion}/warehouse`, authenticateToken, warehouseRoutes);

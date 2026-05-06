@@ -938,12 +938,12 @@ router.patch('/orders/:id/items',
         }
       });
 
-      // Recalculate customer balance (sum of all order balances)
+      // Recalculate customer balance (sum of all ACTIVE order balances)
       // Order balance: Positive = customer owes us (debt), Negative = overpaid (credit)
       // Customer balance: Negative = customer owes us (debt), Positive = overpaid (credit)
-      // So we need to invert the sign
+      // So we need to invert the sign. Exclude CANCELLED orders — their balance should be 0.
       const customerOrders = await tx.distributionOrder.findMany({
-        where: { customerId: existingOrder.customerId },
+        where: { customerId: existingOrder.customerId, status: { not: 'CANCELLED' } },
         select: { balance: true }
       });
 

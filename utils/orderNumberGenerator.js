@@ -125,9 +125,33 @@ const generateSupplierInvoiceNumber = async (supplierCode) => {
   return `${prefix}${String(nextNumber).padStart(3, '0')}`;
 };
 
+/**
+ * Generate sequential truck load number
+ * Format: TL-2026-001
+ */
+const generateTruckLoadNumber = async () => {
+  const year = new Date().getFullYear();
+  const prefix = `TL-${year}-`;
+
+  const lastLoad = await prisma.truckLoad.findFirst({
+    where: { loadNumber: { startsWith: prefix } },
+    orderBy: { loadNumber: 'desc' },
+    select: { loadNumber: true }
+  });
+
+  let nextNumber = 1;
+  if (lastLoad?.loadNumber) {
+    const lastStr = lastLoad.loadNumber.split('-')[2];
+    nextNumber = parseInt(lastStr) + 1;
+  }
+
+  return `${prefix}${String(nextNumber).padStart(3, '0')}`;
+};
+
 module.exports = {
   generateDistributionOrderNumber,
   generatePaymentReference,
   generateSupplierOrderNumber,
-  generateSupplierInvoiceNumber
+  generateSupplierInvoiceNumber,
+  generateTruckLoadNumber
 };

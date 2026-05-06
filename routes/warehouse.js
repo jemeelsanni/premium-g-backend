@@ -11,6 +11,7 @@ const { syncProductInventory } = require('../services/inventorySyncService');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const { Prisma } = require('@prisma/client');
 
 const warehouseCustomersRouter = require('./warehouse-customers');
 router.use('/', warehouseCustomersRouter);
@@ -1269,68 +1270,102 @@ router.get('/sales',
       groupWhere.productId = productId;
     }
 
-    const totalGroups = await prisma.warehouseSale.groupBy({
-      where: groupWhere,
-      by: ['receiptNumber']
-    });
-    const total = totalGroups.length;
+    // ✅ FAST: Single CTE query — count, summary aggregates, AND paginated receipt list
+    //    in ONE round trip instead of 3-4 separate queries.
+    const sqlConditions = [];
+    const sqlParams = [];
+    let paramIdx = 1;
+
+    if (customerId) {
+      sqlConditions.push(`warehouse_customer_id = $${paramIdx++}`);
+      sqlParams.push(customerId);
+    }
+    if (productId) {
+      sqlConditions.push(`product_id = $${paramIdx++}`);
+      sqlParams.push(productId);
+    }
+    if (startDate) {
+      sqlConditions.push(`created_at >= $${paramIdx++}`);
+      sqlParams.push(new Date(startDate));
+    }
+    if (endDate) {
+      sqlConditions.push(`created_at <= $${paramIdx++}`);
+      sqlParams.push(new Date(endDate));
+    }
+
+    const whereSQL = sqlConditions.length > 0 ? `WHERE ${sqlConditions.join(' AND ')}` : '';
+
+    // Append LIMIT/OFFSET as the final parameters
+    sqlParams.push(take, skip);
+    const limitParam = paramIdx++;
+    const offsetParam = paramIdx++;
+
+    const cteRows = await prisma.$queryRawUnsafe(`
+      WITH filtered AS (
+        SELECT receipt_number, total_amount, quantity, total_discount_amount, created_at
+        FROM warehouse_sales
+        ${whereSQL}
+      ),
+      stats AS (
+        SELECT
+          COUNT(DISTINCT receipt_number)::integer                       AS total,
+          COALESCE(SUM(total_amount), 0)::float                        AS total_revenue,
+          COALESCE(SUM(quantity), 0)::integer                          AS total_qty,
+          COALESCE(SUM(COALESCE(total_discount_amount, 0)), 0)::float  AS total_discounts
+        FROM filtered
+      ),
+      page AS (
+        SELECT receipt_number, MAX(created_at) AS max_created
+        FROM filtered
+        GROUP BY receipt_number
+        ORDER BY MAX(created_at) DESC
+        LIMIT $${limitParam} OFFSET $${offsetParam}
+      )
+      SELECT
+        stats.total,
+        stats.total_revenue,
+        stats.total_qty,
+        stats.total_discounts,
+        page.receipt_number  AS "receiptNumber",
+        page.max_created     AS "maxCreatedAt"
+      FROM stats
+      LEFT JOIN page ON TRUE
+    `, ...sqlParams);
+
+    const total = Number(cteRows[0]?.total ?? 0);
 
     if (total === 0) {
       return res.json({
         success: true,
         data: {
           sales: [],
-          pagination: {
-            page: pageNumber,
-            limit: pageSize,
-            total: 0,
-            totalPages: 0
-          },
-          summary: {
-            totalRevenue: 0,
-            totalQuantitySold: 0,
-            totalDiscounts: 0,
-            totalSales: 0
-          }
+          pagination: { page: pageNumber, limit: pageSize, total: 0, totalPages: 0 },
+          summary: { totalRevenue: 0, totalQuantitySold: 0, totalDiscounts: 0, totalSales: 0 }
         }
       });
     }
 
-    const groupedReceipts = await prisma.warehouseSale.groupBy({
-      where: groupWhere,
-      by: ['receiptNumber'],
-      orderBy: {
-        _max: { createdAt: 'desc' }
-      },
-      skip,
-      take,
-      _max: { createdAt: true }
-    });
-
-    const receiptNumbers = groupedReceipts.map(group => group.receiptNumber);
+    // Filter out null receipt_numbers (happens when page offset is past the last page)
+    const receiptNumbers = cteRows.map(r => r.receiptNumber).filter(Boolean);
+    const latestCreatedMap = new Map(
+      cteRows.filter(r => r.receiptNumber).map(r => [r.receiptNumber, r.maxCreatedAt])
+    );
 
     if (receiptNumbers.length === 0) {
       return res.json({
         success: true,
         data: {
           sales: [],
-          pagination: {
-            page: pageNumber,
-            limit: pageSize,
-            total,
-            totalPages: Math.ceil(total / pageSize)
-          },
+          pagination: { page: pageNumber, limit: pageSize, total, totalPages: Math.ceil(total / pageSize) },
           summary: {
-            totalRevenue: 0,
-            totalQuantitySold: 0,
-            totalDiscounts: 0,
+            totalRevenue: Number(cteRows[0]?.total_revenue ?? 0),
+            totalQuantitySold: Number(cteRows[0]?.total_qty ?? 0),
+            totalDiscounts: Number(cteRows[0]?.total_discounts ?? 0),
             totalSales: total
           }
         }
       });
     }
-
-    const latestCreatedMap = new Map(groupedReceipts.map(group => [group.receiptNumber, group._max.createdAt]));
 
     const sales = await prisma.warehouseSale.findMany({
       where: {
@@ -1340,7 +1375,8 @@ router.get('/sales',
       include: {
         product: { select: { name: true, productNo: true } },
         warehouseCustomer: { select: { id: true, name: true, phone: true } },
-        salesOfficerUser: { select: { id: true, username: true } },
+        // salesOfficerUser omitted here — some sales reference deleted users which makes
+        // Prisma throw "required relation returned null". We fetch officers separately below.
         debtor: {
           select: {
             id: true,
@@ -1353,6 +1389,16 @@ router.get('/sales',
       },
       orderBy: { createdAt: 'asc' }
     });
+
+    // Fetch sales officer usernames only for user IDs that still exist in the DB
+    const officerIds = [...new Set(sales.map(s => s.salesOfficer).filter(Boolean))];
+    const officers = officerIds.length > 0
+      ? await prisma.user.findMany({
+          where: { id: { in: officerIds } },
+          select: { id: true, username: true }
+        })
+      : [];
+    const officerMap = new Map(officers.map(o => [o.id, o]));
 
     const aggregateMap = new Map();
 
@@ -1368,7 +1414,7 @@ router.get('/sales',
         paymentStatus: sale.paymentStatus,
         creditDueDate: sale.creditDueDate,
         salesOfficer: sale.salesOfficer,
-        salesOfficerUser: sale.salesOfficerUser,
+        salesOfficerUser: officerMap.get(sale.salesOfficer) || null,
         warehouseCustomer: sale.warehouseCustomer,
         totalAmount: 0,
         totalDiscountAmount: 0,
@@ -1449,20 +1495,11 @@ router.get('/sales',
         itemsCount: aggregate.items.length
       }));
 
-    // Calculate summary statistics for ALL filtered sales (not just current page)
-    const allFilteredSales = await prisma.warehouseSale.findMany({
-      where: groupWhere,
-      select: {
-        totalAmount: true,
-        quantity: true,
-        totalDiscountAmount: true
-      }
-    });
-
+    // Summary is already computed in the CTE above — no extra round trip needed
     const summary = {
-      totalRevenue: allFilteredSales.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0),
-      totalQuantitySold: allFilteredSales.reduce((sum, sale) => sum + Number(sale.quantity || 0), 0),
-      totalDiscounts: allFilteredSales.reduce((sum, sale) => sum + Number(sale.totalDiscountAmount || 0), 0),
+      totalRevenue:    Number(cteRows[0]?.total_revenue   ?? 0),
+      totalQuantitySold: Number(cteRows[0]?.total_qty     ?? 0),
+      totalDiscounts:  Number(cteRows[0]?.total_discounts ?? 0),
       totalSales: total
     };
 

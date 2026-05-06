@@ -49,6 +49,7 @@ model User {
   supplierProductPriceChanges    SupplierProductPriceHistory[]
   createdSupplierTargets         SupplierTarget[]               @relation("SupplierTargetCreator")
   createdSupplierIncentives      SupplierIncentive[]            @relation("SupplierIncentiveCreator")
+  createdTruckLoads              TruckLoad[]                    @relation("TruckLoadCreator")
   stockCountsCreated             StockCount[]                   @relation("StockCountCountedBy")
   stockCountsApproved            StockCount[]                   @relation("StockCountApprovedBy")
   stockAdjustments               StockAdjustment[]              @relation("StockAdjustmentAdjustedBy")
@@ -282,6 +283,7 @@ model SupplierCompany {
   supplierTargets    SupplierTarget[]
   supplierIncentives SupplierIncentive[]
   productCategories  SupplierCategory[]
+  truckLoads         TruckLoad[]
 
   @@map("supplier_companies")
 }
@@ -416,6 +418,8 @@ model DistributionOrder {
   truckNumber        String?     @map("truck_number")
   remark             String?
 
+  truckLoadId String?   @map("truck_load_id")
+
   createdBy String   @map("created_by")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -426,6 +430,7 @@ model DistributionOrder {
   createdByUser    User             @relation("DistributionOrderCreator", fields: [createdBy], references: [id])
   paymentConfirmer User?            @relation("PaymentConfirmer", fields: [paymentConfirmedBy], references: [id])
   deliveryReviewer User?            @relation("DeliveryReviewer", fields: [deliveryReviewedBy], references: [id])
+  truckLoad        TruckLoad?       @relation(fields: [truckLoadId], references: [id])
 
   orderItems       DistributionOrderItem[]
   priceAdjustments PriceAdjustment[]
@@ -434,6 +439,27 @@ model DistributionOrder {
   paymentHistory   PaymentHistory[]
 
   @@map("distribution_orders")
+}
+
+model TruckLoad {
+  id                String          @id @default(cuid())
+  loadNumber        String          @unique @map("load_number")
+  supplierCompanyId String          @map("supplier_company_id")
+  status            TruckLoadStatus @default(PLANNED)
+  totalPallets      Int             @default(0) @map("total_pallets")
+  transporterCompany String?        @map("transporter_company")
+  driverNumber      String?         @map("driver_number")
+  truckNumber       String?         @map("truck_number")
+  notes             String?
+  createdBy         String          @map("created_by")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+
+  supplierCompany SupplierCompany @relation(fields: [supplierCompanyId], references: [id])
+  createdByUser   User            @relation("TruckLoadCreator", fields: [createdBy], references: [id])
+  orders          DistributionOrder[]
+
+  @@map("truck_loads")
 }
 
 model PaymentHistory {
@@ -1550,4 +1576,11 @@ enum ProductCategoryType {
 enum SkuUnit {
   CL
   L
+}
+
+enum TruckLoadStatus {
+  PLANNED
+  IN_TRANSIT
+  COMPLETED
+  CANCELLED
 }

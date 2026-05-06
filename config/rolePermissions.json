@@ -17,7 +17,14 @@
       "manage_suppliers": true,
       "view_targets": true,
       "manage_targets": true,
-      "view_analytics": true
+      "view_analytics": true,
+      "view_truck_loads": true,
+      "create_truck_load": true,
+      "manage_truck_loads": true,
+      "stat_total_revenue": true,
+      "stat_total_orders": true,
+      "stat_total_packs": true,
+      "stat_active_customers": true
     },
     "transport": {
       "view_dashboard": true,
@@ -31,7 +38,11 @@
       "manage_trucks": true,
       "view_locations": true,
       "manage_locations": true,
-      "view_analytics": true
+      "view_analytics": true,
+      "stat_active_trips": true,
+      "stat_total_revenue": true,
+      "stat_fleet_size": true,
+      "stat_profit_margin": true
     },
     "warehouse": {
       "view_dashboard": true,
@@ -55,7 +66,15 @@
       "approve_opening_stock": true,
       "view_low_stock": true,
       "view_expiring": true,
-      "view_cashflow": true
+      "view_cashflow": true,
+      "stat_packs_sold": true,
+      "stat_revenue": true,
+      "stat_net_profit": true,
+      "stat_gross_margin": true,
+      "stat_expenses": true,
+      "stat_debt": true,
+      "stat_inventory_items": true,
+      "stat_active_customers": true
     },
     "admin": {
       "view_dashboard": true,
@@ -87,7 +106,14 @@
       "manage_suppliers": true,
       "view_targets": true,
       "manage_targets": true,
-      "view_analytics": true
+      "view_analytics": true,
+      "view_truck_loads": true,
+      "create_truck_load": true,
+      "manage_truck_loads": true,
+      "stat_total_revenue": true,
+      "stat_total_orders": true,
+      "stat_total_packs": true,
+      "stat_active_customers": true
     },
     "transport": {
       "view_dashboard": false,
@@ -101,7 +127,11 @@
       "manage_trucks": false,
       "view_locations": false,
       "manage_locations": false,
-      "view_analytics": false
+      "view_analytics": false,
+      "stat_active_trips": false,
+      "stat_total_revenue": false,
+      "stat_fleet_size": false,
+      "stat_profit_margin": false
     },
     "warehouse": {
       "view_dashboard": true,
@@ -125,7 +155,15 @@
       "approve_opening_stock": true,
       "view_low_stock": true,
       "view_expiring": true,
-      "view_cashflow": true
+      "view_cashflow": true,
+      "stat_packs_sold": true,
+      "stat_revenue": true,
+      "stat_net_profit": true,
+      "stat_gross_margin": true,
+      "stat_expenses": true,
+      "stat_debt": true,
+      "stat_inventory_items": true,
+      "stat_active_customers": true
     },
     "admin": {
       "view_dashboard": true,
@@ -157,7 +195,14 @@
       "manage_suppliers": false,
       "view_targets": true,
       "manage_targets": true,
-      "view_analytics": true
+      "view_analytics": true,
+      "view_truck_loads": true,
+      "create_truck_load": false,
+      "manage_truck_loads": false,
+      "stat_total_revenue": true,
+      "stat_total_orders": true,
+      "stat_total_packs": true,
+      "stat_active_customers": true
     },
     "transport": {
       "view_dashboard": true,
@@ -171,7 +216,11 @@
       "manage_trucks": false,
       "view_locations": true,
       "manage_locations": false,
-      "view_analytics": true
+      "view_analytics": true,
+      "stat_active_trips": true,
+      "stat_total_revenue": true,
+      "stat_fleet_size": true,
+      "stat_profit_margin": true
     },
     "warehouse": {
       "view_dashboard": true,
@@ -195,7 +244,15 @@
       "approve_opening_stock": false,
       "view_low_stock": true,
       "view_expiring": true,
-      "view_cashflow": true
+      "view_cashflow": true,
+      "stat_packs_sold": true,
+      "stat_revenue": true,
+      "stat_net_profit": true,
+      "stat_gross_margin": true,
+      "stat_expenses": true,
+      "stat_debt": true,
+      "stat_inventory_items": true,
+      "stat_active_customers": true
     },
     "admin": {
       "view_dashboard": false,
@@ -227,7 +284,14 @@
       "manage_suppliers": false,
       "view_targets": false,
       "manage_targets": false,
-      "view_analytics": false
+      "view_analytics": false,
+      "view_truck_loads": false,
+      "create_truck_load": false,
+      "manage_truck_loads": false,
+      "stat_total_revenue": false,
+      "stat_total_orders": false,
+      "stat_total_packs": false,
+      "stat_active_customers": false
     },
     "transport": {
       "view_dashboard": false,
@@ -241,7 +305,11 @@
       "manage_trucks": false,
       "view_locations": false,
       "manage_locations": false,
-      "view_analytics": false
+      "view_analytics": false,
+      "stat_active_trips": false,
+      "stat_total_revenue": false,
+      "stat_fleet_size": false,
+      "stat_profit_margin": false
     },
     "warehouse": {
       "view_dashboard": true,
@@ -265,7 +333,15 @@
       "approve_opening_stock": false,
       "view_low_stock": true,
       "view_expiring": true,
-      "view_cashflow": true
+      "view_cashflow": true,
+      "stat_packs_sold": true,
+      "stat_revenue": false,
+      "stat_net_profit": false,
+      "stat_gross_margin": false,
+      "stat_expenses": false,
+      "stat_debt": true,
+      "stat_inventory_items": true,
+      "stat_active_customers": true
     },
     "admin": {
       "view_dashboard": false,
@@ -297,7 +373,14 @@
       "manage_suppliers": false,
       "view_targets": true,
       "manage_targets": false,
-      "view_analytics": false
+      "view_analytics": false,
+      "view_truck_loads": true,
+      "create_truck_load": true,
+      "manage_truck_loads": false,
+      "stat_total_revenue": false,
+      "stat_total_orders": true,
+      "stat_total_packs": true,
+      "stat_active_customers": true
     },
     "transport": {
       "view_dashboard": false,
@@ -311,7 +394,11 @@
       "manage_trucks": false,
       "view_locations": false,
       "manage_locations": false,
-      "view_analytics": false
+      "view_analytics": false,
+      "stat_active_trips": false,
+      "stat_total_revenue": false,
+      "stat_fleet_size": false,
+      "stat_profit_margin": false
     },
     "warehouse": {
       "view_dashboard": false,
@@ -335,7 +422,15 @@
       "approve_opening_stock": false,
       "view_low_stock": false,
       "view_expiring": false,
-      "view_cashflow": false
+      "view_cashflow": false,
+      "stat_packs_sold": false,
+      "stat_revenue": false,
+      "stat_net_profit": false,
+      "stat_gross_margin": false,
+      "stat_expenses": false,
+      "stat_debt": false,
+      "stat_inventory_items": false,
+      "stat_active_customers": false
     },
     "admin": {
       "view_dashboard": false,
