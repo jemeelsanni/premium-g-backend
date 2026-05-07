@@ -892,6 +892,30 @@ router.post(
     await autoFixBatchIntegrity(productId);
 
     // ============================================================================
+    // PRE-TRANSACTION: Validate customer + compute cost BEFORE acquiring DB locks
+    // Mixing raw SQL (FOR UPDATE) and ORM queries on the same tx connection can
+    // cause "Response from the Engine was empty" on high-latency DBs (e.g. Railway).
+    // Doing these reads outside the transaction avoids that failure.
+    // ============================================================================
+    if (warehouseCustomerId) {
+      const customerCheck = await prisma.warehouseCustomer.findUnique({
+        where: { id: warehouseCustomerId },
+        select: { id: true }
+      });
+      if (!customerCheck) {
+        throw new NotFoundError('Customer not found. Please select a valid customer.');
+      }
+    }
+
+    // Calculate average cost BEFORE the transaction (batch costs don't change during a sale)
+    const averagePurchaseCost = await calculateSimpleAverageCost(prisma, productId, unitType);
+    const totalCostUsingAverage = parseFloat((averagePurchaseCost * quantity).toFixed(2));
+
+    if (!isFinite(averagePurchaseCost) || totalCostUsingAverage === 0) {
+      throw new BusinessError('Unable to calculate cost. Please check that this product has active purchase batches.', 'COST_CALCULATION_ERROR');
+    }
+
+    // ============================================================================
     // CREATE TRANSACTION
     // ============================================================================
     const createSaleOperation = () =>
@@ -905,9 +929,9 @@ router.post(
         }
 
         const batchAllocations = await allocateSaleQuantityFEFO(
-          tx, 
-          productId, 
-          quantity, 
+          tx,
+          productId,
+          quantity,
           unitType
         );
 
@@ -924,30 +948,6 @@ router.post(
           qty: b.quantityAllocated,
           expiry: b.expiryDate
         })));
-
-        // Calculate SIMPLE AVERAGE cost from all active batches
-        const averagePurchaseCost = await calculateSimpleAverageCost(tx, productId, unitType);
-        const totalCostUsingAverage = parseFloat((averagePurchaseCost * quantity).toFixed(2));
-
-        // ✅ ADD SAFETY CHECK
-        if (totalCostUsingAverage === 0 || !isFinite(totalCostUsingAverage)) {
-          console.error('❌ Invalid cost calculation:', {
-            averagePurchaseCost,
-            totalCostUsingAverage
-          });
-          throw new BusinessError(
-            'Unable to calculate cost. Please check batch data.',
-            'COST_CALCULATION_ERROR'
-          );
-        }
-
-        // ✅ FINAL VALIDATION
-        if (!isFinite(averagePurchaseCost)) {
-          throw new BusinessError(
-            'Invalid cost calculation result',
-            'INVALID_COST'
-          );
-        }
 
         // Step 1: Create sale
         const warehouseSale = await tx.warehouseSale.create({
@@ -1177,7 +1177,7 @@ router.post(
 
         console.log('✅✅✅ Transaction completed successfully (integrity verified)');
         return { warehouseSale, batchSaleRecords };
-      });
+      }, { timeout: 25000, maxWait: 10000 });
 
     const result = await withReceiptConflictRetry(() => createSaleOperation());
 

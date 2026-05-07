@@ -240,7 +240,8 @@ const handlePrismaError = (error, res) => {
     case 'P2025':
       return res.status(404).json({
         error: 'Record Not Found',
-        message: 'An operation failed because it depends on one or more records that were required but not found'
+        message: error.meta?.cause || error.message || 'An operation failed because it depends on one or more records that were required but not found',
+        detail: error.meta?.modelName ? `${error.meta.modelName} record not found` : undefined
       });
       
     case 'P2028':

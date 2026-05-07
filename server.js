@@ -620,17 +620,17 @@ async function startServer() {
 
   console.log('✅ All cron jobs started (after Prisma connected)');
 
-  // Run initial checks after a short delay
+  // Run initial checks after 3 minutes — gives the Prisma engine time to stabilize
+  // and avoids competing with user requests right after startup.
   setTimeout(async () => {
     try {
-      console.log('🚀 Running initial batch status check...');
+      console.log('🚀 Running deferred startup checks...');
       await manageBatchStatus();
-      console.log('🚀 Running initial customer balance reconciliation...');
       await reconcileCustomerBalances();
     } catch (error) {
-      console.error('❌ Initial startup checks failed:', error);
+      console.error('❌ Deferred startup checks failed:', error);
     }
-  }, 5000);
+  }, 3 * 60 * 1000);
 
   const server = app.listen(PORT, () => {
     console.log(`
