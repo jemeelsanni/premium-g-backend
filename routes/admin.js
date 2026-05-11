@@ -4,7 +4,7 @@ const { body, query, param, validationResult } = require('express-validator');
 const { asyncHandler, ValidationError, BusinessError } = require('../middleware/errorHandler');
 const { getAuditTrail } = require('../middleware/auditLogger');
 const { validateCuid } = require('../utils/validators'); // ✅ ADDED
-const { authorizeRole, USER_ROLES, getFeaturePermissions, PERMISSIONS_FILE } = require('../middleware/auth');
+const { authorizeRole, USER_ROLES, getFeaturePermissions, invalidatePermissionsCache, PERMISSIONS_FILE } = require('../middleware/auth');
 const fs = require('fs');
 
 const router = express.Router();
@@ -980,12 +980,25 @@ router.get('/products/next-number', authorizeRole([USER_ROLES.MANAGING_DIRECTOR,
 const VALID_ROLES = ['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT', 'CASHIER', 'DISTRIBUTORSHIP_SALES_REP'];
 const VALID_MODULES = ['distribution', 'transport', 'warehouse', 'admin'];
 
+const PERMISSIONS_DB_KEY = 'role_permissions';
+
+// Load permissions from DB first, fall back to JSON file
+async function getPermissionsFromDB() {
+  try {
+    const row = await prisma.systemConfig.findUnique({ where: { key: PERMISSIONS_DB_KEY } });
+    if (row?.value) return row.value;
+  } catch (e) {
+    console.error('DB permissions read failed, falling back to file:', e.message);
+  }
+  return getFeaturePermissions();
+}
+
 // @route   GET /api/v1/admin/role-permissions
 // @desc    Get current feature-level role permissions
 // @access  All authenticated users (needed by every role to load their own feature set)
 router.get('/role-permissions',
   asyncHandler(async (req, res) => {
-    const permissions = getFeaturePermissions();
+    const permissions = await getPermissionsFromDB();
     res.json({ success: true, data: { permissions } });
   })
 );
@@ -1019,8 +1032,8 @@ router.put('/role-permissions',
       }
     }
 
-    // Load current to preserve any features not included in payload
-    const current = getFeaturePermissions();
+    // Merge with current to preserve any features not included in payload
+    const current = await getPermissionsFromDB();
     const merged = JSON.parse(JSON.stringify(current));
 
     for (const role of VALID_ROLES) {
@@ -1033,7 +1046,19 @@ router.put('/role-permissions',
       }
     }
 
-    fs.writeFileSync(PERMISSIONS_FILE, JSON.stringify(merged, null, 2), 'utf8');
+    // Persist to DB (survives Railway restarts) + keep file as backup
+    await prisma.systemConfig.upsert({
+      where: { key: PERMISSIONS_DB_KEY },
+      create: { key: PERMISSIONS_DB_KEY, value: merged, description: 'Role feature permissions', updatedBy: req.user.id },
+      update: { value: merged, updatedBy: req.user.id }
+    });
+
+    // Update in-memory cache immediately so changes take effect without waiting for TTL
+    invalidatePermissionsCache(merged);
+
+    // Also write to file as local fallback
+    try { fs.writeFileSync(PERMISSIONS_FILE, JSON.stringify(merged, null, 2), 'utf8'); } catch (_) {}
+
     res.json({ success: true, message: 'Role permissions updated successfully', data: { permissions: merged } });
   })
 );

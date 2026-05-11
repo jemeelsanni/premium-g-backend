@@ -38,14 +38,42 @@ const ADMIN_FEATURES = new Set([
   'manage_users','reset_passwords','manage_config','manage_role_permissions',
 ]);
 
-// Load feature-level permissions from file (fresh every call — edits take effect immediately)
+// In-memory cache so DB is not hit on every single request
+let _permissionsCache = null;
+let _permissionsCacheTime = 0;
+const PERMISSIONS_CACHE_TTL = 60 * 1000; // 1 minute
+
+// Load feature-level permissions: DB first (persistent across Railway restarts), file as fallback
 const getFeaturePermissions = () => {
+  // Return cache if fresh
+  if (_permissionsCache && Date.now() - _permissionsCacheTime < PERMISSIONS_CACHE_TTL) {
+    return _permissionsCache;
+  }
+  // Synchronous file read as the immediate return (auth is sync)
   try {
     const raw = fs.readFileSync(PERMISSIONS_FILE, 'utf8');
-    return JSON.parse(raw);
+    _permissionsCache = JSON.parse(raw);
+    _permissionsCacheTime = Date.now();
   } catch {
-    return {};
+    _permissionsCache = _permissionsCache || {};
   }
+  // Async DB refresh in background — updates cache for next request
+  prisma.systemConfig.findUnique({ where: { key: 'role_permissions' } })
+    .then(row => {
+      if (row?.value && typeof row.value === 'object') {
+        _permissionsCache = row.value;
+        _permissionsCacheTime = Date.now();
+      }
+    })
+    .catch(() => {}); // silent — file fallback already used
+
+  return _permissionsCache;
+};
+
+// Called by admin route after a successful save to immediately refresh cache
+const invalidatePermissionsCache = (newPermissions) => {
+  _permissionsCache = newPermissions;
+  _permissionsCacheTime = Date.now();
 };
 
 // Derive module-level ['read','write','admin'] array from feature booleans
@@ -291,6 +319,7 @@ module.exports = {
   canAccessModule,
   getModulePermissions,
   getFeaturePermissions,
+  invalidatePermissionsCache,
   PERMISSIONS_FILE,
   USER_ROLES,
   MODULE_PERMISSIONS
