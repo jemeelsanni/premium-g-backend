@@ -619,7 +619,7 @@ router.post('/:id/edit-request',
 // @desc    Get all edit requests (for admin review)
 // @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER, CASHIER)
 router.get('/edit-requests/list',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
+  authorizeModule('warehouse'),
   [
     query('status').optional().isIn(['PENDING', 'APPROVED', 'REJECTED']),
     query('page').optional().isInt({ min: 1 }),
@@ -684,7 +684,7 @@ router.get('/edit-requests/list',
 // @desc    Approve daily opening stock entry
 // @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER, CASHIER)
 router.put('/:id/approve',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
+  authorizeModule('warehouse', 'write'),
   [param('id').custom(validateCuid('daily opening stock ID'))],
   approvalValidation,
   asyncHandler(async (req, res) => {
@@ -737,7 +737,7 @@ router.put('/:id/approve',
 // @desc    Reject daily opening stock entry
 // @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER, CASHIER)
 router.put('/:id/reject',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
+  authorizeModule('warehouse', 'write'),
   [param('id').custom(validateCuid('daily opening stock ID'))],
   rejectionValidation,
   asyncHandler(async (req, res) => {
@@ -789,7 +789,7 @@ router.put('/:id/reject',
 // @desc    Approve edit request and update the original entry
 // @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER, CASHIER)
 router.put('/edit-requests/:id/approve',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
+  authorizeModule('warehouse', 'write'),
   [param('id').custom(validateCuid('edit request ID'))],
   approvalValidation,
   asyncHandler(async (req, res) => {
@@ -871,7 +871,7 @@ router.put('/edit-requests/:id/approve',
 // @desc    Reject edit request
 // @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER, CASHIER)
 router.put('/edit-requests/:id/reject',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
+  authorizeModule('warehouse', 'write'),
   [param('id').custom(validateCuid('edit request ID'))],
   rejectionValidation,
   asyncHandler(async (req, res) => {
