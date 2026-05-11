@@ -24,7 +24,12 @@
       "stat_total_revenue": true,
       "stat_total_orders": true,
       "stat_total_packs": true,
-      "stat_active_customers": true
+      "stat_active_customers": true,
+      "view_supplier_products": true,
+      "manage_supplier_products": true,
+      "view_profitability": true,
+      "manage_profitability": true,
+      "edit_supplier": true
     },
     "transport": {
       "view_dashboard": true,
@@ -113,7 +118,12 @@
       "stat_total_revenue": true,
       "stat_total_orders": true,
       "stat_total_packs": true,
-      "stat_active_customers": true
+      "stat_active_customers": true,
+      "view_supplier_products": true,
+      "manage_supplier_products": true,
+      "view_profitability": true,
+      "manage_profitability": false,
+      "edit_supplier": true
     },
     "transport": {
       "view_dashboard": false,
@@ -202,7 +212,12 @@
       "stat_total_revenue": true,
       "stat_total_orders": true,
       "stat_total_packs": true,
-      "stat_active_customers": true
+      "stat_active_customers": true,
+      "view_supplier_products": true,
+      "manage_supplier_products": false,
+      "view_profitability": true,
+      "manage_profitability": false,
+      "edit_supplier": false
     },
     "transport": {
       "view_dashboard": true,
@@ -291,7 +306,12 @@
       "stat_total_revenue": false,
       "stat_total_orders": false,
       "stat_total_packs": false,
-      "stat_active_customers": false
+      "stat_active_customers": false,
+      "view_supplier_products": false,
+      "manage_supplier_products": false,
+      "view_profitability": false,
+      "manage_profitability": false,
+      "edit_supplier": false
     },
     "transport": {
       "view_dashboard": false,
@@ -380,7 +400,12 @@
       "stat_total_revenue": false,
       "stat_total_orders": true,
       "stat_total_packs": true,
-      "stat_active_customers": true
+      "stat_active_customers": true,
+      "view_supplier_products": true,
+      "manage_supplier_products": false,
+      "view_profitability": false,
+      "manage_profitability": false,
+      "edit_supplier": false
     },
     "transport": {
       "view_dashboard": false,

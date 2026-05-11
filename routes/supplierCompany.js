@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const supplierCompanyService = require('../services/supplierCompanyService');
-const { authenticateToken, authorizeModule } = require('../middleware/auth');
+const { authenticateToken, authorizeModule, authorizeFeature } = require('../middleware/auth');
 const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 
 /**
@@ -158,7 +158,7 @@ router.post(
 router.put(
   '/:id',
   authenticateToken,
-  authorizeModule('distribution', 'write'),
+  authorizeFeature('distribution', 'edit_supplier'),
   async (req, res) => {
     try {
       const { id } = req.params;

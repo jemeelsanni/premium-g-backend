@@ -1,7 +1,7 @@
 // routes/supplier-products.js
 const express = require('express');
 const { body, param, query } = require('express-validator');
-const { authenticateToken, authorizeModule } = require('../middleware/auth');
+const { authenticateToken, authorizeModule, authorizeFeature } = require('../middleware/auth');
 const { asyncHandler, ValidationError, NotFoundError } = require('../middleware/errorHandler');
 const { validateCuid } = require('../utils/validators');
 
@@ -19,7 +19,7 @@ const prisma = require('../lib/prisma');
 router.get(
   '/',
   authenticateToken,
-  authorizeModule('distribution'),
+  authorizeFeature('distribution', 'view_supplier_products'),
   [
     query('supplierId').optional().custom(validateCuid('supplier ID')),
     query('productId').optional().custom(validateCuid('product ID')),
@@ -79,7 +79,7 @@ router.get(
 router.get(
   '/supplier/:supplierId',
   authenticateToken,
-  authorizeModule('distribution'),
+  authorizeFeature('distribution', 'view_supplier_products'),
   param('supplierId').custom(validateCuid('supplier ID')),
   asyncHandler(async (req, res) => {
     const { supplierId } = req.params;
@@ -152,7 +152,7 @@ router.get(
 router.get(
   '/:id',
   authenticateToken,
-  authorizeModule('distribution'),
+  authorizeFeature('distribution', 'view_supplier_products'),
   param('id').custom(validateCuid('supplier product ID')),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -186,7 +186,7 @@ router.get(
 router.get(
   '/:id/price-history',
   authenticateToken,
-  authorizeModule('distribution'),
+  authorizeFeature('distribution', 'view_supplier_products'),
   param('id').custom(validateCuid('supplier product ID')),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -232,7 +232,7 @@ router.get(
 router.post(
   '/',
   authenticateToken,
-  authorizeModule('distribution', 'write'),
+  authorizeFeature('distribution', 'manage_supplier_products'),
   [
     body('supplierCompanyId')
       .custom(validateCuid('supplier company ID'))
@@ -342,7 +342,7 @@ router.post(
 router.put(
   '/:id',
   authenticateToken,
-  authorizeModule('distribution', 'write'),
+  authorizeFeature('distribution', 'manage_supplier_products'),
   [
     param('id').custom(validateCuid('supplier product ID')),
     body('supplierCostPerPack')
@@ -455,7 +455,7 @@ router.put(
 router.delete(
   '/:id',
   authenticateToken,
-  authorizeModule('distribution', 'write'),
+  authorizeFeature('distribution', 'manage_supplier_products'),
   param('id').custom(validateCuid('supplier product ID')),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -490,7 +490,7 @@ router.delete(
 router.post(
   '/bulk',
   authenticateToken,
-  authorizeModule('distribution', 'write'),
+  authorizeFeature('distribution', 'manage_supplier_products'),
   [
     body('supplierCompanyId')
       .custom(validateCuid('supplier company ID'))

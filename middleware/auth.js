@@ -23,6 +23,7 @@ const WRITE_FEATURES = new Set([
   'create_order','edit_order','delete_order','record_payment','confirm_payment',
   'adjust_price','assign_transport','record_delivery','update_supplier_status',
   'manage_suppliers','manage_targets','create_expense','approve_expense',
+  'manage_supplier_products','manage_profitability','edit_supplier',
   'manage_trucks','manage_locations','record_sales','edit_sales','delete_sales',
   'record_purchases','edit_purchases','delete_purchases','manage_inventory',
   'edit_debtors','request_discount','approve_discount','manage_expenses',
@@ -250,6 +251,24 @@ const authorizeModule = (module, requiredPermission = 'read') => {
   };
 };
 
+// Check a specific feature permission key (used for granular feature-level access)
+const authorizeFeature = (module, feature) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required', message: 'User not authenticated' });
+    }
+    const perms = getFeaturePermissions();
+    const granted = perms[req.user.role]?.[module]?.[feature] === true;
+    if (!granted) {
+      return res.status(403).json({
+        error: 'Insufficient permissions',
+        message: `You don't have access to this feature`
+      });
+    }
+    next();
+  };
+};
+
 // ================================
 // DATA INTEGRITY PROTECTION
 // ================================
@@ -313,6 +332,7 @@ module.exports = {
   authenticateToken,
   authorizeRole,
   authorizeModule,
+  authorizeFeature,
   authorizeOwnEntry,
   hasPermission,
   getUserModules,
