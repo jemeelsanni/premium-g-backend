@@ -4,7 +4,7 @@ const express = require('express');
 const { body, query, param, validationResult } = require('express-validator');
 
 const { asyncHandler, ValidationError, NotFoundError, BusinessError } = require('../middleware/errorHandler');
-const { authorizeModule, authorizeRole } = require('../middleware/auth');
+const { authorizeModule } = require('../middleware/auth');
 const { validateCuid } = require('../utils/validators');
 
 const router = express.Router();
@@ -522,7 +522,7 @@ router.put('/stock-counts/:id',
 // @desc    Approve stock count and adjust inventory
 // @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER, CASHIER only)
 router.put('/stock-counts/:id/approve',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
+  authorizeModule('warehouse', 'write'),
   [param('id').custom(validateCuid('stock count ID'))],
   approveStockCountValidation,
   asyncHandler(async (req, res) => {
@@ -676,7 +676,7 @@ router.put('/stock-counts/:id/approve',
 // @desc    Reject stock count
 // @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER, CASHIER only)
 router.put('/stock-counts/:id/reject',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
+  authorizeModule('warehouse', 'write'),
   [param('id').custom(validateCuid('stock count ID'))],
   rejectStockCountValidation,
   asyncHandler(async (req, res) => {
@@ -748,7 +748,7 @@ router.put('/stock-counts/:id/reject',
 // @desc    Delete stock count (only if status is PENDING or REJECTED)
 // @access  Private (MANAGING_DIRECTOR, GENERAL_MANAGER only)
 router.delete('/stock-counts/:id',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
+  authorizeModule('warehouse', 'write'),
   [param('id').custom(validateCuid('stock count ID'))],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);

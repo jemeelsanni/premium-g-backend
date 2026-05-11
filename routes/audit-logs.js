@@ -5,7 +5,7 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../lib/prisma');
 const { asyncHandler } = require('../middleware/errorHandler');
-const { authorizeRole } = require('../middleware/auth');
+const { authorizeModule } = require('../middleware/auth');
 const { query, validationResult } = require('express-validator');
 
 /**
@@ -14,7 +14,7 @@ const { query, validationResult } = require('express-validator');
  * @access  Private (Super Admin, Warehouse Admin)
  */
 router.get('/',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
+  authorizeModule('admin'),
   [
     query('entity').optional().isString(),
     query('action').optional().isString(),
@@ -102,7 +102,7 @@ router.get('/',
  * @access  Private (Super Admin, Warehouse Admin)
  */
 router.get('/inventory-changes',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
+  authorizeModule('admin'),
   [
     query('productId').optional().isString(),
     query('startDate').optional().isISO8601(),
@@ -224,7 +224,7 @@ router.get('/inventory-changes',
  * @access  Private (Super Admin, Warehouse Admin)
  */
 router.get('/suspicious-activities',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
+  authorizeModule('admin'),
   [
     query('days').optional().isInt({ min: 1, max: 90 }).toInt()
   ],
@@ -337,7 +337,7 @@ router.get('/suspicious-activities',
  * @access  Private (Super Admin, Warehouse Admin)
  */
 router.get('/product/:productId',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
+  authorizeModule('admin'),
   asyncHandler(async (req, res) => {
     const { productId } = req.params;
 

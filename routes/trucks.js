@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { body, param, validationResult } = require('express-validator');
 const { asyncHandler } = require('../middleware/errorHandler');
-const { authorizeRole, authorizeModule } = require('../middleware/auth');
+const { authorizeModule } = require('../middleware/auth');
 const { ValidationError, NotFoundError, BusinessError } = require('../middleware/errorHandler');
 const { validateCuid } = require('../utils/validators');
 const { logDataChange } = require('../middleware/auditLogger');
@@ -97,7 +97,7 @@ const updateTruckValidation = [
 // @desc    Create new truck
 // @access  Private (Transport Admin, Super Admin)
 router.post('/trucks',
-  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
+  authorizeModule('transport', 'write'),
   createTruckValidation,
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -198,7 +198,7 @@ router.get('/trucks/:id',
 // @desc    Update truck
 // @access  Private (Transport Admin, Super Admin)
 router.put('/trucks/:id',
-  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
+  authorizeModule('transport', 'write'),
   updateTruckValidation,
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -259,7 +259,7 @@ router.put('/trucks/:id',
 // @desc    Delete truck
 // @access  Private (Super Admin only)
 router.delete('/trucks/:id',
-  authorizeRole(['MANAGING_DIRECTOR']),
+  authorizeModule('transport', 'write'),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;

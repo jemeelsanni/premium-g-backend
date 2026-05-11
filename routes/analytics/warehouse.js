@@ -5,14 +5,13 @@ const { query, validationResult } = require('express-validator');
 
 const { asyncHandler, ValidationError } = require('../../middleware/errorHandler');
 const { authorizeModule } = require('../../middleware/auth');
-const { authorizeRole } = require('../../middleware/auth'); // Import authorizeRole
 
 const router = express.Router();
 const prisma = require('../../lib/prisma');
 
 // GET /api/v1/analytics/warehouse/summary
 router.get('/summary',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
+  authorizeModule('warehouse'),
   [
     query('startDate').optional().isISO8601(),
     query('endDate').optional().isISO8601(),
@@ -445,7 +444,7 @@ router.get('/summary',
 
 
 router.get('/dashboard',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
+  authorizeModule('warehouse'),
   asyncHandler(async (req, res) => {
     try {
       const startOfDay = new Date();
@@ -597,7 +596,7 @@ for (const item of inventory) {
 
 // GET /api/v1/analytics/warehouse/inventory/performance
 router.get('/inventory/performance',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
+  authorizeModule('warehouse'),
   [
     query('startDate').optional().isISO8601(),
     query('endDate').optional().isISO8601(),

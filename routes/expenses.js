@@ -372,7 +372,7 @@ router.put('/:id',
 // @access  Private (Admin)
 router.post('/:id/approve',
   param('id').custom(validateCuid('expense ID')),
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
+  authorizeModule('transport', 'write'),
   approveExpenseValidation,
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -482,7 +482,7 @@ router.delete('/:id',
 // @desc    Get expense analytics summary
 // @access  Private (Admin)
 router.get('/analytics/summary',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
+  authorizeModule('transport'),
   asyncHandler(async (req, res) => {
     const { startDate, endDate, period = 'monthly' } = req.query;
     
@@ -591,7 +591,7 @@ router.get('/analytics/summary',
 // @access  Private (Admin)
 router.get('/analytics/location/:locationId',
   param('locationId').custom(validateCuid('location ID')),
-  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
+  authorizeModule('transport'),
   asyncHandler(async (req, res) => {
     const { locationId } = req.params;
     const { startDate, endDate } = req.query;
@@ -670,7 +670,7 @@ router.get('/analytics/location/:locationId',
 // @desc    Get expense analytics for specific truck
 // @access  Private (Admin)
 router.get('/analytics/truck/:truckId',
-  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
+  authorizeModule('transport'),
   asyncHandler(async (req, res) => {
     const { truckId } = req.params;
     const { startDate, endDate } = req.query;
@@ -761,7 +761,7 @@ router.get('/analytics/truck/:truckId',
 // @desc    Bulk approve expenses (Admin only)
 // @access  Private (Admin)
 router.post('/bulk-approve',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
+  authorizeModule('transport', 'write'),
   body('expenseIds').isArray().withMessage('Expense IDs must be an array'),
   body('expenseIds.*').custom(validateCuid('expense ID')),
   body('action').isIn(['approve', 'reject']).withMessage('Action must be approve or reject'),

@@ -5,7 +5,7 @@ const { query, param, validationResult } = require('express-validator');
 const prisma = require('../../lib/prisma');
 
 const { asyncHandler, ValidationError, NotFoundError } = require('../../middleware/errorHandler');
-const { authorizeModule, authorizeRole } = require('../../middleware/auth');
+const { authorizeModule } = require('../../middleware/auth');
 const { validateCuid } = require('../../utils/validators');
 
 const router = express.Router();
@@ -324,7 +324,7 @@ router.get('/summary',
 // @desc    Get detailed profit analysis
 // @access  Private (Admin)
 router.get('/profit-analysis',
-  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
+  authorizeModule('transport'),
   asyncHandler(async (req, res) => {
     const { startDate, endDate, locationId } = req.query;
 
@@ -663,7 +663,7 @@ router.get('/clients',
 // @desc    Get expense analytics summary
 // @access  Private (Admin)
 router.get('/expenses/summary',
-  authorizeRole(['MANAGING_DIRECTOR', 'ACCOUNTANT']),
+  authorizeModule('transport'),
   asyncHandler(async (req, res) => {
     const { startDate, endDate } = req.query;
 

@@ -4,7 +4,7 @@ const express = require('express');
 const { body, query, param, validationResult } = require('express-validator');
 
 const { asyncHandler, ValidationError, NotFoundError, BusinessError } = require('../middleware/errorHandler');
-const { authorizeModule, authorizeRole } = require('../middleware/auth');
+const { authorizeModule } = require('../middleware/auth');
 const { validateCuid } = require('../utils/validators');
 
 const router = express.Router();
@@ -368,7 +368,7 @@ router.put('/expenses/:id',
 // @desc    Bulk approve warehouse expenses (with automatic cash flow)
 // @access  Private (Warehouse Admin only)
 router.post('/expenses/bulk-approve',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
+  authorizeModule('warehouse', 'write'),
   [
     body('expenseIds').isArray({ min: 1 }).withMessage('Expense IDs array is required'),
     body('action').isIn(['approve', 'reject']).withMessage('Action must be approve or reject'),
@@ -518,7 +518,7 @@ router.delete('/expenses/:id',
 // @desc    Get warehouse expense analytics
 // @access  Private (Warehouse Admin)
 router.get('/expenses/analytics/summary',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
+  authorizeModule('warehouse'),
   [
     query('startDate').optional().isISO8601(),
     query('endDate').optional().isISO8601()

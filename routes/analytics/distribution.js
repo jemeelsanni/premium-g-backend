@@ -5,7 +5,6 @@ const { query, validationResult } = require('express-validator');
 
 const { asyncHandler, ValidationError } = require('../../middleware/errorHandler');
 const { authorizeModule } = require('../../middleware/auth');
-const { authorizeRole } = require('../../middleware/auth'); // Import authorizeRole
 
 const router = express.Router();
 const prisma = require('../../lib/prisma');
@@ -138,7 +137,7 @@ router.get('/summary',
 );
 
 router.get('/dashboard', 
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
+  authorizeModule('distribution'),
   asyncHandler(async (req, res) => {
     try {
       const startOfMonth = new Date();

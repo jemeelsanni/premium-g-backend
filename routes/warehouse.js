@@ -341,7 +341,7 @@ router.get('/inventory', asyncHandler(async (req, res) => {
 // @desc    Update inventory levels
 // @access  Private (Warehouse Admin)
 router.put('/inventory/:id',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
+  authorizeModule('warehouse', 'write'),
   param('id').custom(validateCuid('inventory ID')),
   [
     body('pallets').optional().isInt({ min: 0 }),
@@ -1715,7 +1715,7 @@ router.get('/sales/:id',
 // @desc    Update warehouse sale (admin only)
 // @access  Private (Warehouse Admin, Super Admin)
 router.put('/sales/:id',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
+  authorizeModule('warehouse', 'write'),
   [
     param('id').custom(validateCuid('sale ID')),
     body('quantity').optional().isInt({ min: 1 }),
@@ -1797,7 +1797,7 @@ router.put('/sales/:id',
 // @desc    Delete warehouse sale (reverse inventory and cash flow)
 // @access  Private (Warehouse Admin, Super Admin)
 router.delete('/sales/:id',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
+  authorizeModule('warehouse', 'write'),
   [
     param('id').custom(validateCuid('sale ID'))
   ],
@@ -2476,7 +2476,7 @@ router.get(
 // @desc    Get detailed profit summary with expense allocation
 // @access  Private (Warehouse Admin)
 router.get('/analytics/profit-summary',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
+  authorizeModule('warehouse'),
   asyncHandler(async (req, res) => {
     const { startDate, endDate } = req.query;
 

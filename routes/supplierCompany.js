@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const supplierCompanyService = require('../services/supplierCompanyService');
-const { authenticateToken, authorizeRole } = require('../middleware/auth');
+const { authenticateToken, authorizeModule } = require('../middleware/auth');
 const { logDataChange, getClientIP } = require('../middleware/auditLogger');
 
 /**
@@ -108,7 +108,7 @@ router.get('/:id/stats', authenticateToken, async (req, res) => {
 router.post(
   '/',
   authenticateToken,
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
+  authorizeModule('distribution', 'write'),
   async (req, res) => {
     try {
       const { name, code, email, phone, address, contactPerson, notes, productCategories } = req.body;
@@ -158,7 +158,7 @@ router.post(
 router.put(
   '/:id',
   authenticateToken,
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'ACCOUNTANT']),
+  authorizeModule('distribution', 'write'),
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -206,7 +206,7 @@ router.put(
 router.delete(
   '/:id',
   authenticateToken,
-  authorizeRole(['MANAGING_DIRECTOR']),
+  authorizeModule('distribution', 'write'),
   async (req, res) => {
     try {
       const { id } = req.params;
