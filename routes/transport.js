@@ -24,7 +24,7 @@ router.use(authorizeModule('transport'));
 // ================================
 
 const createTransportOrderValidation = [
-  body('orderNumber').notEmpty().withMessage('Order number is required'),
+  // orderNumber is auto-generated server-side — not required from client
   body('clientName').notEmpty().withMessage('Client name is required'),
   body('clientPhone').optional().trim(),
   body('pickupLocation').optional().trim(),
@@ -167,7 +167,7 @@ router.post('/orders',
 
     const {
       clientName,
-      clientPhone,
+      clientPhone = '',
       pickupLocation,
       locationId,
       totalOrderAmount,
@@ -1613,7 +1613,7 @@ router.get('/expenses/pending/approvals',
     const take = parseInt(limit);
 
     const [expenses, total] = await Promise.all([
-      prisma.transportExpense.findMany({
+      prisma.expense.findMany({
         where: { status: 'PENDING' },
         include: {
           truck: { select: { truckId: true, registrationNumber: true } },
@@ -1624,7 +1624,7 @@ router.get('/expenses/pending/approvals',
         skip,
         take
       }),
-      prisma.transportExpense.count({ where: { status: 'PENDING' } })
+      prisma.expense.count({ where: { status: 'PENDING' } })
     ]);
 
     res.json({
@@ -2233,13 +2233,13 @@ router.get('/expenses/export/csv',
       if (endDate) where.expenseDate.lte = new Date(endDate);
     }
 
-    const expenses = await prisma.transportExpense.findMany({
+    const expenses = await prisma.expense.findMany({
       where,
       include: {
         truck: { select: { registrationNumber: true } },
         location: { select: { name: true } },
         createdByUser: { select: { username: true } },
-        approvedByUser: { select: { username: true } }
+        approver: { select: { username: true } }
       },
       orderBy: { expenseDate: 'desc' }
     });
@@ -2305,7 +2305,7 @@ router.get('/expenses/export/pdf',
       if (endDate) where.expenseDate.lte = new Date(endDate);
     }
 
-    const expenses = await prisma.transportExpense.findMany({
+    const expenses = await prisma.expense.findMany({
       where,
       include: {
         truck: { select: { registrationNumber: true } },
