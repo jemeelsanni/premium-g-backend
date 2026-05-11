@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../lib/prisma'); // ✅ Use shared singleton
 const { asyncHandler } = require('../middleware/errorHandler');
-const { authorizeRole } = require('../middleware/auth');
+const { authorizeModule } = require('../middleware/auth');
 const { query, validationResult } = require('express-validator');
 
 // Use shared Prisma instance
@@ -21,7 +21,7 @@ const { query, validationResult } = require('express-validator');
  */
 router.get(
   '/',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER', 'CASHIER']),
+  authorizeModule('warehouse'),
   [
     query('date').optional().isISO8601().withMessage('Invalid date format'),
     query('productId').optional().isString(),
@@ -298,7 +298,7 @@ router.get(
  */
 router.get(
   '/history',
-  authorizeRole(['MANAGING_DIRECTOR', 'GENERAL_MANAGER']),
+  authorizeModule('warehouse'),
   [
     query('startDate').isISO8601().withMessage('Start date is required'),
     query('endDate').isISO8601().withMessage('End date is required'),
